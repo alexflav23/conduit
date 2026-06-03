@@ -1,0 +1,18 @@
+target/
+**/target/
+.bsp/
+.idea/
+.metals/
+.bloop/
+project/project/
+project/target/
+*.class
+*.log
+.DS_Store
+
+# frontend (added at the desk milestone)
+node_modules/
+conduit-desk/dist/
+conduit-desk/build/
+test-results/
+playwright-report/

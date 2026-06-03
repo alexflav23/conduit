@@ -1,0 +1,200 @@
+import sbt.*
+import sbt.Keys.*
+
+ThisBuild / version := {
+  val short = git.gitHeadCommit.value.map(_.take(8))
+  s"${short.getOrElse(System.currentTimeMillis.toString)}"
+}
+
+lazy val scala213 = "2.13.16"
+
+// doc 14 §1.1 — no Double/Float in financial modules. CI gate (`sbt noFloatCheck`).
+lazy val noFloatCheck = taskKey[Unit]("Reject Double/Float in financial modules (money, ledger)")
+
+ThisBuild / scalaVersion := scala213
+
+// Versions pinned to the house stack (Athena). See CLAUDE.md §2.
+lazy val Versions = new {
+  val circe          = "0.14.3"
+  val logback        = "1.4.5"
+  val config         = "1.4.1"
+  val doobie         = "1.0.0-RC5"
+  val flyway         = "11.12.0"
+  val slf4j          = "1.7.32"
+  val tapir          = "1.10.4"
+  val postgres       = "42.7.7"
+  val http4s         = "0.23.26"
+  val cats           = "2.10.0"
+  val catsEffect     = "3.5.4"
+  val log4cats       = "2.7.0"
+  val auth0JwksRsa   = "0.22.1"
+  val auth0JavaJwt   = "4.4.0"
+  val otel           = "1.35.0"
+  val otelPromExport = "1.35.0-alpha"
+  val tigerBeetle    = "0.16.46"
+  val jackson        = "2.20.0"
+  val pulsar         = "4.0.4"
+  val avro           = "1.12.0"
+  val avro4s         = "4.1.2"
+  val squants        = "1.6.0"
+
+  val testContainers    = "0.41.0"
+  val consulContainer   = "1.18.3"
+  val postgresContainer = "1.20.0"
+  val pulsarContainer   = "1.20.4"
+  val weaver            = "0.8.4"
+  val literally         = "1.2.0"
+}
+
+lazy val sharedSettings: Seq[Def.Setting[_]] = Seq(
+  organization := "com.hypervolt",
+  scalaVersion := scala213,
+  Test / fork  := true,
+  ThisBuild / scalacOptions ++= ProjectDefaults.scalacOptionsList,
+  testFrameworks += new TestFramework("weaver.framework.CatsEffect"),
+  libraryDependencies ++= Seq(
+    "org.slf4j"            % "log4j-over-slf4j"   % Versions.slf4j,
+    "com.disneystreaming" %% "weaver-cats"        % Versions.weaver    % Test,
+    "com.disneystreaming" %% "weaver-scalacheck"  % Versions.weaver    % Test,
+    "org.typelevel"       %% "literally"          % Versions.literally % Test
+  ),
+  addCompilerPlugin("com.olegpy" %% "better-monadic-for" % "0.3.1"),
+  Test / testOptions ++= Seq(Tests.Argument("-oF"), Tests.Argument("-oD")),
+  Test / javaOptions ++= Seq(
+    "-Xms2G",
+    "-Xmx2G",
+    "-Djava.net.preferIPv4Stack=true",
+    "-XX:MetaspaceSize=512m",
+    "-XX:MaxMetaspaceSize=1g"
+  )
+)
+
+lazy val defaultSettings = Defaults.coreDefaultSettings ++ sharedSettings
+
+lazy val conduit = (project in file("."))
+  .settings(
+    name       := "conduit",
+    moduleName := "conduit",
+    defaultSettings,
+    noFloatCheck := {
+      val log   = streams.value.log
+      val base  = (ThisBuild / baseDirectory).value / "domain" / "src" / "main" / "scala" / "com" / "hypervolt" / "conduit"
+      val roots = Seq(base / "money", base / "ledger")
+      val banned = """\b(Double|Float)\b""".r
+      val offenders = roots.flatMap(r => (r ** "*.scala").get).flatMap { f =>
+        IO.readLines(f).zipWithIndex.flatMap { case (line, idx) =>
+          val code = line.split("//", 2).headOption.getOrElse("")
+          if (banned.findFirstIn(code).isDefined) Seq(s"${f.getName}:${idx + 1}: ${line.trim}") else Seq.empty
+        }
+      }
+      if (offenders.nonEmpty) sys.error(s"no-float rule violated in financial modules:\n${offenders.mkString("\n")}")
+      else log.info(s"no-float check passed (${roots.size} financial module roots clean)")
+    }
+  )
+  .aggregate(domain, api, apiIt, consumer, scripting)
+
+// Domain logic, services, repositories, the financial-integrity core (Money/RoundingPolicy/allocate),
+// the event envelope + Avro schemas, and the TigerBeetle posting model.
+lazy val domain = (project in file("domain"))
+  .settings(
+    sharedSettings,
+    name       := "conduit-domain",
+    moduleName := "conduit-domain",
+    libraryDependencies ++= Seq(
+      "com.softwaremill.sttp.tapir" %% "tapir-core"                  % Versions.tapir,
+      "com.softwaremill.sttp.tapir" %% "tapir-http4s-server"         % Versions.tapir,
+      "com.softwaremill.sttp.tapir" %% "tapir-json-circe"            % Versions.tapir,
+      "com.softwaremill.sttp.tapir" %% "tapir-swagger-ui-bundle"     % Versions.tapir,
+      "com.softwaremill.sttp.tapir" %% "tapir-opentelemetry-metrics" % Versions.tapir,
+      "com.softwaremill.sttp.tapir" %% "tapir-cats"                  % Versions.tapir,
+      "com.auth0"                    % "jwks-rsa"                     % Versions.auth0JwksRsa exclude ("com.fasterxml.jackson.core", "jackson-databind"),
+      "com.auth0"                    % "java-jwt"                     % Versions.auth0JavaJwt exclude ("com.fasterxml.jackson.core", "jackson-databind"),
+      "io.circe"                    %% "circe-generic"                % Versions.circe,
+      "io.circe"                    %% "circe-parser"                 % Versions.circe,
+      "org.typelevel"               %% "cats-core"                    % Versions.cats,
+      "org.typelevel"               %% "cats-effect"                  % Versions.catsEffect,
+      "org.typelevel"               %% "log4cats-core"                % Versions.log4cats,
+      "org.typelevel"               %% "log4cats-slf4j"               % Versions.log4cats,
+      "ch.qos.logback"               % "logback-classic"              % Versions.logback,
+      "com.typesafe"                 % "config"                       % Versions.config,
+      "org.http4s"                  %% "http4s-ember-server"          % Versions.http4s,
+      "org.http4s"                  %% "http4s-ember-client"          % Versions.http4s,
+      "org.http4s"                  %% "http4s-circe"                 % Versions.http4s,
+      "org.postgresql"               % "postgresql"                   % Versions.postgres,
+      "org.tpolecat"                %% "doobie-core"                  % Versions.doobie,
+      "org.tpolecat"                %% "doobie-postgres"              % Versions.doobie,
+      "org.tpolecat"                %% "doobie-postgres-circe"        % Versions.doobie,
+      "org.tpolecat"                %% "doobie-hikari"                % Versions.doobie,
+      "io.opentelemetry"             % "opentelemetry-sdk"            % Versions.otel,
+      "io.opentelemetry"             % "opentelemetry-exporter-prometheus" % Versions.otelPromExport,
+      "com.tigerbeetle"              % "tigerbeetle-java"             % Versions.tigerBeetle,
+      "com.fasterxml.jackson.core"   % "jackson-core"                 % Versions.jackson,
+      "com.fasterxml.jackson.core"   % "jackson-databind"             % Versions.jackson,
+      "org.apache.pulsar"            % "pulsar-client"                % Versions.pulsar,
+      "org.apache.pulsar"            % "pulsar-client-admin"          % Versions.pulsar,
+      "com.sksamuel.avro4s"         %% "avro4s-core"                  % Versions.avro4s,
+      "org.apache.avro"              % "avro"                         % Versions.avro,
+      "org.xerial.snappy"            % "snappy-java"                  % "1.1.10.7", // avro4s binary encode path
+
+      "org.typelevel"               %% "squants"                      % Versions.squants,
+      // Test-only: ToolBox-based "does not type-check" assertions (cross-currency safety).
+      "org.scala-lang"               % "scala-compiler"               % scala213 % Test
+    )
+  )
+
+lazy val api = (project in file("api"))
+  .enablePlugins(JavaServerAppPackaging)
+  .settings(
+    defaultSettings,
+    sharedSettings,
+    name       := "conduit-api",
+    moduleName := "conduit-api",
+    libraryDependencies ++= Seq(
+      "org.flywaydb" % "flyway-core"                % Versions.flyway,
+      "org.flywaydb" % "flyway-database-postgresql" % Versions.flyway
+    ),
+    run / fork := true
+  )
+  .dependsOn(domain % "compile->compile;test->test")
+
+lazy val apiIt = (project in file("api-it"))
+  .settings(
+    sharedSettings,
+    name       := "conduit-api-it",
+    moduleName := "conduit-api-it",
+    libraryDependencies ++= Seq(
+      "com.dimafeng"       %% "testcontainers-scala-postgresql" % Versions.testContainers % Test,
+      "org.testcontainers"  % "postgresql"                      % Versions.postgresContainer % Test,
+      "org.testcontainers"  % "pulsar"                          % Versions.pulsarContainer   % Test,
+      "org.testcontainers"  % "consul"                          % Versions.consulContainer   % Test
+    ),
+    Test / fork := true
+  )
+  .dependsOn(api % "compile->compile;test->test", domain % "compile->compile;test->test")
+
+lazy val consumer = (project in file("consumer"))
+  .enablePlugins(JavaAppPackaging)
+  .settings(
+    sharedSettings,
+    name       := "conduit-consumer",
+    moduleName := "conduit-consumer"
+  )
+  .dependsOn(domain)
+
+lazy val scripting = (project in file("scripting"))
+  .settings(
+    sharedSettings,
+    name                 := "conduit-scripting",
+    moduleName           := "conduit-scripting",
+    Compile / run / fork := true
+  )
+  .dependsOn(domain)
+
+// Avro BACKWARD-compat gate (doc 03 §2). Seed: the EventEnvelope schema must derive + round-trip;
+// expands to a registry diff once schemas are registered.
+addCommandAlias("schemaCheck", "domain/testOnly com.hypervolt.conduit.event.EventEnvelopeSpec")
+addCommandAlias("fmt", ";scalafmt;Test/scalafmt")
+addCommandAlias(
+  "fullRebuild",
+  List("reload", "clean", "Test / clean", "compile", "Test / compile").mkString(";")
+)

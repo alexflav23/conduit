@@ -1,0 +1,44 @@
+# Conduit CI — mirrors the house pattern (nix-shell runners, scalafmt gate, package -> publish).
+# Schema-check (Avro BACKWARD) and the no-float money lint are added in M1.
+stages:
+  - lint
+  - test
+  - package
+
+variables:
+  SBT_OPTS: "-Duser.home=$CI_PROJECT_DIR"
+
+scalafmt:
+  stage: lint
+  tags:
+    - x86_64-nix-24.11
+  script:
+    - nix-shell --run "sbt 'scalafmtCheck;Test/scalafmtCheck'"
+
+# doc 14 §1.1 no-float gate + doc 03 §2 Avro BACKWARD-compat gate.
+financial-gates:
+  stage: lint
+  tags:
+    - x86_64-nix-24.11
+  script:
+    - nix-shell --run "sbt noFloatCheck schemaCheck"
+
+compile-test:
+  stage: test
+  tags:
+    - x86_64-nix-24.11-dind
+  script:
+    - nix-shell --run "sbt clean compile test"
+
+package:
+  stage: package
+  tags:
+    - x86_64-nix-24.11
+  script:
+    - nix-shell --run "sbt api/Universal/packageXzTarball"
+  artifacts:
+    paths:
+      - "api/target/universal/*.txz"
+    expire_in: 1 day
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'

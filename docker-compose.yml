@@ -1,0 +1,77 @@
+# Local dev stack for Conduit. Modeled on the estate's docker-compose.checkout.yml.
+# Host ports are offset so they don't collide with Athena's local stack.
+services:
+  conduit-postgres:
+    image: postgres:16
+    container_name: conduit-postgres
+    environment:
+      POSTGRES_USER: conduit
+      POSTGRES_PASSWORD: conduit
+      POSTGRES_DB: conduit
+    ports:
+      - "5532:5432"
+    volumes:
+      - conduit_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U conduit"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - conduit
+
+  conduit-pulsar:
+    image: apachepulsar/pulsar:4.0.1
+    container_name: conduit-pulsar
+    command: bin/pulsar standalone
+    ports:
+      - "6651:6650"
+      - "8082:8080"
+    volumes:
+      - conduit_pulsar_data:/pulsar/data
+    networks:
+      - conduit
+
+  conduit-tigerbeetle:
+    image: ghcr.io/tigerbeetle/tigerbeetle:0.16.46
+    container_name: conduit-tigerbeetle
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    ports:
+      - "3033:3000"
+    volumes:
+      - conduit_tigerbeetle_data:/data
+      - ./docker/tigerbeetle-entrypoint.sh:/entrypoint.sh:ro
+    networks:
+      - conduit
+    security_opt:
+      - "seccomp=unconfined"
+
+  conduit-consul:
+    image: hashicorp/consul:1.18
+    container_name: conduit-consul
+    command: agent -server -ui -node=conduit -bootstrap-expect=1 -client=0.0.0.0
+    ports:
+      - "8510:8500"
+    networks:
+      - conduit
+
+  conduit-keycloak:
+    image: quay.io/keycloak/keycloak:25.0
+    container_name: conduit-keycloak
+    command: start-dev --http-port=8083
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+    ports:
+      - "8083:8083"
+    networks:
+      - conduit
+
+networks:
+  conduit:
+    driver: bridge
+
+volumes:
+  conduit_postgres_data:
+  conduit_pulsar_data:
+  conduit_tigerbeetle_data:
