@@ -17,11 +17,21 @@ This is **not** a requirements summary. Each feature document carries field-leve
 | 06 | **API** | REST contracts per module (paths, methods, request/response, errors) |
 | 07 | **BUILD_PLAN** | Phased milestones, per-feature acceptance criteria, test strategy |
 | 08 | **APP_SCREENS** | Flutter companion app — screen-by-screen spec (for Claude Design) |
-| 09 | **RETURNS** *(planned deep-dive)* | First-class returns/RMA — types (full unit, part-only, DOA, warranty replacement…), lifecycle, restock/refurb/scrap, ledger reversal, commission claw |
-| 10 | **REMAINING_TO_PLAN** | Backlog — deep-dives, parked functional areas, flow gaps, NFR/ops, and open decisions still to plan |
+| 09 | **RETURNS** | First-class returns/RMA — types (full unit, part-only, DOA, warranty replacement, goodwill…), lifecycle state machine, restock/refurb/scrap routing, ledger reversal at batch cost, commission claw, replacement order (supports M9b) |
+| 10 | **REMAINING_TO_PLAN** | Backlog ledger — deep-dives, parked areas, flow gaps, NFR/ops, open decisions (now mostly discharged into docs 09/11–13/15–21) |
+| 11 | **CRM** | Party/role deep-dive — pipelines/stages, deal→order conversion, account-history projection, ownership, party merge/dedupe, promote-to-billable policy, consignment-at-branch (supports M4-depth/M11) |
+| 12 | **H6Q** | Forecasting at full depth — weekly cycle engine, versioned submissions, bottom-up rollup + dual aggregation (branch/agent), scenario toggles, Hyperview source, accuracy, board layout (supports M11) |
+| 13 | **INTERCOMPANY_TAX** | Procurement chain (operating ← Singapore ← Luxshare; config), transfer-pricing methods + documentation off batch cost, paired linked legs, elimination, import VAT/duty (supports M12) |
 | 14 | **FINANCIAL_INTEGRITY** | Typed money (Squants) & pixel-perfect math, UTC-instant/period time model & timezone reslicing, US GAAP treatments, SOX/ICFR controls + PCAOB-grade auditability, and the in-product Auditability Center |
+| 15 | **DELIVERY_MILESTONES** | The living build register — status of every milestone, dependencies, backing doc, verifiable sub-steps, and acceptance gate (pairs with 07) |
+| 16 | **TAX_CUSTOMS** | Tax & customs engine — pluggable `TaxProvider`/`TaxQuote`, VAT determination, US destination sales tax + Canada GST/HST/PST via Avalara/TaxJar/Stripe Tax, HS codes, Intrastat (supports M12/M13) |
+| 17 | **DOCUMENT_GENERATION** | Invoices, credit notes, proformas, packing lists, commercial invoices, statements — per-locale/jurisdiction templates, gapless numbering, PDF, invoice-on-delivery (supports M13) |
+| 18 | **MIGRATION_CUTOVER** | MRPeasy/Ghost Busters/Athena → Conduit: source→target mapping, opening balances into TigerBeetle, idempotent replay-path backfill, dual-run reconciliation, cutover stock-count validation, phased runbook + rollback (supports M10 — biggest go-live risk) |
+| 19 | **NFR_SECURITY_OPS** | NFR (SLAs/RPO-RTO/scale/retention), security (secrets, encryption, GDPR DSAR crypto-shred, STRIDE threat model, SOX controls index) and ops/DR (alerting, DLQ-replay + projection-rebuild runbooks, backup/restore, CI migration-safety) — P1 launch-blockers |
+| 20 | **BACKOFFICE_DESK** | React/TS desk — screen-by-screen (pricing governance/ADLP, permission builder, Deal Desk + CEO approval, full H6Q board, finance/ledger, supply planning, admin, Auditability Center) (Phase 2–3 UI) |
+| 21 | **PLATFORM_SERVICES** | Cross-cutting services — notifications, search, reporting/exports + the Horizons units→revenue→COGS→GP feed, and localization/i18n across 15 locales (supports M14) |
 
-> Documents 02–05 are the load-bearing ones and are written deepest. 06/07 give the contract surface and the build sequence. Module-level deep dives that extend this pack (CRM, H6Q, Intercompany/Tax, Integrations, Migration) follow the same template and slot in as 08+.
+> Documents 02–05 are the load-bearing storage/logic/access layer and are written deepest; 06/07 give the contract surface and build sequence; **15** is the living delivery register. The deep-dives (09, 11–13, 16–21) extend the spine on the same template and slot in per their milestone.
 
 ## Conventions
 
@@ -43,4 +53,9 @@ Build in the order in doc 07. Do **not** start feature modules before the spine 
 
 ## Status
 
-This delivery contains 00–07. It specifies the full spine and the distinctive subsystems (ADLP, commission, ledger, traceability, H6Q) to build depth. Items still marked **OPEN** inside documents are the genuine product decisions listed in the requirements set (e.g. exact commission basis, scenario cuts, Luxshare billing currency) — they are flagged inline where they affect implementation and collected in 07 §Decisions.
+**Spec: complete across 00–21** — the spine (00–08), the financial-integrity core (14), all deep-dives
+(09, 11–13), and the launch-blocker docs (16–21) are written to build grade; the backlog (10) is largely
+discharged into them. **Build: M0–M5 implemented and verified** (64 tests green — unit/property + Postgres &
+TigerBeetle integration + Playwright e2e). Live milestone status, dependencies and the verifiable
+per-milestone step breakdown live in **doc 15**. Items still marked **OPEN** inside documents are genuine
+product/finance decisions (collected in 07 §Decisions); none change the architecture.

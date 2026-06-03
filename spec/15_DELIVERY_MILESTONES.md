@@ -1,0 +1,138 @@
+# 15 — Delivery Milestones (the build register)
+
+The single source of truth for **what is built, what is next, and the exact verifiable steps** for every
+remaining milestone. Pairs with `07_BUILD_PLAN.md` (the original phasing + per-feature acceptance) — this
+doc is the *living* register: status, dependencies, the backing spec doc, the sub-steps, and the
+verification gate for each. A milestone is **done only when its acceptance tests pass** (unit + integration,
+and Playwright/e2e for UI).
+
+**Legend:** ✅ done · ◐ partial · ⬜ not started · 🔒 blocked-on-dependency.
+
+---
+
+## 1. Current state (snapshot)
+
+Implemented and verified end-to-end: **M0–M5**, with **64 automated tests green** (35 unit/property + 27
+integration against real Postgres + TigerBeetle via testcontainers + 2 Playwright e2e). Backend conforms to
+the Athena house stack (Scala 2.13 / http4s / tapir / doobie / Pulsar+avro4s / TigerBeetle / Keycloak / Nix /
+Consul). A thin React+StyleX desk slice (quote → ADLP → order) is e2e-tested. Pushed to `github/main`.
+
+| | Milestone | Status | Backing docs | Tests |
+|---|---|---|---|---|
+| — | **M0** Scaffold + dev env | ✅ | `CLAUDE.md`, 01 | compile + boot + /health |
+| P1 | **M1** Foundations (Money/period/outbox/Avro/TigerBeetle) | ✅ | 01, 02§L, 03, 04§Ledger, 14 | 26 |
+| P1 | **M2** Access control (RBAC/scope/data-layer) | ✅ | 02§B, 05 | 17 |
+| P1 | **M3** Catalogue + ADLP pricing + `/pricing/quote` | ✅ | 02§D/§E, 04§Pricing/§ADLP | 8 |
+| P1 | **M4** CRM(parties) + Order capture | ◐ | 02§C/§F, 04§Orders/§Credit, **11** | 5 + 2 e2e |
+| P2 | **M5** Commission engine | ◐ | 02§J, 04§Commission | 6 |
+| P2 | **M6** Inventory + ATP/allocation + dispatch + carriers | ⬜ | 02§F/§G, 04§ATP | — |
+| P2 | **M7** Batch / landed cost / serial genealogy | ⬜ | 02§G, 04§Ledger/§FX | — |
+| P2 | **M8** Activation ingest + warranty provision | ⬜ | 02§G, 04§Serial/§Warranty | — |
+| P2 | **M9** Purchasing/receiving + supply + stock ops | ⬜ | 02§H, 04§Stock ops | — |
+| P2 | **M9b** Returns / RMA | ⬜ | **09** | — |
+| P2 | **M10** Deal Desk + rebates + migration/cutover | ⬜ | 04§ADLP, **18** | — |
+| P3 | **M11** H6Q forecasting | ⬜ | 02§K, 04§H6Q, **12**, 08 | — |
+| P3 | **M12** Intercompany + transfer pricing + tax/customs + hedges | ⬜ | 02§A/§I, **13**, **16** | — |
+| P3 | **M13** ERP/GL + P&L + Xero + documents | ⬜ | 04§Ledger, **16**, **17** | — |
+| P3 | **M13b** Period close + reconciliation + Auditability Center | ⬜ | 14§5–6, **20** | — |
+| P3 | **M14** Companion app + desk + Horizons + reporting + HubSpot | ◐ | 08, **20**, **21** | desk slice |
+| X | **NFR / Security / Ops-DR** (cross-cutting, P1 launch-blocker) | ⬜ | **19** | — |
+
+> Every backing doc now exists (the deep-dives 09/11/12/13 and launch-blockers 16–21 were written in this
+> planning pass). There are no longer any "unwritten spec" blockers — only implementation.
+
+---
+
+## 2. Carry-over residuals (close these as their enabling milestone lands)
+
+- **M4-R — CRM depth** (doc 11): deals/pipelines/stages, deal→order conversion, account-history projection,
+  ownership, party merge/dedupe, promote-to-billable policy, consignment-at-branch. *Built so far:* parties +
+  billing/credit + orders + tranches + amendments + ADLP exceptions. **Lands with M11** (deals feed H6Q) and a
+  CRM pass.
+- **M5-R — Commission true-up + lifecycle wiring** (doc 04§Commission): accrual currently uses `std_cost`
+  margin (the provisional basis). **True-up to actual batch landed cost needs M7**; **auto accrue-on-dispatch
+  / claw-on-cancel needs M6**. The engine + two-phase lifecycle are in place; only the event wiring + true-up
+  run remain.
+
+---
+
+## 3. Remaining milestones — verifiable step breakdown
+
+Each milestone lists **depends-on**, **sub-steps** (each independently testable), and the **acceptance gate**
+(from `07`/the backing doc). Build sub-steps in order; verify each before the next. Pure logic → ScalaCheck/
+weaver unit tests; persistence/eventing/ledger → `api-it` testcontainer integration; UI → Vitest + Playwright.
+
+### M6 — Inventory + ATP/allocation + dispatch + carriers  · depends: M4 (orders/tranches), M1 (events)
+1. **Stock model** — `stock_item`, `stock_movement` (append-only, on-hand = Σ movements); migration + repo. *Verify:* on-hand reconstructs from movements.
+2. **ATP + concurrency-safe allocation** — `allocate(line|tranche)` with `SELECT … FOR UPDATE` row-lock + serial `SKIP LOCKED` (04 §ATP). *Verify:* N parallel allocators on 1 unit → exactly one wins (race test).
+3. **Serial capture + dispatch** — `dispatch`/`dispatch_line`, `CarrierAdapter` (Rhenus/DPD/UPS stub), serial→destination, OTD. *Verify:* serialised line can't dispatch without serials (422); dispatch decrements stock, records carrier/tracking.
+4. **Per-tranche fulfilment** — allocate/dispatch/deliver per `delivery_tranche`, independently. *Verify:* a 2×250 order's tranches allocate/dispatch/deliver/invoice independently.
+5. **Wire M5-R** — emit `dispatch.delivered`; commission accrual posts on dispatch; cancel claws. *Verify:* accrual posts on dispatch, void on cancel (extends M5 suite).
+- **Gate (07 M6):** concurrent last-unit allocation never over-commits; serial-gated dispatch; per-tranche independence.
+
+### M7 — Batch / landed cost / serial genealogy  · depends: M6 (serials/stock)
+1. **`lot_batch`** — per-lot USD cost + freight + duty + FX (`fx_basis` spot/hedged), `landed_unit_cost` derivation (04 §FX). *Verify:* two lots of one SKU carry different landed costs (price/freight/FX differ).
+2. **Specific-identification costing** — each `serial_unit.lot_batch_id` resolves its own cost into margin/inventory/COGS; **no weighted-average anywhere**. *Verify:* serial resolves its lot cost; CI/test asserts no averaging.
+3. **Genealogy** — `unit_lifecycle_event` append-only; serial→batch→order→customer and batch→all-serials. *Verify:* both genealogy directions resolve.
+4. **Close M5-R true-up** — true-up run recomputes commission on actual batch margin (04 §Commission). *Verify:* posted accrual trues up to actual batch margin delta.
+- **Gate (07 M7):** different landed costs per lot; specific-id everywhere; genealogy both directions.
+
+### M8 — Activation ingest + warranty provision  · depends: M7 (batch cost basis)
+1. **Activation consumer** — Pulsar `athena-placement-versioned` (record `AthenaPlacementVersionedRecord` per CLAUDE.md), first-write-wins on serial, V2 ignored, idempotent on redelivery (04 §Serial). *Verify:* first V3 binds installer+owner + off-shelf; V2 ignored; redelivery no double.
+2. **Warranty provision** — clock starts at activation; `warranty_provision` at the unit's specific batch cost; `legal_warranty` + `warranty_extension` term; straight-line release; consolidated exposure (04 §Warranty). *Verify:* activation opens provision; nightly release advances; consolidated exposure sums.
+3. **Retroactive backfill** — replay all historical activations → reconstruct current exposure. *Verify:* replay reconstructs exposure to today.
+- **Gate (07 M8):** first-write-wins + idempotent; provision at batch cost; balance-sheet posting emitted downstream; replay reconstructs.
+
+### M9 — Purchasing/receiving + supply planning + stock operations  · depends: M6, M7
+1. **PO → GRN → landed cost** — `purchase_order`/`po_line`/`goods_receipt`/`landed_cost_component`; receiving lands cost + increments stock + creates `lot_batch`. *Verify:* receiving lands cost, auto-allocates oldest backorders by requested date.
+2. **Replenishment** — `replenishment_suggestion` from run-rate/net requirement. *Verify:* sustained activation run-rate change moves replenishment.
+3. **Stock ops (maker-checker)** — cycle counts, transfers (in-transit), write-offs/damage/adjustments; all maker≠checker, immutable movements, ledger write-down at batch cost (04 §Stock ops). *Verify:* count variance / transfer / write-off each need a 2nd approver, post immutable movements + ledger value, fully reconstructable.
+- **Gate (07 M9):** backorder auto-fill; maker-checker on every stock op + ledger write-down + reconstruction.
+
+### M9b — Returns / RMA  · depends: M6, M7, M8; **doc 09**
+1. **RMA model + types** — extend `rma` stub per doc 09 (full unit / part-only / multi-unit / DOA / warranty replacement / goodwill). 2. **Lifecycle state machine** raise→assess→approve→receive→disposition→refund/replace→close (maker-checker). 3. **Disposition routing** restock/refurbish/scrap/return-to-supplier (serials never silently re-enter sellable stock). 4. **Ledger reversal** at specific batch cost + VAT reversal + **commission claw**. 5. **Replacement order** issues a new order + fresh warranty.
+- **Gate (07 M9b / doc 09):** part-only vs full-unit distinct flows; correct disposition; ledger reverses at batch cost + commission claws; warranty replacement starts fresh warranty. *(15 acceptance points in doc 09.)*
+
+### M10 — Deal Desk + rebates; migration & cutover  · depends: M1–M9; **doc 18**
+1. **Deal Desk + rebates** — exception workflow ends at an immutable CEO memo; `rebate` budgets. *Verify:* exception ends only at CEO memo (immutable).
+2. **Migration** (doc 18, the biggest go-live risk) — source→target mapping (MRPeasy/Ghost Busters/Athena), opening balances into TigerBeetle (specific batch cost), idempotent replay-path backfill, dual-run reconciliation, cutover validation (physical count ties to the penny), rollback. *Verify:* migration brings serial/activation/shipment/batch history with audited opening balances, validated by a stock count at cutover.
+- **Gate (07 M10 / doc 18):** the phased runbook G1–G6 gates pass; reconciliations zero before cutover.
+
+### M11 — H6Q forecasting  · depends: M4-R (deals), M6/M8 (actuals); **doc 12**
+1. **Cycle engine** — weekly open/close, outstanding-submission per owned account, owner notifications (tz-agnostic). 2. **Versioned submissions** — append-only, superseded_by, full time-series. 3. **Bottom-up rollup** — account→…→market + dual aggregation by branch and by agent (reconciling). 4. **Scenarios + Hyperview** — P20/P50/P80, ex-account cuts, `source='hyperview'` precedence. 5. **Accuracy** — error/bias/MAPE vs actuals. 6. **Board** — layer-aware drill-down + export.
+- **Gate (07 M11 / doc 12):** cycle opens outstanding submissions + notifies; per-account submit rolls up bottom-up and re-aggregates by agent (reconciles); append-only revisions; "who still owes"; coverage/WoW live; ex-Octopus/ex-Motability toggles; volume-only sees no money; ship-not-activate overhang; accuracy scores past estimates.
+
+### M12 — Intercompany + transfer pricing + tax/customs + treasury hedges  · depends: M7; **docs 13, 16**
+1. **Procurement topology** — `procurement_parent_id` chain (year-1 UK←Luxshare-UK; multi-tier = config). 2. **Transfer pricing** — cost_plus/resale_minus/fixed off specific batch cost; reproducible `tp_document`. 3. **Paired legs** — two linked TigerBeetle transfers, FX_CLEARING bridge, atomic. 4. **Tax/customs engine** (doc 16) — pluggable `TaxProvider`/`TaxQuote`; UK/EU rate-table default, US/CA via Avalara/TaxJar/Stripe Tax; import VAT/duty. 5. **Hedges + consolidation** — `fx_hedge` designation, ASC 830 USD translation.
+- **Gate (07 M12 / doc 13):** cross-entity move produces two reconciling legs; transfer price reproducible from policy+batch cost; import tax surfaced; designated hedge sets lot cost FX + draws notional; consolidated USD via hedge register.
+
+### M13 — ERP/GL + P&L consumers + Xero + documents  · depends: M6–M12; **docs 16, 17**
+1. **GL projections** — AR/AP/inventory off the ledger. 2. **P&L recognition** — matched revenue + COGS on `dispatch.delivered` (ASC 606), reclassify `COS_CLEARING`→COGS, downstream. 3. **Xero feed** — swappable accounting consumer. 4. **Document generation** (doc 17) — invoices/credit-notes/proformas/packing-lists/commercial-invoices/statements; per-locale/jurisdiction templates; gapless numbering; PDF; invoice auto-issued on delivery.
+- **Gate (07 M13):** every financial event posts to TB and reaches Xero via the queue; P&L recognises rev+COGS together on delivery at specific batch cost; swapping the accounting consumer needs no core change; legal documents render per locale/jurisdiction.
+
+### M13b — Period close + reconciliation + Auditability Center  · depends: M13; **docs 14, 20**
+1. **Close + lock** — checklist + period lock (no back-posting). 2. **Reconciliation engine** — TB↔GL, GL↔Xero, inventory↔counts, AR↔invoices, with sign-off. 3. **Control register + runs** — re-perform `evidence_query`. 4. **Auditability Center** (doc 20 screens) — lineage explorer (figure→transfers→events→documents→replay), money-integrity + time/preview-reslice panels, read-only `auditor` portal, evidence export.
+- **Gate (07 M13b / 14 §5–6):** a month can't lock with an open reconciliation exception; a revenue figure drills to transfers→events→documents and re-derives by replay; "preview reslice" shows period moves before commit; "re-perform now" records a `control_run`; auditor can view+export but edit nothing.
+
+### M14 — Companion app + back-office desk + Horizons + reporting + HubSpot  · depends: M11–M13b; **docs 08, 20, 21**
+1. **Companion app** — field surface (spec 08: Flutter; **OPEN decision** — Flutter vs React+StyleX PWA, see CLAUDE.md §5), offline-tolerant. 2. **Back-office desk** — the full doc-20 screens (pricing governance, permission builder, Deal Desk, H6Q board, finance, supply, admin, Auditability Center) on the existing Vite+React+StyleX slice. 3. **Horizons feed + reporting** (doc 21) — units→revenue→COGS→GP feed; layer-respecting reports/exports. 4. **HubSpot replication** — CRM/deals out at end of flow.
+- **Gate (07 M14):** one companion codebase serves mobile/tablet/web; owner submits weekly forecasts + sees own real-time commission offline-tolerant; Horizons feed reaches downstream; reports respect data layers; CRM replicates to HubSpot.
+
+### X — NFR / Security / Ops-DR  · cross-cutting, **doc 19** (P1 launch-blocker)
+Not a single milestone — verified continuously and gated at go-live: latency/throughput/availability SLAs;
+RPO/RTO + backup/restore (Postgres/TigerBeetle/Pulsar); secrets/encryption; **GDPR erasure/DSAR crypto-shred
+procedure**; STRIDE threat model; SOX controls index; alerting; DLQ-replay + projection-rebuild runbooks; CI
+migration-safety (Flyway forward-only, Avro `schemaCheck`, no-float, secret-scan).
+- **Gate (doc 19):** the verification block — latency budgets met under load; a DSAR erases PII while the
+  financial skeleton stays intact + balances unchanged; DLQ-replay and projection-rebuild runbooks execute;
+  backups restore within RTO; all CI gates green on every MR.
+
+---
+
+## 4. Recommended build order
+
+Continue **M6 → M7 → M8 → M9** (the traceability/supply core; each unlocks the next, and M6+M7 close the
+M5 residuals), then **M9b** (returns) and **M10** (deal desk + the migration runbook — start it early in
+parallel since it's the biggest go-live risk). Then Phase 3 **M11 → M12 → M13 → M13b → M14**. Thread **doc-19
+NFR/Security/Ops** work continuously (it gates go-live, not a milestone). Build each sub-step test-first against
+its acceptance gate; keep the per-milestone suite green before moving on.

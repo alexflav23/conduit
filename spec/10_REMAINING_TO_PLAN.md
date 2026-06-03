@@ -21,7 +21,7 @@ Legend — **P1** = blocks go-live or a Phase-2/3 milestone · **P2** = needed f
 
 | Area | Scope | Priority | Blocks |
 |---|---|---|---|
-| **Migration & cutover runbook** | Field-level source→target mapping (MRPeasy / Ghost Busters / Athena), opening-balance derivation into TigerBeetle, idempotent backfill, dual-run reconciliation, validation, rollback. **Biggest practical risk — cannot go live without it.** | **P1** | M10 |
+| **Migration & cutover runbook** | Field-level source→target mapping (MRPeasy / Ghost Busters / Athena), opening-balance derivation into TigerBeetle, idempotent backfill, dual-run reconciliation, validation, rollback. **Biggest practical risk — cannot go live without it.** ✅ **Specced in [18_MIGRATION_CUTOVER](18_MIGRATION_CUTOVER.md).** | **P1** | M10 |
 | **Tax & customs engine** | VAT determination (place of supply, B2B reverse charge, EU vs ROW, import VAT), **US destination sales tax (per-state/county, economic nexus) and Canada GST/HST/PST**, CH/NO non-EU, HS/commodity codes, Intrastat / EC sales lists. Multi-jurisdiction and legally exact — **almost certainly a tax-calc integration (Avalara / TaxJar / Stripe Tax)** rather than hand-rolled rates, especially for US/CA. | **P1** | M12/M13 |
 | **Localization / i18n** | Full localization across the supported locales (15 languages incl. CJK + Thai): app strings (Flutter ARB), `product_translation`, localized document templates, per-locale number/currency/date formatting, locale fallback chain. Reference data (`market`/`currency`/`locale`) is seeded in doc 02 §A. | **P1** | M14 / documents |
 | **Document generation** | Invoices, credit notes, proformas, packing lists, **commercial invoices for customs**, statements: templates **per locale + per jurisdiction legal content**, numbering schemes, PDF. Legally required artifacts. | **P1** | M13 |
@@ -48,9 +48,9 @@ Legend — **P1** = blocks go-live or a Phase-2/3 milestone · **P2** = needed f
 
 | Item | Scope | Priority |
 |---|---|---|
-| **NFR doc** | SLAs/latency budgets, throughput, availability, RPO/RTO, scale assumptions (orders/day, events/sec, units under management), retention/archival | **P1** |
-| **Security beyond auth** | secrets management, encryption at rest/in transit, **GDPR erasure/DSAR procedure** (PII-in-log strategy flagged in 01 §3a; the *procedure* isn't written), rate limiting, threat model, **SOX controls documentation** | **P1** |
-| **Ops / observability / DR** | alerting strategy; the **DLQ-replay and projection-rebuild runbooks** (mechanism specced in 01/03, runbook isn't); backup/restore for Postgres + TigerBeetle + Pulsar; environments, release process, feature flags, CI migration-safety | **P1** |
+| **NFR doc** | SLAs/latency budgets, throughput, availability, RPO/RTO, scale assumptions (orders/day, events/sec, units under management), retention/archival. ✅ **Specced in [19_NFR_SECURITY_OPS](19_NFR_SECURITY_OPS.md) Part A.** | **P1** |
+| **Security beyond auth** | secrets management, encryption at rest/in transit, **GDPR erasure/DSAR procedure** (PII-in-log strategy flagged in 01 §3a; the *procedure* isn't written), rate limiting, threat model, **SOX controls documentation**. ✅ **Specced in [19_NFR_SECURITY_OPS](19_NFR_SECURITY_OPS.md) Part B.** | **P1** |
+| **Ops / observability / DR** | alerting strategy; the **DLQ-replay and projection-rebuild runbooks** (mechanism specced in 01/03, runbook isn't); backup/restore for Postgres + TigerBeetle + Pulsar; environments, release process, feature flags, CI migration-safety. ✅ **Specced in [19_NFR_SECURITY_OPS](19_NFR_SECURITY_OPS.md) Part C.** | **P1** |
 
 ---
 
