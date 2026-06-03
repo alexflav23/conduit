@@ -25,5 +25,15 @@ object LedgerAccountCode {
 }
 
 object LedgerTransferCode {
-  val Generic: Int = 1
+  val Generic: Int    = 1
+  val Commission: Int = 10
+}
+
+// TigerBeetle transfer flags (two-phase + linking).
+object LedgerFlags {
+  val None: Int                = 0
+  val Linked: Int              = 1
+  val Pending: Int             = 2
+  val PostPendingTransfer: Int = 4
+  val VoidPendingTransfer: Int = 8
 }
