@@ -22,7 +22,7 @@ API with `sbt api/stage` once, bakes it into a thin JRE image, and starts the st
 | Metrics      | http://localhost:9464                  | Prometheus |
 | Postgres     | localhost:5532 (user/pass/db = conduit)| `psql postgres://conduit:conduit@localhost:5532/conduit` |
 | TigerBeetle  | localhost:3033                         | the immutable ledger |
-| Desk         | http://localhost:3002                  | Vite dev server |
+| Desk         | http://localhost:3002 (or next free)   | Vite dev server — the runner prints the actual URL; 3002 may be taken by hyperstore, so it falls back to 4321+ |
 
 ### Auth tokens
 
@@ -128,7 +128,8 @@ HV310-0003,HV-310,Northern Wholesale,dispatched
 ## Troubleshooting
 
 - **API never goes healthy** — `docker logs conduit-local-api` (usually a migration or DB-connect issue).
-- **Port already in use** — Athena occupies the defaults; this stack uses 5532/6651/3033/8080/9990/9464/3002.
+- **Port already in use** — Athena occupies the defaults; this stack uses 5532/6651/3033/8080/9990/9464 and the
+  desk on the first free port from 3002/4321/… (the runner prints which). Note 3002 is often hyperstore.
   Stop the conflicting service or edit `docker-compose.local.yml`.
 - **Rebuild after code changes** — re-run `./local/run-local.sh`; it re-stages and rebuilds the image.
 - **Reset all data** — `docker compose -f docker-compose.local.yml down -v` then re-run.

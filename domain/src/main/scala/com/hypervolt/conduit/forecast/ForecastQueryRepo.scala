@@ -236,6 +236,31 @@ object ForecastQueryRepo {
           .deepMerge(Json.obj("sku" -> t._18.asJson))
       })
 
+  // The full demand matrix: every SKU (row) across every month (column) at once — the spreadsheet view.
+  // Market-level per-SKU rows for one scenario; the desk pivots into SKU x month with totals.
+  def coverageMatrix(market: UUID, scenario: UUID): ConnectionIO[List[Json]] =
+    sql"""SELECT v.sku, f.name, to_char(pc.period_month, 'YYYY-MM'),
+                 pc.forecast_qty, pc.shipped_qty, pc.activated_qty
+          FROM pipeline_coverage pc
+          JOIN product_variant v ON v.id = pc.product_variant_id
+          LEFT JOIN product_family f ON f.id = v.family_id
+          WHERE pc.market_id = $market AND pc.scenario_id = $scenario
+            AND pc.level = 'market' AND pc.product_variant_id IS NOT NULL
+          ORDER BY v.sku, pc.period_month"""
+      .query[(String, Option[String], String, Int, Int, Int)]
+      .to[List]
+      .map(_.map {
+        case (sku, fam, month, fc, sh, act) =>
+          Json.obj(
+            "sku"      -> sku.asJson,
+            "family"   -> fam.asJson,
+            "month"    -> month.asJson,
+            "forecast" -> fc.asJson,
+            "shipped"  -> sh.asJson,
+            "activated" -> act.asJson
+          )
+      })
+
   // Reconcile (doc 12 §11 GET /h6q/coverage/reconcile): the branch axis and the agent axis must tie.
   def reconcile(market: UUID, period: LocalDate, scenario: UUID): ConnectionIO[Json] =
     sql"""SELECT level, COALESCE(SUM(forecast_qty),0), COALESCE(SUM(weighted_pipeline_qty),0),

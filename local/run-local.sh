@@ -10,7 +10,11 @@
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DESK="$ROOT/conduit-desk"
+# Pick the first free desk port (3002 is often taken by hyperstore; don't silently collide).
 DESK_PORT=3002
+for p in 3002 4321 4322 5180 3009 3019; do
+  if ! lsof -iTCP:$p -sTCP:LISTEN >/dev/null 2>&1; then DESK_PORT=$p; break; fi
+done
 IMPORT=false; NODESK=false
 for a in "$@"; do case "$a" in --import) IMPORT=true;; --no-desk) NODESK=true;; esac; done
 
@@ -67,4 +71,4 @@ cd "$DESK"
 [ -d node_modules ] || { echo "installing desk deps..."; yarn install; }
 echo "Desk: http://localhost:$DESK_PORT   (Ctrl-C to stop the desk; stack stays up)"
 echo "Stop the whole stack later with: docker compose -f $ROOT/docker-compose.local.yml down"
-yarn start -- --port "$DESK_PORT"
+yarn start -- --port "$DESK_PORT" --strictPort

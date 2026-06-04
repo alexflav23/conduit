@@ -3,7 +3,7 @@ import * as stylex from '@stylexjs/stylex';
 import { colors } from './styles/tokens.stylex';
 import {
   getMyForecasts, getScenarios, getVariants, submitForecast,
-  getCoverage, getReconcile, getNotifications, H6Q_MARKET, ForecastLine,
+  getCoverage, getCoverageMatrix, getReconcile, H6Q_MARKET, ForecastLine,
 } from './api';
 
 const styles = stylex.create({
@@ -32,14 +32,14 @@ const PERIOD = '2026-09';
 const BANDS = ['P20', 'P50', 'P80'] as const;
 
 export function H6Q({ token }: { token: string }) {
-  const [view, setView] = useState<'capture' | 'board'>('capture');
+  const [view, setView] = useState<'board' | 'capture'>('board');
   return (
     <div>
       <div {...stylex.props(styles.subnav)}>
+        <button {...stylex.props(styles.subtab, view === 'board' && styles.subtabActive)} data-testid="h6q-tab-board" onClick={() => setView('board')}>Demand (H6Q)</button>
         <button {...stylex.props(styles.subtab, view === 'capture' && styles.subtabActive)} data-testid="h6q-tab-capture" onClick={() => setView('capture')}>My forecast</button>
-        <button {...stylex.props(styles.subtab, view === 'board' && styles.subtabActive)} data-testid="h6q-tab-board" onClick={() => setView('board')}>Coverage board</button>
       </div>
-      {view === 'capture' ? <Capture token={token} /> : <Board token={token} />}
+      {view === 'board' ? <Board token={token} /> : <Capture token={token} />}
     </div>
   );
 }
@@ -133,94 +133,141 @@ function Capture({ token }: { token: string }) {
   );
 }
 
-// The rolled-up coverage board: the same atomic estimates aggregated by branch (org axis) or by agent
-// (ownership axis) — the two must reconcile. Layer-aware: a volume-only viewer sees units, no money.
+// The H6Q demand matrix: every SKU (row) across every month (column) at once — the spreadsheet view of the
+// whole forecast. This is the primary read: total demand, fully visible, never one-SKU-at-a-time. A secondary
+// "Reconcile" view aggregates by branch vs agent (which must tie) once bottom-up agent submissions exist.
 function Board({ token }: { token: string }) {
+  const [mode, setMode] = useState<'matrix' | 'reconcile'>('matrix');
   const [scenario, setScenario] = useState<string | null>(null);
+  const [matrix, setMatrix] = useState<any[]>([]);
   const [groupBy, setGroupBy] = useState<'branch' | 'agent'>('branch');
   const [rows, setRows] = useState<any[]>([]);
   const [ties, setTies] = useState<boolean | null>(null);
-  const [alerts, setAlerts] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState(false);
 
-  const load = async (group: 'branch' | 'agent') => {
+  const scenarioId = async (): Promise<string | null> => {
+    if (scenario) return scenario;
+    const s = await getScenarios(token);
+    const p50 = (s.json ?? []).find((x: any) => x.type === 'P50' && !x.toggle_basis);
+    const id = p50?.id ?? null; setScenario(id); return id;
+  };
+
+  const loadMatrix = async () => {
     setError(null);
-    let sc = scenario;
-    if (!sc) {
-      const s = await getScenarios(token);
-      const p50 = (s.json ?? []).find((x: any) => x.type === 'P50' && !x.toggle_basis);
-      sc = p50?.id ?? null; setScenario(sc);
-    }
+    const sc = await scenarioId();
+    if (!sc) { setError('no scenario'); return; }
+    const m = await getCoverageMatrix(token, H6Q_MARKET, sc);
+    if (m.status !== 200) { setError(`Matrix failed (${m.status})`); return; }
+    setMatrix(m.json ?? []); setLoaded(true);
+  };
+
+  const loadReconcile = async (group: 'branch' | 'agent') => {
+    setError(null);
+    const sc = await scenarioId();
     if (!sc) { setError('no scenario'); return; }
     const cov = await getCoverage(token, H6Q_MARKET, PERIOD, sc, group);
     if (cov.status !== 200) { setError(`Coverage failed (${cov.status})`); return; }
-    setRows(cov.json ?? []);
+    setRows(cov.json ?? []); setLoaded(true);
     const rec = await getReconcile(token, H6Q_MARKET, PERIOD, sc);
     setTies(rec.json?.ties ?? null);
-    const notes = await getNotifications(token);
-    if (notes.status === 200) setAlerts(notes.json ?? []);
   };
 
-  const total = rows.reduce((acc, r) => acc + (r.forecast_qty ?? 0), 0);
-  const label = (r: any) => groupBy === 'agent' ? (r.agent_user_id ?? '—').slice(0, 8) : (r.branch_company_id ?? '—').slice(0, 8);
+  React.useEffect(() => { loadMatrix(); /* auto-load the matrix on open */ }, []);
+
+  // Pivot the flat matrix rows into SKU x month with totals.
+  const months = Array.from(new Set(matrix.map((r) => r.month))).sort();
+  const skus = Array.from(new Set(matrix.map((r) => r.sku))).sort();
+  const cellMap: Record<string, number> = {};
+  const famOf: Record<string, string> = {};
+  matrix.forEach((r) => { cellMap[`${r.sku}|${r.month}`] = r.forecast; if (r.family) famOf[r.sku] = r.family; });
+  const colTotal = (m: string) => skus.reduce((a, s) => a + (cellMap[`${s}|${m}`] ?? 0), 0);
+  const rowTotal = (s: string) => months.reduce((a, m) => a + (cellMap[`${s}|${m}`] ?? 0), 0);
+  const grand = months.reduce((a, m) => a + colTotal(m), 0);
+  const fmt = (n: number) => n.toLocaleString();
 
   return (
-    <div {...stylex.props(styles.card)}>
+    <div {...stylex.props(styles.card)} style={{ maxWidth: 'none' }}>
       <div {...stylex.props(styles.row)}>
-        <button {...stylex.props(styles.ghost, groupBy === 'branch' && styles.subtabActive)} data-testid="h6q-by-branch" onClick={() => { setGroupBy('branch'); load('branch'); }}>By branch</button>
-        <button {...stylex.props(styles.ghost, groupBy === 'agent' && styles.subtabActive)} data-testid="h6q-by-agent" onClick={() => { setGroupBy('agent'); load('agent'); }}>By agent</button>
-        <button {...stylex.props(styles.button)} data-testid="h6q-board-load" onClick={() => load(groupBy)}>Load board</button>
-        {ties !== null && <span {...stylex.props(styles.chip, ties ? styles.ok : styles.warn)} data-testid="h6q-reconcile">{ties ? 'branch ≡ agent ✓' : 'reconcile mismatch'}</span>}
+        <button {...stylex.props(styles.ghost, mode === 'matrix' && styles.subtabActive)} data-testid="h6q-mode-matrix" onClick={() => { setMode('matrix'); loadMatrix(); }}>Demand matrix</button>
+        <button {...stylex.props(styles.ghost, mode === 'reconcile' && styles.subtabActive)} data-testid="h6q-mode-reconcile" onClick={() => { setMode('reconcile'); loadReconcile(groupBy); }}>Reconcile (branch ≡ agent)</button>
         {error && <span data-testid="h6q-board-error" style={{ color: colors.warn }}>{error}</span>}
       </div>
-      <div {...stylex.props(styles.row)}>
-        <span {...stylex.props(styles.section)}>{groupBy === 'agent' ? 'By sales agent' : 'By branch'} · {PERIOD} · P50</span>
-        <span {...stylex.props(styles.total)} data-testid="h6q-total">{total} units</span>
-      </div>
-      <table {...stylex.props(styles.table)}>
-        <thead>
-          <tr>
-            <th {...stylex.props(styles.th)}>{groupBy === 'agent' ? 'Agent' : 'Branch'}</th>
-            <th {...stylex.props(styles.th)}>Forecast</th>
-            <th {...stylex.props(styles.th)}>Shipped (sell-in)</th>
-            <th {...stylex.props(styles.th)}>Activated (sell-through)</th>
-            <th {...stylex.props(styles.th)}>Coverage</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r, i) => (
-            <tr key={i} data-testid="h6q-board-row">
-              <td {...stylex.props(styles.td)}>{label(r)}</td>
-              <td {...stylex.props(styles.td)}>{r.forecast_qty}</td>
-              <td {...stylex.props(styles.td)}>{r.shipped_qty}</td>
-              <td {...stylex.props(styles.td)}>{r.activated_qty}</td>
-              <td {...stylex.props(styles.td, styles.cov)}>{r.coverage_pct == null ? '—' : `${Math.round(parseFloat(r.coverage_pct) * 100)}%`}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
 
-      <div {...stylex.props(styles.section)} style={{ marginTop: '1.25rem' }}>Forward-visibility alerts — who was told H6Q shifted</div>
-      <table {...stylex.props(styles.table)} data-testid="h6q-alerts">
-        <thead>
-          <tr>
-            <th {...stylex.props(styles.th)}>Recipient</th>
-            <th {...stylex.props(styles.th)}>Channel</th>
-            <th {...stylex.props(styles.th)}>Message</th>
-            <th {...stylex.props(styles.th)}>Status</th>
-          </tr>
-        </thead>
-        <tbody>
-          {alerts.slice(0, 8).map((a, i) => (
-            <tr key={i} data-testid="h6q-alert-row">
-              <td {...stylex.props(styles.td)}>{a.subscription}</td>
-              <td {...stylex.props(styles.td)}>{a.channel}</td>
-              <td {...stylex.props(styles.td)}>{a.body}</td>
-              <td {...stylex.props(styles.td)}><span {...stylex.props(styles.chip, a.status === 'sent' ? styles.ok : styles.muted)}>{a.status}</span></td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      {mode === 'matrix' ? (
+        <>
+          <div {...stylex.props(styles.row)}>
+            <span {...stylex.props(styles.section)}>Forecast units · all SKUs × all months · P50 · market total</span>
+            <span {...stylex.props(styles.total)} data-testid="h6q-grand-total">{fmt(grand)} units</span>
+          </div>
+          <div style={{ overflowX: 'auto' }}>
+            <table {...stylex.props(styles.table)}>
+              <thead>
+                <tr>
+                  <th {...stylex.props(styles.th)} style={{ position: 'sticky', left: 0, backgroundColor: colors.surface }}>SKU</th>
+                  {months.map((m) => <th key={m} {...stylex.props(styles.th)} style={{ textAlign: 'right' }}>{m}</th>)}
+                  <th {...stylex.props(styles.th)} style={{ textAlign: 'right' }}>Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {skus.map((s) => (
+                  <tr key={s} data-testid="h6q-matrix-row">
+                    <td {...stylex.props(styles.td)} style={{ position: 'sticky', left: 0, backgroundColor: colors.surface }}>
+                      {s}<div style={{ color: colors.muted, fontSize: '0.72rem' }}>{famOf[s] ?? ''}</div>
+                    </td>
+                    {months.map((m) => <td key={m} {...stylex.props(styles.td)} style={{ textAlign: 'right' }}>{fmt(cellMap[`${s}|${m}`] ?? 0)}</td>)}
+                    <td {...stylex.props(styles.td, styles.cov)} style={{ textAlign: 'right' }}>{fmt(rowTotal(s))}</td>
+                  </tr>
+                ))}
+                <tr>
+                  <td {...stylex.props(styles.td, styles.total)} style={{ position: 'sticky', left: 0, backgroundColor: colors.surface }}>Total</td>
+                  {months.map((m) => <td key={m} {...stylex.props(styles.td, styles.total)} style={{ textAlign: 'right' }} data-testid={`h6q-coltotal-${m}`}>{fmt(colTotal(m))}</td>)}
+                  <td {...stylex.props(styles.td, styles.total)} style={{ textAlign: 'right' }}>{fmt(grand)}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          {loaded && skus.length === 0 && (
+            <p style={{ color: colors.muted }}>No forecast yet. Import H6Q (<code>./local/run-local.sh --import</code>) or submit a forecast on the “My forecast” tab.</p>
+          )}
+        </>
+      ) : (
+        <>
+          <div {...stylex.props(styles.row)}>
+            <button {...stylex.props(styles.ghost, groupBy === 'branch' && styles.subtabActive)} data-testid="h6q-by-branch" onClick={() => { setGroupBy('branch'); loadReconcile('branch'); }}>By branch</button>
+            <button {...stylex.props(styles.ghost, groupBy === 'agent' && styles.subtabActive)} data-testid="h6q-by-agent" onClick={() => { setGroupBy('agent'); loadReconcile('agent'); }}>By agent</button>
+            {ties !== null && <span {...stylex.props(styles.chip, ties ? styles.ok : styles.warn)} data-testid="h6q-reconcile">{ties ? 'branch ≡ agent ✓' : 'reconcile mismatch'}</span>}
+            <span {...stylex.props(styles.section)}>{groupBy === 'agent' ? 'By sales agent' : 'By branch'} · {PERIOD} · P50</span>
+          </div>
+          <table {...stylex.props(styles.table)}>
+            <thead>
+              <tr>
+                <th {...stylex.props(styles.th)}>{groupBy === 'agent' ? 'Agent' : 'Branch'}</th>
+                <th {...stylex.props(styles.th)} style={{ textAlign: 'right' }}>Forecast</th>
+                <th {...stylex.props(styles.th)} style={{ textAlign: 'right' }}>Shipped</th>
+                <th {...stylex.props(styles.th)} style={{ textAlign: 'right' }}>Activated</th>
+                <th {...stylex.props(styles.th)} style={{ textAlign: 'right' }}>Coverage</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r, i) => (
+                <tr key={i} data-testid="h6q-board-row">
+                  <td {...stylex.props(styles.td)}>{groupBy === 'agent' ? (r.agent_user_id ?? '—').slice(0, 8) : (r.branch_company_id ?? '—').slice(0, 8)}</td>
+                  <td {...stylex.props(styles.td)} style={{ textAlign: 'right' }}>{r.forecast_qty}</td>
+                  <td {...stylex.props(styles.td)} style={{ textAlign: 'right' }}>{r.shipped_qty}</td>
+                  <td {...stylex.props(styles.td)} style={{ textAlign: 'right' }}>{r.activated_qty}</td>
+                  <td {...stylex.props(styles.td, styles.cov)} style={{ textAlign: 'right' }}>{r.coverage_pct == null ? '—' : `${Math.round(parseFloat(r.coverage_pct) * 100)}%`}</td>
+                </tr>
+              ))}
+              {loaded && rows.length === 0 && (
+                <tr><td {...stylex.props(styles.td)} colSpan={5} style={{ color: colors.muted }}>
+                  No branch/agent rows at {PERIOD} — this view needs bottom-up agent submissions. Imported/market forecasts show on the Demand matrix.
+                </td></tr>
+              )}
+            </tbody>
+          </table>
+        </>
+      )}
     </div>
   );
 }

@@ -470,6 +470,29 @@ final class H6QRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
             }
       })
 
+  private val coverageMatrix =
+    base.get
+      .in("api" / "v1" / "h6q" / "coverage" / "matrix")
+      .in(query[String]("market"))
+      .in(query[String]("scenario"))
+      .out(jsonBody[Json])
+      .serverLogic(principal => {
+        case (marketStr, scenarioStr) =>
+          if (!PolicyEngine.hasPermission(principal, Action.View, "pipeline_coverage"))
+            Async[F].pure(Left(err(StatusCode.Forbidden, "forbidden", "requires view:pipeline_coverage")))
+          else
+            (uuid(marketStr), uuid(scenarioStr)).tupled match {
+              case Left(e) => Async[F].pure(Left(e))
+              case Right((market, scenario)) =>
+                ForecastQueryRepo
+                  .coverageMatrix(market, scenario)
+                  .transact(xa)
+                  .map(rows =>
+                    Right(Json.fromValues(rows.map(r => Projection.projectFor(principal, "pipeline_coverage", r))))
+                  )
+            }
+      })
+
   private val reconcile =
     base.get
       .in("api" / "v1" / "h6q" / "coverage" / "reconcile")
@@ -561,6 +584,7 @@ final class H6QRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
         notifications,
         coverage,
         coverageBySku,
+        coverageMatrix,
         waterfall,
         autoPoPropose,
         suppliers,

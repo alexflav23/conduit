@@ -72,6 +72,16 @@ export function getCoverage(token: string, market: string, period: string, scena
   return call(`/api/v1/h6q/coverage?market=${market}&period=${period}&scenario=${scenario}&group_by=${groupBy}`, token, 'GET');
 }
 
+// The per-SKU market breakdown (what an imported H6Q populates — quantities per SKU per month).
+export function getCoverageBySku(token: string, market: string, period: string, scenario: string) {
+  return call(`/api/v1/h6q/coverage/by-sku?market=${market}&period=${period}&scenario=${scenario}&group_by=market`, token, 'GET');
+}
+
+// The full demand matrix: all SKUs across all months for one scenario (the spreadsheet view).
+export function getCoverageMatrix(token: string, market: string, scenario: string) {
+  return call(`/api/v1/h6q/coverage/matrix?market=${market}&scenario=${scenario}`, token, 'GET');
+}
+
 export function getReconcile(token: string, market: string, period: string, scenario: string) {
   return call(`/api/v1/h6q/coverage/reconcile?market=${market}&period=${period}&scenario=${scenario}`, token, 'GET');
 }
