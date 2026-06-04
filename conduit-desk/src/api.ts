@@ -92,6 +92,25 @@ export function getLedger(token: string, market: string, period: string) {
   return call(`/api/v1/h6q/ledger?market=${market}&period=${period}`, token, 'GET');
 }
 
+export function getContractManufacturers(token: string) {
+  return call('/api/v1/h6q/suppliers', token, 'GET');
+}
+export function getSupplyCommitments(token: string, supplier: string) {
+  return call(`/api/v1/h6q/supply/commitments?supplier=${supplier}`, token, 'GET');
+}
+export function getProposals(token: string, supplier: string) {
+  return call(`/api/v1/h6q/supply/proposals?supplier=${supplier}`, token, 'GET');
+}
+export function getSupplyWarnings(token: string, supplier: string) {
+  return call(`/api/v1/h6q/supply/warnings?supplier=${supplier}`, token, 'GET');
+}
+export function approvePo(token: string, supplier: string, variant: string, target: string) {
+  return call('/api/v1/h6q/supply/approve', token, 'POST', { supplier, variant, target });
+}
+export function getShelfBoard(token: string) {
+  return call('/api/v1/h6q/shelf', token, 'GET');
+}
+
 export const H6Q_MARKET = DEMO_MARKET;
 
 export async function placeOrder(token: string, lines: QuoteLine[]) {

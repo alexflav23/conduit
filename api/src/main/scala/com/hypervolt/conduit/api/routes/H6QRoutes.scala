@@ -14,6 +14,7 @@ import com.hypervolt.conduit.revenue.RevenueQueryRepo
 import com.hypervolt.conduit.supply.AutoPoProposer
 import com.hypervolt.conduit.supply.SerialShelfRepo
 import com.hypervolt.conduit.supply.SupplyCommitmentService
+import com.hypervolt.conduit.supply.SupplyQueryRepo
 import com.hypervolt.conduit.supply.WaterfallRepo
 import doobie.implicits._
 import doobie.postgres.implicits._
@@ -46,6 +47,9 @@ object SubmitMixReq { implicit val codec: Codec[SubmitMixReq] = deriveCodec }
 
 final case class AutoPoReq(supplier: String, market: String, period: String, scenario: String, asOf: String)
 object AutoPoReq { implicit val codec: Codec[AutoPoReq] = deriveCodec }
+
+final case class ApprovePoReq(supplier: String, variant: String, target: String)
+object ApprovePoReq { implicit val codec: Codec[ApprovePoReq] = deriveCodec }
 
 // H6Q REST surface (doc 12 §11). Capture is own-scope create:forecast; the coverage board is
 // view:pipeline_coverage, scope-filtered and layer-projected (volume/commercial/profitability).
@@ -336,6 +340,70 @@ final class H6QRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
             }
       })
 
+  // Supply window reads: contract manufacturers, the firm-commitment horizon, proposals, divergence warnings.
+  private def supplyRead(path: String, q: UUID => doobie.ConnectionIO[List[Json]]) =
+    base.get
+      .in("api" / "v1" / "h6q" / "supply" / path)
+      .in(query[String]("supplier"))
+      .out(jsonBody[Json])
+      .serverLogic(principal =>
+        supStr =>
+          if (!PolicyEngine.hasPermission(principal, Action.View, "pipeline_coverage"))
+            Async[F].pure(Left(err(StatusCode.Forbidden, "forbidden", "requires view:pipeline_coverage")))
+          else
+            uuid(supStr) match {
+              case Left(e)    => Async[F].pure(Left(e))
+              case Right(sup) => q(sup).transact(xa).map(rows => Right(Json.fromValues(rows)))
+            }
+      )
+
+  private val suppliers =
+    base.get
+      .in("api" / "v1" / "h6q" / "suppliers")
+      .out(jsonBody[Json])
+      .serverLogic(_ =>
+        _ => SupplyQueryRepo.contractManufacturers.transact(xa).map(rows => Right(Json.fromValues(rows)))
+      )
+
+  private val supplyCommitmentsR = supplyRead("commitments", SupplyQueryRepo.commitments)
+  private val supplyProposalsR   = supplyRead("proposals", SupplyQueryRepo.proposals)
+  private val supplyWarningsR    = supplyRead("warnings", SupplyQueryRepo.warnings)
+
+  // Approve a proposal: commit its (committed + proposed_delta) to the firm PO (within headroom by construction).
+  private val supplyApprove =
+    base.post
+      .in("api" / "v1" / "h6q" / "supply" / "approve")
+      .in(jsonBody[ApprovePoReq])
+      .out(jsonBody[Json])
+      .serverLogic(principal =>
+        req =>
+          if (
+            !PolicyEngine.hasPermission(principal, Action.Edit, "pipeline_coverage") &&
+            !PolicyEngine.hasPermission(principal, Action.View, "pipeline_coverage")
+          )
+            Async[F].pure(Left(err(StatusCode.Forbidden, "forbidden", "requires pipeline_coverage")))
+          else
+            (uuid(req.supplier), uuid(req.variant), date(req.target)).tupled match {
+              case Left(e) => Async[F].pure(Left(e))
+              case Right((sup, v, target)) =>
+                SupplyQueryRepo.proposal(sup, v, target).transact(xa).flatMap {
+                  case None => Async[F].pure(Left(err(StatusCode.NotFound, "not_found", "no open proposal")))
+                  case Some(qty) =>
+                    supplyCommitments
+                      .commit(sup, v, target, qty, LocalDate.now(java.time.ZoneOffset.UTC), force = false)
+                      .flatMap {
+                        case Left(reason) =>
+                          Async[F].pure(Left(err(StatusCode.Conflict, reason, s"cannot commit: $reason")))
+                        case Right(a) =>
+                          SupplyQueryRepo
+                            .markCommitted(sup, v, target)
+                            .transact(xa)
+                            .as(Right(Json.obj("committed_qty" -> qty.asJson, "zone" -> a.zone.asJson)))
+                      }
+                }
+            }
+      )
+
   // Real-time per-account shelf (shipped/activated/on-shelf), attributed by Conduit at dispatch.
   private val shelf =
     base.get
@@ -495,6 +563,11 @@ final class H6QRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
         coverageBySku,
         waterfall,
         autoPoPropose,
+        suppliers,
+        supplyCommitmentsR,
+        supplyProposalsR,
+        supplyWarningsR,
+        supplyApprove,
         shelf,
         ledger,
         reconcile,

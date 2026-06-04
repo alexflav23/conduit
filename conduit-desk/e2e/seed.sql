@@ -105,3 +105,41 @@ BEGIN
               123456789012345678901234567890, 223456789012345678901234567890, 323456789012345678901234567890, '2026-09-15');
   END IF;
 END $$;
+
+-- Supply window + Shelf demo: Volex as a contract manufacturer with a firm-commitment horizon, an open auto-PO
+-- proposal, a frozen-window divergence warning, and serials attributed to an account (one activated → on-shelf).
+DO $$
+DECLARE vlx uuid; v_id uuid; flowcust uuid; loc uuid;
+BEGIN
+  SELECT id INTO v_id FROM product_variant WHERE sku = 'HV-310';
+  SELECT id INTO flowcust FROM party WHERE display_name = 'Flow Cust' LIMIT 1;
+  IF NOT EXISTS (SELECT 1 FROM supplier WHERE name = 'Volex') THEN
+    INSERT INTO supplier (name, billing_currency, is_contract_manufacturer) VALUES ('Volex','USD',true);
+  END IF;
+  SELECT id INTO vlx FROM supplier WHERE name = 'Volex' LIMIT 1;
+
+  INSERT INTO supply_commitment (supplier_id, product_variant_id, target_date, qty, zone)
+    SELECT vlx, v_id, d.dt, d.q, d.z FROM (VALUES
+      (DATE '2026-07-06', 100, 'frozen'),
+      (DATE '2026-09-07', 120, 'flex'),
+      (DATE '2026-12-28', 300, 'free')) AS d(dt, q, z)
+    ON CONFLICT (supplier_id, product_variant_id, target_date) DO NOTHING;
+
+  INSERT INTO po_proposal (supplier_id, product_variant_id, target_date, demand_qty, committed_qty, available_qty, net_need, proposed_delta, blocked_qty, zone)
+    VALUES (vlx, v_id, DATE '2026-09-07', 200, 120, 30, 50, 24, 26, 'flex')
+    ON CONFLICT (supplier_id, product_variant_id, target_date) DO NOTHING;
+
+  INSERT INTO commitment_warning (supplier_id, product_variant_id, target_date, zone, committed_qty, demand_qty, delta, source, severity, message)
+    SELECT vlx, v_id, DATE '2026-07-06', 'frozen', 100, 150, 50, 'sales_input', 'block',
+           'sales_input demand 150 diverges from the frozen firm PO of 100 (delta 50)'
+    WHERE NOT EXISTS (SELECT 1 FROM commitment_warning WHERE supplier_id = vlx AND product_variant_id = v_id AND target_date = DATE '2026-07-06');
+
+  SELECT id INTO loc FROM location LIMIT 1;
+  IF loc IS NULL THEN INSERT INTO location (code, name) VALUES ('W-SIM','Sim Warehouse') RETURNING id INTO loc; END IF;
+  IF flowcust IS NOT NULL AND NOT EXISTS (SELECT 1 FROM serial_unit WHERE company_id = flowcust) THEN
+    INSERT INTO serial_unit (serial_no, generation, product_variant_id, company_id, status) VALUES
+      ('SHELF-1','v3',v_id,flowcust,'dispatched'),
+      ('SHELF-2','v3',v_id,flowcust,'dispatched'),
+      ('SHELF-3','v3',v_id,flowcust,'activated');
+  END IF;
+END $$;

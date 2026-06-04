@@ -5,6 +5,8 @@ import { OrderDesk } from './OrderDesk';
 import { DealDesk } from './DealDesk';
 import { H6Q } from './H6Q';
 import { Flow } from './Flow';
+import { SupplyWindow } from './SupplyWindow';
+import { Shelf } from './Shelf';
 
 const styles = stylex.create({
   page: { minHeight: '100vh', backgroundColor: colors.bg, color: colors.text, fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif', padding: '2rem' },
@@ -20,7 +22,7 @@ const styles = stylex.create({
 
 export function App() {
   const [token, setToken] = useState('dev:agent-e2e');
-  const [view, setView] = useState<'order' | 'dealdesk' | 'h6q' | 'flow'>('order');
+  const [view, setView] = useState<'order' | 'dealdesk' | 'h6q' | 'flow' | 'supply' | 'shelf'>('order');
 
   return (
     <div {...stylex.props(styles.page)}>
@@ -30,12 +32,19 @@ export function App() {
         <button {...stylex.props(styles.tab, view === 'dealdesk' && styles.tabActive)} data-testid="tab-dealdesk" onClick={() => setView('dealdesk')}>Deal Desk</button>
         <button {...stylex.props(styles.tab, view === 'h6q' && styles.tabActive)} data-testid="tab-h6q" onClick={() => setView('h6q')}>H6Q</button>
         <button {...stylex.props(styles.tab, view === 'flow' && styles.tabActive)} data-testid="tab-flow" onClick={() => setView('flow')}>Flow</button>
+        <button {...stylex.props(styles.tab, view === 'supply' && styles.tabActive)} data-testid="tab-supply" onClick={() => setView('supply')}>Supply</button>
+        <button {...stylex.props(styles.tab, view === 'shelf' && styles.tabActive)} data-testid="tab-shelf" onClick={() => setView('shelf')}>Shelf</button>
       </div>
       <div {...stylex.props(styles.tokenRow)}>
         <span {...stylex.props(styles.label)}>Auth token</span>
         <input {...stylex.props(styles.input)} data-testid="token" value={token} onChange={(e) => setToken(e.target.value)} />
       </div>
-      {view === 'order' ? <OrderDesk token={token} /> : view === 'dealdesk' ? <DealDesk token={token} /> : view === 'h6q' ? <H6Q token={token} /> : <Flow token={token} />}
+      {view === 'order' ? <OrderDesk token={token} />
+        : view === 'dealdesk' ? <DealDesk token={token} />
+        : view === 'h6q' ? <H6Q token={token} />
+        : view === 'flow' ? <Flow token={token} />
+        : view === 'supply' ? <SupplyWindow token={token} />
+        : <Shelf token={token} />}
     </div>
   );
 }
