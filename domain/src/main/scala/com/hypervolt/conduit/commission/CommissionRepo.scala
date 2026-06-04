@@ -32,11 +32,12 @@ object CommissionRepo {
       amount: BigDecimal,
       currency: String,
       status: String,
-      tbTransferId: String
+      tbTransferId: String,
+      kind: String = "accrual"
   ): ConnectionIO[Int] =
     sql"""INSERT INTO commission_entry
             (id, agent_id, scheme_id, order_id, basis_amount, rate_applied, amount, currency, kind, status, tb_transfer_id)
-          VALUES ($entryId, $agentId, $schemeId, $orderId, $basis, $rate, $amount, $currency, 'accrual', $status, $tbTransferId)""".update.run
+          VALUES ($entryId, $agentId, $schemeId, $orderId, $basis, $rate, $amount, $currency, $kind, $status, $tbTransferId)""".update.run
 
   def setStatus(entryId: UUID, status: String): ConnectionIO[Int] =
     sql"UPDATE commission_entry SET status = $status WHERE id = $entryId".update.run

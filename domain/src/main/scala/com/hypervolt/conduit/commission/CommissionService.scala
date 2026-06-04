@@ -70,4 +70,39 @@ final class CommissionService[F[_]: Async](xa: Transactor[F], ledger: TigerBeetl
 
   // Statement reconciliation: posted commission entries for an agent must equal the COMM_PAYABLE posted credits.
   def statementTotal(agentId: UUID): F[BigDecimal] = CommissionRepo.postedTotal(agentId).transact(xa)
+
+  // True-up (doc 04 §Commission, closes M5-R): recompute the line's commission on the ACTUAL batch landed
+  // cost (vs the provisional std_cost used at accrual) and book the delta as a current-period adjustment.
+  // Posted entries are never reopened — the delta is a new `true_up_adjustment` entry + ledger movement.
+  def trueUp(
+      agentId: UUID,
+      schemeId: UUID,
+      orderId: Option[UUID],
+      currency: String,
+      rate: BigDecimal,
+      unitPriceExVat: BigDecimal,
+      qty: Int,
+      originalAmount: BigDecimal,
+      actualUnitCost: BigDecimal
+  ): F[(UUID, BigDecimal)] = {
+    val actualBasis  = (unitPriceExVat - actualUnitCost) * BigDecimal(qty)
+    val actualAmount = (actualBasis * rate / 100).setScale(2, scala.math.BigDecimal.RoundingMode.HALF_UP)
+    val delta        = actualAmount - originalAmount
+    val entryId      = UUID.randomUUID()
+    val transferId   = TbIds.transferId(entryId, 0)
+    val absMinor     = (delta.abs * 100).toBigInt
+    // delta>=0: more owed (DR expense, CR payable); delta<0: claw back (DR payable, CR expense).
+    val (debit, credit) =
+      if (delta >= 0) (expenseAccount(currency), payableAccount(agentId, currency))
+      else (payableAccount(agentId, currency), expenseAccount(currency))
+    val post =
+      if (delta == 0) Async[F].unit
+      else ledger.postTransfers(List(LedgerTransfer(transferId, debit, credit, absMinor, gbpLedger, LedgerTransferCode.Commission)))
+    post *>
+      CommissionRepo
+        .insertEntry(entryId, agentId, schemeId, orderId, actualBasis.setScale(2, scala.math.BigDecimal.RoundingMode.HALF_UP),
+          rate, delta, currency, "posted", transferId.toString, kind = "true_up_adjustment")
+        .transact(xa)
+        .as((entryId, delta))
+  }
 }

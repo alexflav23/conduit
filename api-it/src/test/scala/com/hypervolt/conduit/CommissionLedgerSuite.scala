@@ -61,6 +61,26 @@ object CommissionLedgerSuite extends IOSuite {
       expect(stmt == BigDecimal("37.50")) // statement reconciles to ledger (3750 minor == £37.50)
   }
 
+  test("commission trues up to the actual batch margin (delta booked as a current-period adjustment)") { case (xa, client) =>
+    val (svc, ledger) = service(xa, client)
+    val gbp = Ledgers.forCurrency(Currency.GBP)
+    for {
+      ids <- seedScheme(xa)
+      (schemeId, agentId) = ids
+      payable = svc.payableAccount(agentId, "GBP")
+      _ <- ledger.createAccounts(List(LedgerAccount(svc.expenseAccount("GBP"), gbp, LedgerAccountCode.CommPayable), LedgerAccount(payable, gbp, LedgerAccountCode.CommPayable)))
+      entryId <- svc.accrue(agentId, schemeId, None, "GBP", scheme, line) // std_cost 400 -> margin 375 -> 37.50
+      _       <- svc.post(entryId, BigDecimal("37.50"))
+      // actual batch landed cost 350 -> (587.50-350)*2*10% = 47.50 ; delta +10.00
+      tu      <- svc.trueUp(agentId, schemeId, None, "GBP", BigDecimal("10"), BigDecimal("587.50"), 2, BigDecimal("37.50"), BigDecimal("350.00"))
+      (_, delta) = tu
+      bal  <- ledger.balance(payable)
+      stmt <- svc.statementTotal(agentId)
+    } yield expect(delta == BigDecimal("10.00")) and
+      expect(bal.creditsPosted == BigInt(4750)) and
+      expect(stmt == BigDecimal("47.50"))
+  }
+
   test("claw voids the pending accrual (no posted credit)") { case (xa, client) =>
     val (svc, ledger) = service(xa, client)
     val gbp = Ledgers.forCurrency(Currency.GBP)
