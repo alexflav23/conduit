@@ -191,3 +191,22 @@ INSERT INTO field_layer_map (object_type, field, data_layer) VALUES
     ('sell_through','sell_through_qty','volume'),
     ('sell_through','overhang_qty','volume')
 ON CONFLICT (object_type, field) DO NOTHING;
+
+-- Policy-layer grants for the new H6Q objects (doc 12 §12). Capture (forecast) is own-scope create for account
+-- owners; the board (pipeline_coverage) is view for owners (own) and finance/CEO/auditor (all, all layers).
+-- An account owner sees the unit board for their own scope; finance adds commercial/profitability overlays.
+INSERT INTO permission (role_id, object_type, action, section, viewable_layers, editable_layers, data_breadth)
+SELECT id, 'forecast', 'create', NULL, '{volume}', '{volume}', 'own' FROM role WHERE name='retail_sales_agent';
+INSERT INTO permission (role_id, object_type, action, section, viewable_layers, editable_layers, data_breadth)
+SELECT id, 'pipeline_coverage', 'view', NULL, '{volume}', '{}', 'own' FROM role WHERE name='retail_sales_agent';
+
+INSERT INTO permission (role_id, object_type, action, section, viewable_layers, editable_layers, data_breadth)
+SELECT id, 'pipeline_coverage', 'view', NULL, '{volume,commercial,profitability}', '{}', 'all' FROM role WHERE name='finance';
+INSERT INTO permission (role_id, object_type, action, section, viewable_layers, editable_layers, data_breadth)
+SELECT id, 'pipeline_coverage', 'export', NULL, '{volume,commercial,profitability}', '{}', 'all' FROM role WHERE name='finance';
+
+INSERT INTO permission (role_id, object_type, action, section, viewable_layers, editable_layers, data_breadth)
+SELECT id, 'pipeline_coverage', 'view', NULL, '{volume,commercial,profitability,inter_entity,treasury}', '{}', 'all' FROM role WHERE name='ceo';
+
+INSERT INTO permission (role_id, object_type, action, section, viewable_layers, editable_layers, data_breadth)
+SELECT id, 'pipeline_coverage', 'view', NULL, '{volume,commercial,profitability}', '{}', 'all' FROM role WHERE name='auditor';

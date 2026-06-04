@@ -24,13 +24,16 @@ object ForecastSuite extends IOSuite {
 
   // Each test uses a distinct ISO week, and we first close any open weekly cycle — the schema enforces at most
   // one open cycle per cadence (doc 12 §2.8), and a closed cycle never reopens, so tests cannot share a week.
+  // This suite uses its own cadence ('unit') so it never collides with H6QHttpSuite's 'weekly' open cycle on the
+  // one-open-per-cadence index (suites may run concurrently against the shared Postgres).
+  private val cadence = "unit"
   private def closeOpen(xa: HikariTransactor[IO]): IO[Unit] =
-    sql"UPDATE forecast_cycle SET status='closed', closed_at=now() WHERE cadence='weekly' AND status='open'".update.run
+    sql"UPDATE forecast_cycle SET status='closed', closed_at=now() WHERE cadence=$cadence AND status='open'".update.run
       .transact(xa)
       .void
 
   private def freshOpen(svc: ForecastService[IO], xa: HikariTransactor[IO], asOf: LocalDate): IO[UUID] =
-    closeOpen(xa) *> svc.openCycle(asOf).map(_._1)
+    closeOpen(xa) *> svc.openCycle(asOf, cadence).map(_._1)
 
   private def user(xa: HikariTransactor[IO]): IO[UUID] =
     sql"INSERT INTO app_user (keycloak_id, name) VALUES (${s"u-${UUID.randomUUID()}"}, 'Agent') RETURNING id"
@@ -83,9 +86,9 @@ object ForecastSuite extends IOSuite {
       _ <-
         party(xa, "installer", List("forecastable"), market, channel, "retail", Some(agentA), None) // standalone leaf
       _     <- closeOpen(xa)
-      first <- svc.openCycle(LocalDate.of(2026, 6, 1)) // W23
+      first <- svc.openCycle(LocalDate.of(2026, 6, 1), cadence) // W23
       (cycleId, created1) = first
-      second <- svc.openCycle(LocalDate.of(2026, 6, 1)) // same ISO week — must add nothing
+      second <- svc.openCycle(LocalDate.of(2026, 6, 1), cadence) // same ISO week — must add nothing
       created2 = second._2
       // count submissions belonging to our agents only (the DB may hold others from parallel data)
       mine <-
