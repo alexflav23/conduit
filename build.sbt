@@ -79,7 +79,7 @@ lazy val conduit = (project in file("."))
     noFloatCheck := {
       val log   = streams.value.log
       val base  = (ThisBuild / baseDirectory).value / "domain" / "src" / "main" / "scala" / "com" / "hypervolt" / "conduit"
-      val roots = Seq("money", "ledger", "pricing", "commission", "order", "batch", "inventory").map(base / _)
+      val roots = Seq("money", "ledger", "pricing", "commission", "order", "batch", "inventory", "warranty").map(base / _)
       val banned = """\b(Double|Float)\b""".r
       val offenders = roots.flatMap(r => (r ** "*.scala").get).flatMap { f =>
         IO.readLines(f).zipWithIndex.flatMap { case (line, idx) =>
