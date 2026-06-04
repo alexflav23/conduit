@@ -182,7 +182,8 @@ function Board({ token }: { token: string }) {
           <tr>
             <th {...stylex.props(styles.th)}>{groupBy === 'agent' ? 'Agent' : 'Branch'}</th>
             <th {...stylex.props(styles.th)}>Forecast</th>
-            <th {...stylex.props(styles.th)}>Shipped</th>
+            <th {...stylex.props(styles.th)}>Shipped (sell-in)</th>
+            <th {...stylex.props(styles.th)}>Activated (sell-through)</th>
             <th {...stylex.props(styles.th)}>Coverage</th>
           </tr>
         </thead>
@@ -192,6 +193,7 @@ function Board({ token }: { token: string }) {
               <td {...stylex.props(styles.td)}>{label(r)}</td>
               <td {...stylex.props(styles.td)}>{r.forecast_qty}</td>
               <td {...stylex.props(styles.td)}>{r.shipped_qty}</td>
+              <td {...stylex.props(styles.td)}>{r.activated_qty}</td>
               <td {...stylex.props(styles.td, styles.cov)}>{r.coverage_pct == null ? '—' : `${Math.round(parseFloat(r.coverage_pct) * 100)}%`}</td>
             </tr>
           ))}
