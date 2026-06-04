@@ -43,6 +43,45 @@ export function decide(token: string, id: string, body: unknown) {
   return call(`/api/v1/adlp/exceptions/${id}/decision`, token, 'POST', body);
 }
 
+// ----- H6Q forecasting -----
+
+export function getVariants(token: string) {
+  return call('/api/v1/h6q/variants', token, 'GET');
+}
+
+export function getScenarios(token: string) {
+  return call('/api/v1/h6q/scenarios', token, 'GET');
+}
+
+export function getMyForecasts(token: string) {
+  return call('/api/v1/h6q/my-forecasts', token, 'GET');
+}
+
+export interface ForecastLine {
+  variant: string;
+  period: string;
+  scenario: string;
+  qty: number;
+}
+
+export function submitForecast(token: string, companyId: string, cycle: string, lines: ForecastLine[]) {
+  return call(`/api/v1/h6q/my-forecasts/${companyId}/submit`, token, 'POST', { cycle, lines });
+}
+
+export function getCoverage(token: string, market: string, period: string, scenario: string, groupBy: string) {
+  return call(`/api/v1/h6q/coverage?market=${market}&period=${period}&scenario=${scenario}&group_by=${groupBy}`, token, 'GET');
+}
+
+export function getReconcile(token: string, market: string, period: string, scenario: string) {
+  return call(`/api/v1/h6q/coverage/reconcile?market=${market}&period=${period}&scenario=${scenario}`, token, 'GET');
+}
+
+export function getOutstanding(token: string, cycle: string) {
+  return call(`/api/v1/h6q/outstanding?cycle=${cycle}`, token, 'GET');
+}
+
+export const H6Q_MARKET = DEMO_MARKET;
+
 export async function placeOrder(token: string, lines: QuoteLine[]) {
   const soldTo = await call('/api/v1/parties', token, 'POST', {
     displayName: 'Demo Branch',

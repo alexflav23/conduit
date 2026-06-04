@@ -35,6 +35,18 @@ object ForecastQueryRepo {
   def scenarioByType(scType: String): ConnectionIO[Option[UUID]] =
     sql"SELECT id FROM forecast_scenario WHERE type = $scType AND toggle_basis IS NULL".query[UUID].option
 
+  // Catalogue-live (doc 12 §1.2.4): the capture grid reads the live variants, so a new SKU is forecastable the
+  // moment it exists — no schema/config change.
+  def variants: ConnectionIO[List[Json]] =
+    sql"""SELECT v.id, v.sku, f.name FROM product_variant v JOIN product_family f ON f.id = v.family_id
+          ORDER BY f.name, v.sku LIMIT 200"""
+      .query[(UUID, String, String)]
+      .to[List]
+      .map(_.map {
+        case (id, sku, fam) =>
+          Json.obj("id" -> id.toString.asJson, "sku" -> sku.asJson, "family" -> fam.asJson)
+      })
+
   def scenarios: ConnectionIO[List[Json]] =
     sql"SELECT id, type, name, toggle_basis, is_default FROM forecast_scenario ORDER BY type, toggle_basis NULLS FIRST"
       .query[(UUID, String, String, Option[String], Boolean)]

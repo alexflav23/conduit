@@ -3,6 +3,7 @@ import * as stylex from '@stylexjs/stylex';
 import { colors } from './styles/tokens.stylex';
 import { OrderDesk } from './OrderDesk';
 import { DealDesk } from './DealDesk';
+import { H6Q } from './H6Q';
 
 const styles = stylex.create({
   page: { minHeight: '100vh', backgroundColor: colors.bg, color: colors.text, fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif', padding: '2rem' },
@@ -18,7 +19,7 @@ const styles = stylex.create({
 
 export function App() {
   const [token, setToken] = useState('dev:agent-e2e');
-  const [view, setView] = useState<'order' | 'dealdesk'>('order');
+  const [view, setView] = useState<'order' | 'dealdesk' | 'h6q'>('order');
 
   return (
     <div {...stylex.props(styles.page)}>
@@ -26,12 +27,13 @@ export function App() {
       <div {...stylex.props(styles.nav)}>
         <button {...stylex.props(styles.tab, view === 'order' && styles.tabActive)} data-testid="tab-order" onClick={() => setView('order')}>Order Desk</button>
         <button {...stylex.props(styles.tab, view === 'dealdesk' && styles.tabActive)} data-testid="tab-dealdesk" onClick={() => setView('dealdesk')}>Deal Desk</button>
+        <button {...stylex.props(styles.tab, view === 'h6q' && styles.tabActive)} data-testid="tab-h6q" onClick={() => setView('h6q')}>H6Q</button>
       </div>
       <div {...stylex.props(styles.tokenRow)}>
         <span {...stylex.props(styles.label)}>Auth token</span>
         <input {...stylex.props(styles.input)} data-testid="token" value={token} onChange={(e) => setToken(e.target.value)} />
       </div>
-      {view === 'order' ? <OrderDesk token={token} /> : <DealDesk token={token} />}
+      {view === 'order' ? <OrderDesk token={token} /> : view === 'dealdesk' ? <DealDesk token={token} /> : <H6Q token={token} />}
     </div>
   );
 }

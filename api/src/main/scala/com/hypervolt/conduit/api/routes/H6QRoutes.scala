@@ -53,6 +53,12 @@ final class H6QRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
       .out(jsonBody[Json])
       .serverLogic(_ => _ => ForecastQueryRepo.scenarios.transact(xa).map(rows => Right(Json.fromValues(rows))))
 
+  private val variants =
+    base.get
+      .in("api" / "v1" / "h6q" / "variants")
+      .out(jsonBody[Json])
+      .serverLogic(_ => _ => ForecastQueryRepo.variants.transact(xa).map(rows => Right(Json.fromValues(rows))))
+
   private val cycles =
     base.get
       .in("api" / "v1" / "h6q" / "cycles")
@@ -198,6 +204,6 @@ final class H6QRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
 
   val routes: HttpRoutes[F] =
     Http4sServerInterpreter[F]().toRoutes(
-      List(scenarios, cycles, myForecasts, submit, skip, outstanding, coverage, reconcile)
+      List(scenarios, variants, cycles, myForecasts, submit, skip, outstanding, coverage, reconcile)
     )
 }

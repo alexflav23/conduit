@@ -19,6 +19,11 @@ import java.util.UUID
 // rebuilds coverage from the event.
 final class ForecastService[F[_]: Async](xa: Transactor[F]) {
 
+  // The incremental live-update path (doc 12 §4.2): a successful submit recomputes the affected coverage slices
+  // immediately so the board is live without waiting on the stream. The Pulsar consumer of forecast.submitted
+  // rebuilds the same projection on replay (idempotent delete+insert) — this is not a divergent write path.
+  private val projector = new CoverageProjector[F](xa)
+
   // Open the weekly cycle (scheduler-triggered; idempotent on the ISO-week code). Re-running for the same week
   // adds no duplicate submissions (ON CONFLICT DO NOTHING). Emits forecast.cycle.opened.
   def openCycle(asOf: LocalDate, cadence: String = "weekly", refTz: String = "Europe/London"): F[(UUID, Int)] = {
@@ -55,29 +60,46 @@ final class ForecastService[F[_]: Async](xa: Transactor[F]) {
       lines: List[ForecastLine],
       device: Option[String]
   ): F[Either[String, Int]] =
-    (for {
-      status <- ForecastRepo.cycleStatus(cycleId)
-      result <-
-        if (!status.contains("open")) "cycle_closed".asLeft[Int].pure[ConnectionIO]
-        else
-          ForecastRepo.submissionFor(cycleId, owner, account).flatMap {
-            case None => "not_owner".asLeft[Int].pure[ConnectionIO]
-            case Some((submissionId, _)) =>
-              ForecastRepo.accountDims(account).flatMap {
-                case None => "unknown_account".asLeft[Int].pure[ConnectionIO]
-                case Some(dims) =>
-                  lines
-                    .traverse(line => versionLine(submissionId, cycleId, owner, dims, line))
-                    .map(_.count(identity))
-                    .flatMap { changed =>
-                      ForecastRepo.markSubmitted(submissionId, device, Instant.now()) *>
-                        OutboxRepo
-                          .append(submittedEvent(cycleId, owner, account, dims, lines, device))
-                          .as(changed.asRight[String])
-                    }
-              }
-          }
-    } yield result).transact(xa)
+    captureTx(owner, account, cycleId, lines, device).transact(xa).flatMap {
+      case Left(e) => e.asLeft[Int].pure[F]
+      case Right((changed, marketOpt)) =>
+        marketOpt
+          .fold(().pure[F])(market =>
+            lines.map(l => (l.periodMonth, l.scenarioId)).distinct.traverse_ {
+              case (m, sc) => projector.recompute(market, m, sc).void
+            }
+          )
+          .as(changed.asRight[String])
+    }
+
+  private def captureTx(
+      owner: UUID,
+      account: UUID,
+      cycleId: UUID,
+      lines: List[ForecastLine],
+      device: Option[String]
+  ): ConnectionIO[Either[String, (Int, Option[UUID])]] =
+    ForecastRepo.cycleStatus(cycleId).flatMap {
+      case s if !s.contains("open") => "cycle_closed".asLeft[(Int, Option[UUID])].pure[ConnectionIO]
+      case _ =>
+        ForecastRepo.submissionFor(cycleId, owner, account).flatMap {
+          case None => "not_owner".asLeft[(Int, Option[UUID])].pure[ConnectionIO]
+          case Some((submissionId, _)) =>
+            ForecastRepo.accountDims(account).flatMap {
+              case None => "unknown_account".asLeft[(Int, Option[UUID])].pure[ConnectionIO]
+              case Some(dims) =>
+                lines
+                  .traverse(line => versionLine(submissionId, cycleId, owner, dims, line))
+                  .map(_.count(identity))
+                  .flatMap { changed =>
+                    ForecastRepo.markSubmitted(submissionId, device, Instant.now()) *>
+                      OutboxRepo
+                        .append(submittedEvent(cycleId, owner, account, dims, lines, device))
+                        .as((changed, dims.marketId).asRight[String])
+                  }
+            }
+        }
+    }
 
   def skip(owner: UUID, account: UUID, cycleId: UUID, reason: String): F[Either[String, Unit]] =
     ForecastRepo

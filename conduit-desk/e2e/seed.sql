@@ -47,3 +47,37 @@ UPDATE adlp_exception SET status='pending_ceo', approved_by=NULL, approval_memo_
     approved_valid_from=NULL, approved_valid_to=NULL, approved_volume_min=NULL, decided_at=NULL
   WHERE order_id = (SELECT id FROM "order" WHERE order_no = 'ORD-DEALDESK');
 UPDATE "order" SET status='pending_ceo' WHERE order_no = 'ORD-DEALDESK';
+
+-- H6Q demo: a finance viewer (full board), a forecastable account owned by the agent (demo market/channel),
+-- an open weekly cycle and the agent's outstanding submission. Reset each run so the e2e is deterministic.
+INSERT INTO app_user (keycloak_id, name) VALUES ('finance-e2e', 'E2E Finance') ON CONFLICT (keycloak_id) DO NOTHING;
+INSERT INTO role_assignment (user_id, role_id)
+  SELECT u.id, r.id FROM app_user u, role r
+  WHERE u.keycloak_id = 'finance-e2e' AND r.name = 'finance'
+  AND NOT EXISTS (SELECT 1 FROM role_assignment ra WHERE ra.user_id = u.id AND ra.role_id = r.id);
+
+DO $$
+DECLARE agent_id uuid; acct uuid; cyc uuid;
+BEGIN
+  SELECT id INTO agent_id FROM app_user WHERE keycloak_id = 'agent-e2e';
+  IF NOT EXISTS (SELECT 1 FROM party WHERE display_name = 'H6Q Leeds') THEN
+    INSERT INTO party (display_name, party_type, is_organization, roles, channel_id, market_id, segment, account_manager_user_id, status)
+      VALUES ('H6Q Leeds','branch',true,'{forecastable}',
+              '11111111-1111-1111-1111-111111111111','22222222-2222-2222-2222-222222222222','wholesale',agent_id,'active');
+  END IF;
+  SELECT id INTO acct FROM party WHERE display_name = 'H6Q Leeds';
+
+  -- exactly one open weekly cycle (the single-open-per-cadence invariant)
+  UPDATE forecast_cycle SET status='closed', closed_at=now() WHERE cadence='weekly' AND status='open' AND code <> 'E2E-W01';
+  INSERT INTO forecast_cycle (code, cadence, period_start, period_end, status, opened_at)
+    VALUES ('E2E-W01','weekly','2026-09-01','2026-09-07','open',now())
+    ON CONFLICT (code) DO UPDATE SET status='open';
+  SELECT id INTO cyc FROM forecast_cycle WHERE code = 'E2E-W01';
+
+  -- reset prior capture so the run is deterministic
+  DELETE FROM forecast_entry WHERE forecaster_user_id = agent_id AND cycle_id = cyc;
+  DELETE FROM pipeline_coverage WHERE market_id = '22222222-2222-2222-2222-222222222222' AND period_month = '2026-09-01';
+  INSERT INTO forecast_submission (cycle_id, forecaster_user_id, company_id, status)
+    VALUES (cyc, agent_id, acct, 'outstanding')
+    ON CONFLICT (cycle_id, forecaster_user_id, company_id) DO UPDATE SET status='outstanding', submitted_at=NULL;
+END $$;
