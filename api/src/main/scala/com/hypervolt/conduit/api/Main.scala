@@ -8,6 +8,7 @@ import com.comcast.ip4s._
 import com.hypervolt.conduit.api.auth.AuthService
 import com.hypervolt.conduit.api.routes.AccessRoutes
 import com.hypervolt.conduit.api.routes.CommerceRoutes
+import com.hypervolt.conduit.api.routes.DealDeskRoutes
 import com.hypervolt.conduit.api.routes.HealthRoutes
 import com.hypervolt.conduit.api.routes.PricingRoutes
 import com.hypervolt.conduit.config.AppConfig
@@ -49,8 +50,9 @@ object Main extends IOApp.Simple {
       val accessRoutes   = new AccessRoutes[IO](xa, auth).routes
       val pricingRoutes  = new PricingRoutes[IO](xa, auth).routes
       val commerceRoutes = new CommerceRoutes[IO](xa, auth).routes
+      val dealDeskRoutes = new DealDeskRoutes[IO](xa, auth).routes
       val app =
-        Router("/" -> (HealthRoutes.routes[IO] <+> accessRoutes <+> pricingRoutes <+> commerceRoutes)).orNotFound
+        Router("/" -> (HealthRoutes.routes[IO] <+> accessRoutes <+> pricingRoutes <+> commerceRoutes <+> dealDeskRoutes)).orNotFound
       val host         = Ipv4Address.fromString(cfg.http.host).getOrElse(ipv4"0.0.0.0")
       val apiPort      = Port.fromInt(cfg.http.port).getOrElse(port"8080")
       val adminPort    = Port.fromInt(cfg.adminPort).getOrElse(port"9990")

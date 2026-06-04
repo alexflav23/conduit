@@ -21,6 +21,11 @@ object PolicyEngine {
         .exists(p => scopeMatches(grant, p, principal, target))
     }
 
+  // Does the principal hold ANY grant of this permission (ignoring scope)? Used to gate scope-filtered lists,
+  // where the rows are then narrowed by the scope predicate / breadth rather than a single target.
+  def hasPermission(principal: Principal, action: Action, objectType: String): Boolean =
+    principal.grants.exists(_.permissions.exists(p => p.objectType == objectType && p.action == action))
+
   def scopeMatches(grant: Grant, permission: Permission, principal: Principal, target: Target): Boolean = {
     val breadth = grant.breadthOverride.getOrElse(permission.dataBreadth)
     breadth match {

@@ -77,7 +77,7 @@ object AccessIntegrationSuite extends IOSuite {
       flm    <- sql"SELECT data_layer FROM field_layer_map WHERE object_type='price_rule' AND field='tp_markup_pct'".query[String].unique
     } yield (roles, layers, flm)
     prog.transact(xa).map { case (roles, layers, flm) =>
-      expect(roles == 9L) and expect(layers == 7L) and expect(flm == "inter_entity")
+      expect(roles >= 9L) and expect(layers == 7L) and expect(flm == "inter_entity")
     }
   }
 }

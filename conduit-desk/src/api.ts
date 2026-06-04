@@ -27,6 +27,22 @@ export function quote(token: string, lines: QuoteLine[]) {
   });
 }
 
+export function listExceptions(token: string, status = 'pending_ceo') {
+  return call(`/api/v1/adlp/exceptions?status=${status}`, token, 'GET');
+}
+
+export function getException(token: string, id: string) {
+  return call(`/api/v1/adlp/exceptions/${id}`, token, 'GET');
+}
+
+export function submitNarrative(token: string, id: string, body: unknown) {
+  return call(`/api/v1/adlp/exceptions/${id}/submit`, token, 'POST', body);
+}
+
+export function decide(token: string, id: string, body: unknown) {
+  return call(`/api/v1/adlp/exceptions/${id}/decision`, token, 'POST', body);
+}
+
 export async function placeOrder(token: string, lines: QuoteLine[]) {
   const soldTo = await call('/api/v1/parties', token, 'POST', {
     displayName: 'Demo Branch',

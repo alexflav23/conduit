@@ -13,6 +13,12 @@ object FieldLayerMap {
     ("price_rule", "tp_markup_pct")    -> DataLayer.InterEntity,
     ("price_rule", "from_entity_id")   -> DataLayer.InterEntity,
     ("price_rule", "to_entity_id")     -> DataLayer.InterEntity,
+    // ADLP exception — price banding is commercial; the margin assessment is profitability
+    ("adlp_exception", "list_price")          -> DataLayer.Commercial,
+    ("adlp_exception", "requested_price")     -> DataLayer.Commercial,
+    ("adlp_exception", "requested_discount_pct") -> DataLayer.Commercial,
+    ("adlp_exception", "max_discount_pct")    -> DataLayer.Commercial,
+    ("adlp_exception", "margin_assessment")   -> DataLayer.Profitability,
     // order money
     ("order", "subtotal_ex_vat") -> DataLayer.Commercial,
     ("order", "vat_total")       -> DataLayer.Commercial,
