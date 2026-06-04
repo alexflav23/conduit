@@ -48,13 +48,46 @@ Stop the stack: `docker compose -f docker-compose.local.yml down` (add `-v` to a
 
 ## Importing your real data (`--import`)
 
-Copy the templates (`local/import/h6q.csv.example`, `stock.csv.example`) to `h6q.csv` / `stock.csv`, fill in
-your data, then run `./local/run-local.sh --import` (your real `*.csv` are gitignored). The
-demo catalogue/markets/channels/scenarios load first so your rows resolve by human-readable key; your data
-layers on top. Re-running is idempotent.
+Two ways, in order of preference:
 
-> SKUs must already exist in the catalogue (the demo seed includes `HV-310`). Add more variants to
-> `conduit-desk/e2e/seed.sql` (or via the API) before importing rows that reference them.
+### A. Drop the finance workbook in directly (no conversion) — recommended
+
+```bash
+cp /path/to/H6Q.xlsx  local/import/h6q.xlsx
+./local/run-local.sh --import
+```
+
+The importer reads the workbook *as-is*. It pulls the **monthly P50 volume per sales channel** (sheet
+`Monthly P50 Inc Motability`) and the **SKU mix** (sheet `Overall Product Sales Mix`: 5m/7.5m/10m ×
+White/Black/Grey), then does exactly the "unit count → per-SKU via historical mix" split you described: each
+channel's monthly volume is allocated across the 9 SKUs by that channel's mix using the same **conserving
+largest-remainder** allocation Conduit uses (the parts sum to the channel total, exactly), summed to a
+market-level per-SKU monthly forecast. It auto-creates the 9 real SKUs (`HV-5M-W` … `HV-10M-G`) under a
+`Hypervolt Charger` family and writes the `pipeline_coverage` rows the board reads.
+
+- Top channels taken = the `x`-marked roll-ups (Retail, Installers, Energy, Distributors, Automotive) — they
+  sum to UK Total, so leaves aren't double-counted. Verified: Sep-2026 splits to **14,132** across SKUs,
+  matching the workbook's UK Total.
+- **Inc vs Ex Motability**: by default the `Inc Motability` sheet → the P50 base scenario. Set
+  `H6Q_EX_MOTABILITY=1 ./local/run-local.sh --import` to load `Ex Motability` → the **P50 ex_motability**
+  ex-cut scenario (toggle on the board).
+- First run creates a small Python venv at `local/.venv` (for `openpyxl`); both it and your `*.xlsx` are
+  gitignored.
+
+> The workbook is forecast-only — it has no serial numbers, so per-account **stock** comes from `stock.csv`
+> (below). The demo `HV-310` forecast + its full forecast→shipped→revenue waterfall stay loaded alongside
+> your real SKUs, so the Flow/ledger story still works (your imported SKUs are forecast-only until you also
+> load shipments).
+
+### B. CSVs (if you'd rather hand-curate)
+
+Copy the templates (`local/import/h6q.csv.example`, `stock.csv.example`) to `h6q.csv` / `stock.csv`, fill in
+your data, then run `./local/run-local.sh --import` (real `*.csv` are gitignored). If an `h6q.xlsx` is also
+present, the workbook wins. The demo catalogue/markets/channels/scenarios load first so your rows resolve by
+human-readable key; your data layers on top. Re-running is idempotent.
+
+> CSV SKUs must already exist in the catalogue. Add variants to `conduit-desk/e2e/seed.sql` (or via the API)
+> before importing CSV rows that reference them. (The `.xlsx` path creates its SKUs automatically.)
 
 ### `local/import/h6q.csv` — forecast quantities per SKU
 

@@ -3,7 +3,8 @@
 # Docker, loads a demo H6Q + stock dataset, and starts the desk. Open the desk and explore every tab.
 #
 #   ./local/run-local.sh            # demo dataset (default)
-#   ./local/run-local.sh --import   # load your real H6Q + stock from local/import/*.csv instead (see local/README.md)
+#   ./local/run-local.sh --import   # load your real data: drop the finance workbook in as local/import/h6q.xlsx
+#                                   # (parsed directly) or use h6q.csv / stock.csv — see local/README.md
 #   ./local/run-local.sh --no-desk  # backend only (API on :8080), skip starting the Vite desk
 #
 set -uo pipefail

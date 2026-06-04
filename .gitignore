@@ -17,3 +17,6 @@ conduit-desk/build/
 test-results/
 playwright-report/
 h6q-simulation.html
+
+# local-mode xlsx parser venv
+local/.venv/

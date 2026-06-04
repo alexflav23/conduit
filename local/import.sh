@@ -1,31 +1,52 @@
 #!/usr/bin/env bash
 # Import your REAL H6Q forecast + stock positions into the local stack so you can verify and simulate against
-# live data instead of the demo seed. Reads two CSVs from local/import/ (see local/README.md for the format):
+# live data instead of the demo seed. Reads, in order of preference, from local/import/ (see local/README.md):
 #
+#   local/import/h6q.xlsx   the finance workbook itself — parsed directly (channel volume x SKU mix -> per-SKU)
 #   local/import/h6q.csv    market,channel,sku,period_month,qty   (one row per SKU per market per month)
 #   local/import/stock.csv  serial_no,sku,account,status          (one row per serial; status drives on-shelf/activated)
 #
-# Both are optional — import whichever file(s) you have. Resolution is by human-readable keys (sku, market name,
-# account name); ids are looked up or created. Re-running is idempotent. Each CSV is copied into the container
-# and staged in a TEMP table within a SINGLE psql session (temp tables are session-scoped), then INSERT...SELECT
-# resolves the ids — so a bad row fails loudly rather than silently corrupting the board.
+# All optional — import whichever you have. The .xlsx is the real model with no conversion step; if both an
+# .xlsx and an h6q.csv are present, the .xlsx wins. CSVs are copied into the container and staged in a TEMP
+# table within a SINGLE psql session (temp tables are session-scoped), then INSERT...SELECT resolves the ids —
+# so a bad row fails loudly rather than silently corrupting the board. Re-running is idempotent.
+#
+# Set H6Q_EX_MOTABILITY=1 to import the workbook's "Ex Motability" sheet into the P50 ex_motability ex-cut.
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 IMP="$ROOT/local/import"
 CTR=conduit-local-postgres
 PSQL=(docker exec -i "$CTR" psql -v ON_ERROR_STOP=1 -q -U conduit -d conduit)
+XLSX=""
+for f in "$IMP"/*.xlsx; do [ -f "$f" ] && XLSX="$f" && break; done
 
-[ -f "$IMP/h6q.csv" ] || [ -f "$IMP/stock.csv" ] || {
-  echo "No CSVs found in $IMP. Create h6q.csv and/or stock.csv (see local/README.md), then re-run with --import."
+[ -n "$XLSX" ] || [ -f "$IMP/h6q.csv" ] || [ -f "$IMP/stock.csv" ] || {
+  echo "Nothing to import in $IMP. Drop the finance workbook in as h6q.xlsx (or an h6q.csv / stock.csv —"
+  echo "see local/README.md), then re-run with --import."
   exit 1
 }
 
+# Ensure openpyxl is available for the .xlsx parser, in a local venv (gitignored) so we don't touch system python.
+ensure_openpyxl() {
+  python3 -c "import openpyxl" 2>/dev/null && { PY=python3; return; }
+  PY="$ROOT/local/.venv/bin/python"
+  [ -x "$PY" ] && "$PY" -c "import openpyxl" 2>/dev/null && return
+  echo "Setting up a local Python venv for the .xlsx parser (one-off)..."
+  python3 -m venv "$ROOT/local/.venv" && "$PY" -m pip -q install openpyxl
+}
+
 # Always start from the demo catalogue + reference data (markets, channels, scenarios, roles) so SKUs and
-# markets referenced by your CSVs resolve. Your rows then layer on top.
+# markets referenced by your data resolve. Your rows then layer on top.
 echo "Loading reference data (catalogue, markets, channels, scenarios) from the demo seed..."
 "${PSQL[@]}" < "$ROOT/conduit-desk/e2e/seed.sql" >/dev/null
 
-if [ -f "$IMP/h6q.csv" ]; then
+if [ -n "$XLSX" ]; then
+  echo "Importing the H6Q workbook directly: $(basename "$XLSX")"
+  ensure_openpyxl
+  EXFLAG=""; [ "${H6Q_EX_MOTABILITY:-0}" = "1" ] && EXFLAG="--ex-motability"
+  "$PY" "$ROOT/local/import_xlsx.py" "$XLSX" $EXFLAG | "${PSQL[@]}"
+  "${PSQL[@]}" -c "SELECT count(*) || ' H6Q coverage rows present (' || count(DISTINCT product_variant_id) || ' SKUs, ' || count(DISTINCT period_month) || ' months)' FROM pipeline_coverage WHERE level='market' AND product_variant_id IS NOT NULL;"
+elif [ -f "$IMP/h6q.csv" ]; then
   echo "Importing H6Q forecast rows from h6q.csv ..."
   docker cp "$IMP/h6q.csv" "$CTR:/tmp/h6q.csv"
   "${PSQL[@]}" <<'SQL'
