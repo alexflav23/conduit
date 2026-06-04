@@ -9,6 +9,7 @@ import com.hypervolt.conduit.api.auth.Secured
 import com.hypervolt.conduit.forecast.ForecastLine
 import com.hypervolt.conduit.forecast.ForecastQueryRepo
 import com.hypervolt.conduit.forecast.ForecastService
+import com.hypervolt.conduit.notification.NotificationRepo
 import doobie.implicits._
 import doobie.util.transactor.Transactor
 import io.circe.Codec
@@ -154,6 +155,18 @@ final class H6QRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
             }
       )
 
+  // Forward-visibility notifications (doc 12 §2.6): who was told H6Q shifted, on what channel, with what status.
+  private val notifications =
+    base.get
+      .in("api" / "v1" / "h6q" / "notifications")
+      .out(jsonBody[Json])
+      .serverLogic(principal =>
+        _ =>
+          if (!PolicyEngine.hasPermission(principal, Action.View, "pipeline_coverage"))
+            Async[F].pure(Left(err(StatusCode.Forbidden, "forbidden", "requires view:pipeline_coverage")))
+          else NotificationRepo.recent(50).transact(xa).map(rows => Right(Json.fromValues(rows)))
+      )
+
   // The coverage board at one level (org axis or by agent), scope-filtered and layer-projected.
   private val coverage =
     base.get
@@ -204,6 +217,6 @@ final class H6QRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
 
   val routes: HttpRoutes[F] =
     Http4sServerInterpreter[F]().toRoutes(
-      List(scenarios, variants, cycles, myForecasts, submit, skip, outstanding, coverage, reconcile)
+      List(scenarios, variants, cycles, myForecasts, submit, skip, outstanding, notifications, coverage, reconcile)
     )
 }

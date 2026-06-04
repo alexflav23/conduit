@@ -27,4 +27,7 @@ test('H6Q: an agent submits their portion; it rolls up bottom-up and reconciles 
   await page.getByTestId('h6q-by-agent').click();
   await expect(page.getByTestId('h6q-total')).toContainText('120');
   await expect(page.getByTestId('h6q-reconcile')).toContainText('✓');
+
+  // forward visibility shifted, so the propagation reached stakeholders — incl. the contract manufacturer
+  await expect(page.getByTestId('h6q-alerts')).toContainText('Contract manufacturer');
 });

@@ -80,6 +80,10 @@ export function getOutstanding(token: string, cycle: string) {
   return call(`/api/v1/h6q/outstanding?cycle=${cycle}`, token, 'GET');
 }
 
+export function getNotifications(token: string) {
+  return call('/api/v1/h6q/notifications', token, 'GET');
+}
+
 export const H6Q_MARKET = DEMO_MARKET;
 
 export async function placeOrder(token: string, lines: QuoteLine[]) {

@@ -3,7 +3,7 @@ import * as stylex from '@stylexjs/stylex';
 import { colors } from './styles/tokens.stylex';
 import {
   getMyForecasts, getScenarios, getVariants, submitForecast,
-  getCoverage, getReconcile, H6Q_MARKET, ForecastLine,
+  getCoverage, getReconcile, getNotifications, H6Q_MARKET, ForecastLine,
 } from './api';
 
 const styles = stylex.create({
@@ -140,6 +140,7 @@ function Board({ token }: { token: string }) {
   const [groupBy, setGroupBy] = useState<'branch' | 'agent'>('branch');
   const [rows, setRows] = useState<any[]>([]);
   const [ties, setTies] = useState<boolean | null>(null);
+  const [alerts, setAlerts] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   const load = async (group: 'branch' | 'agent') => {
@@ -156,6 +157,8 @@ function Board({ token }: { token: string }) {
     setRows(cov.json ?? []);
     const rec = await getReconcile(token, H6Q_MARKET, PERIOD, sc);
     setTies(rec.json?.ties ?? null);
+    const notes = await getNotifications(token);
+    if (notes.status === 200) setAlerts(notes.json ?? []);
   };
 
   const total = rows.reduce((acc, r) => acc + (r.forecast_qty ?? 0), 0);
@@ -190,6 +193,28 @@ function Board({ token }: { token: string }) {
               <td {...stylex.props(styles.td)}>{r.forecast_qty}</td>
               <td {...stylex.props(styles.td)}>{r.shipped_qty}</td>
               <td {...stylex.props(styles.td, styles.cov)}>{r.coverage_pct == null ? '—' : `${Math.round(parseFloat(r.coverage_pct) * 100)}%`}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      <div {...stylex.props(styles.section)} style={{ marginTop: '1.25rem' }}>Forward-visibility alerts — who was told H6Q shifted</div>
+      <table {...stylex.props(styles.table)} data-testid="h6q-alerts">
+        <thead>
+          <tr>
+            <th {...stylex.props(styles.th)}>Recipient</th>
+            <th {...stylex.props(styles.th)}>Channel</th>
+            <th {...stylex.props(styles.th)}>Message</th>
+            <th {...stylex.props(styles.th)}>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {alerts.slice(0, 8).map((a, i) => (
+            <tr key={i} data-testid="h6q-alert-row">
+              <td {...stylex.props(styles.td)}>{a.subscription}</td>
+              <td {...stylex.props(styles.td)}>{a.channel}</td>
+              <td {...stylex.props(styles.td)}>{a.body}</td>
+              <td {...stylex.props(styles.td)}><span {...stylex.props(styles.chip, a.status === 'sent' ? styles.ok : styles.muted)}>{a.status}</span></td>
             </tr>
           ))}
         </tbody>
