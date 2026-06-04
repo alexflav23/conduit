@@ -17,7 +17,9 @@ object WarrantyProvisioning {
           ORDER BY product_family_id NULLS LAST LIMIT 1""".query[Int].option.map(_.getOrElse(0))
 
   def extensionMonths(serialUnitId: UUID): ConnectionIO[Int] =
-    sql"SELECT COALESCE(SUM(extra_months), 0) FROM warranty_extension WHERE serial_unit_id = $serialUnitId".query[Int].unique
+    sql"SELECT COALESCE(SUM(extra_months), 0) FROM warranty_extension WHERE serial_unit_id = $serialUnitId"
+      .query[Int]
+      .unique
 
   private def ratePct(familyId: UUID): ConnectionIO[BigDecimal] =
     sql"""SELECT COALESCE(provision_rate_pct, 0) FROM warranty_rate
@@ -25,10 +27,19 @@ object WarrantyProvisioning {
           ORDER BY product_family_id NULLS LAST LIMIT 1""".query[BigDecimal].option.map(_.getOrElse(BigDecimal(0)))
 
   // Provision = batch landed cost × warranty_rate%. Idempotent (UNIQUE serial_unit_id, ON CONFLICT DO NOTHING).
-  def open(serialUnitId: UUID, entityId: Option[UUID], lotBatchId: Option[UUID], familyId: UUID, start: LocalDate, end: LocalDate): ConnectionIO[Unit] =
+  def open(
+      serialUnitId: UUID,
+      entityId: Option[UUID],
+      lotBatchId: Option[UUID],
+      familyId: UUID,
+      start: LocalDate,
+      end: LocalDate
+  ): ConnectionIO[Unit] =
     for {
-      rate  <- ratePct(familyId)
-      batch <- lotBatchId.flatTraverse(b => sql"SELECT landed_unit_cost, currency FROM lot_batch WHERE id = $b".query[(BigDecimal, String)].option)
+      rate <- ratePct(familyId)
+      batch <- lotBatchId.flatTraverse(b =>
+        sql"SELECT landed_unit_cost, currency FROM lot_batch WHERE id = $b".query[(BigDecimal, String)].option
+      )
       (cost, currency) = batch.getOrElse((BigDecimal(0), "GBP"))
       estimated        = (cost * rate / 100).setScale(4, RoundingMode.HALF_UP)
       _ <- sql"""INSERT INTO warranty_provision

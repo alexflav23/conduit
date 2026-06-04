@@ -34,10 +34,10 @@ final case class PlacedOrder(
 
 sealed abstract class OrderError(val code: String, val message: String)
 object OrderError {
-  final case class UnknownSku(sku: String)      extends OrderError("unknown_sku", s"unknown sku: $sku")
-  final case class NoPrice(sku: String)         extends OrderError("no_price", s"no active price for $sku")
-  final case class NotBillable(detail: String)  extends OrderError("not_billable", detail)
+  final case class UnknownSku(sku: String)         extends OrderError("unknown_sku", s"unknown sku: $sku")
+  final case class NoPrice(sku: String)            extends OrderError("no_price", s"no active price for $sku")
+  final case class NotBillable(detail: String)     extends OrderError("not_billable", detail)
   final case class CreditBlocked(over: BigDecimal) extends OrderError("credit_block", s"credit limit exceeded by $over")
-  final case class AmendRejected(detail: String) extends OrderError("amend_rejected", detail)
-  final case class NotFound(detail: String)      extends OrderError("not_found", detail)
+  final case class AmendRejected(detail: String)   extends OrderError("amend_rejected", detail)
+  final case class NotFound(detail: String)        extends OrderError("not_found", detail)
 }

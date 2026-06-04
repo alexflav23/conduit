@@ -18,13 +18,17 @@ final class WarrantyService[F[_]: Async](xa: Transactor[F]) {
   def release(provisionId: UUID, asOf: LocalDate): F[Unit] = releaseCIO(provisionId, asOf).transact(xa)
 
   def releaseAllOpen(asOf: LocalDate): F[Int] =
-    sql"SELECT id FROM warranty_provision WHERE status = 'open'".query[UUID].to[List]
+    sql"SELECT id FROM warranty_provision WHERE status = 'open'"
+      .query[UUID]
+      .to[List]
       .flatMap(ids => ids.traverse_(id => releaseCIO(id, asOf)).as(ids.size))
       .transact(xa)
 
   def consolidatedExposure(entityId: UUID): F[BigDecimal] =
     sql"SELECT COALESCE(SUM(outstanding), 0) FROM warranty_provision WHERE entity_id = $entityId AND status = 'open'"
-      .query[BigDecimal].unique.transact(xa)
+      .query[BigDecimal]
+      .unique
+      .transact(xa)
 
   def claim(serialUnitId: UUID, cost: BigDecimal): F[Unit] =
     (for {
@@ -44,14 +48,17 @@ final class WarrantyService[F[_]: Async](xa: Transactor[F]) {
         .query[(UUID, Option[UUID], Option[UUID], UUID, Instant)]
         .to[List]
         .flatMap { acts =>
-          acts.traverse_ { case (sid, ent, batch, fam, at) =>
-            val start = at.atZone(ZoneOffset.UTC).toLocalDate
-            for {
-              months <- WarrantyProvisioning.legalMonths(fam)
-              extra  <- WarrantyProvisioning.extensionMonths(sid)
-              _      <- WarrantyProvisioning.open(sid, ent, batch, fam, start, start.plusMonths((months + extra).toLong))
-            } yield ()
-          }.as(acts.size)
+          acts
+            .traverse_ {
+              case (sid, ent, batch, fam, at) =>
+                val start = at.atZone(ZoneOffset.UTC).toLocalDate
+                for {
+                  months <- WarrantyProvisioning.legalMonths(fam)
+                  extra  <- WarrantyProvisioning.extensionMonths(sid)
+                  _      <- WarrantyProvisioning.open(sid, ent, batch, fam, start, start.plusMonths((months + extra).toLong))
+                } yield ()
+            }
+            .as(acts.size)
         }
     rebuild.transact(xa).flatMap(n => releaseAllOpen(asOf).as(n))
   }
@@ -59,7 +66,9 @@ final class WarrantyService[F[_]: Async](xa: Transactor[F]) {
   private def releaseCIO(provisionId: UUID, asOf: LocalDate): ConnectionIO[Unit] =
     sql"""SELECT estimated_provision, warranty_start, warranty_end, consumed_by_claims
           FROM warranty_provision WHERE id = $provisionId"""
-      .query[(BigDecimal, LocalDate, LocalDate, BigDecimal)].option.flatMap {
+      .query[(BigDecimal, LocalDate, LocalDate, BigDecimal)]
+      .option
+      .flatMap {
         case None => ().pure[ConnectionIO]
         case Some((estimated, start, end, consumed)) =>
           val released    = WarrantyMath.released(estimated, start, end, asOf)

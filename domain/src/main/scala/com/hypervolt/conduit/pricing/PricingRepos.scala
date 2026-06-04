@@ -40,8 +40,9 @@ object PriceRuleRepo {
             AND pr.min_qty <= $qty"""
       .query[CandidateRow]
       .to[List]
-      .map(_.map { case (id, ch, mk, en, price, disc, minQ, ver, tr, rate) =>
-        PriceRuleCandidate(id, ch, mk, en, price, disc, minQ, ver, tr, rate)
+      .map(_.map {
+        case (id, ch, mk, en, price, disc, minQ, ver, tr, rate) =>
+          PriceRuleCandidate(id, ch, mk, en, price, disc, minQ, ver, tr, rate)
       })
 
   def listRulesJson: ConnectionIO[List[Json]] =
@@ -49,22 +50,34 @@ object PriceRuleRepo {
                  tp_method, tp_markup_pct, from_entity_id, to_entity_id
           FROM price_rule ORDER BY created_at DESC"""
       .query[
-        (UUID, String, String, String, BigDecimal, BigDecimal, Option[String], Option[BigDecimal], Option[UUID], Option[UUID])
+        (
+            UUID,
+            String,
+            String,
+            String,
+            BigDecimal,
+            BigDecimal,
+            Option[String],
+            Option[BigDecimal],
+            Option[UUID],
+            Option[UUID]
+        )
       ]
       .to[List]
-      .map(_.map { case (id, surface, ccy, status, price, disc, tpm, tpmk, fe, te) =>
-        Json.obj(
-          "id"               -> id.toString.asJson,
-          "surface"          -> surface.asJson,
-          "currency"         -> ccy.asJson,
-          "status"           -> status.asJson,
-          "authorised_price" -> price.toString.asJson,
-          "max_discount_pct" -> disc.toString.asJson,
-          "tp_method"        -> tpm.asJson,
-          "tp_markup_pct"    -> tpmk.map(_.toString).asJson,
-          "from_entity_id"   -> fe.map(_.toString).asJson,
-          "to_entity_id"     -> te.map(_.toString).asJson
-        )
+      .map(_.map {
+        case (id, surface, ccy, status, price, disc, tpm, tpmk, fe, te) =>
+          Json.obj(
+            "id"               -> id.toString.asJson,
+            "surface"          -> surface.asJson,
+            "currency"         -> ccy.asJson,
+            "status"           -> status.asJson,
+            "authorised_price" -> price.toString.asJson,
+            "max_discount_pct" -> disc.toString.asJson,
+            "tp_method"        -> tpm.asJson,
+            "tp_markup_pct"    -> tpmk.map(_.toString).asJson,
+            "from_entity_id"   -> fe.map(_.toString).asJson,
+            "to_entity_id"     -> te.map(_.toString).asJson
+          )
       })
 
   def insert(

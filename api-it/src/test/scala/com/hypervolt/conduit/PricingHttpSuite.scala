@@ -55,37 +55,45 @@ object PricingHttpSuite extends IOSuite {
     val ceoKc     = s"ceo-${UUID.randomUUID()}"
     val sku       = "HV-310"
     val prog = for {
-      famId <- sql"INSERT INTO product_family (code, name) VALUES (${s"fam-${UUID.randomUUID()}"}, 'Home 3 Pro') RETURNING id".query[UUID].unique
-      _ <- sql"""INSERT INTO product_variant (family_id, sku, generation, is_serialised)
+      famId <-
+        sql"INSERT INTO product_family (code, name) VALUES (${s"fam-${UUID.randomUUID()}"}, 'Home 3 Pro') RETURNING id"
+          .query[UUID]
+          .unique
+      _           <- sql"""INSERT INTO product_variant (family_id, sku, generation, is_serialised)
                  VALUES ($famId, $sku, 'v3', true) ON CONFLICT (sku) DO NOTHING""".update.run
-      variantId <- sql"SELECT id FROM product_variant WHERE sku = $sku".query[UUID].unique
-      _ <- sql"""INSERT INTO price_rule (surface, product_variant_id, channel_id, market_id, currency, tax_regime,
+      variantId   <- sql"SELECT id FROM product_variant WHERE sku = $sku".query[UUID].unique
+      _           <- sql"""INSERT INTO price_rule (surface, product_variant_id, channel_id, market_id, currency, tax_regime,
                    authorised_price, max_discount_pct, min_qty, status)
                  VALUES ('customer', $variantId, $channel, $market, 'GBP', 'GB_STANDARD', 587.50, 10.00, 1, 'active')""".update.run
-      _ <- sql"""INSERT INTO price_rule (surface, product_variant_id, currency, tax_regime, authorised_price,
+      _           <- sql"""INSERT INTO price_rule (surface, product_variant_id, currency, tax_regime, authorised_price,
                    max_discount_pct, tp_method, tp_markup_pct, from_entity_id, to_entity_id, status)
                  VALUES ('inter_entity', $variantId, 'USD', 'TAX_FREE', 400.00, 0, 'cost_plus', 12.5000,
                    ${UUID.randomUUID()}, ${UUID.randomUUID()}, 'active')""".update.run
-      rId <- AdminRepo.ensureUser(retailKc, Some("Retail"))
-      fId <- AdminRepo.ensureUser(financeKc, Some("Finance"))
-      cId <- AdminRepo.ensureUser(ceoKc, Some("CEO"))
+      rId         <- AdminRepo.ensureUser(retailKc, Some("Retail"))
+      fId         <- AdminRepo.ensureUser(financeKc, Some("Finance"))
+      cId         <- AdminRepo.ensureUser(ceoKc, Some("CEO"))
       retailRole  <- sql"SELECT id FROM role WHERE name = 'retail_sales_agent'".query[UUID].unique
       financeRole <- sql"SELECT id FROM role WHERE name = 'finance'".query[UUID].unique
       ceoRole     <- sql"SELECT id FROM role WHERE name = 'ceo'".query[UUID].unique
-      _ <- AdminRepo.assign(rId, retailRole, Nil, Nil, Nil, None)
-      _ <- AdminRepo.assign(fId, financeRole, Nil, Nil, Nil, None)
-      _ <- AdminRepo.assign(cId, ceoRole, Nil, Nil, Nil, None)
+      _           <- AdminRepo.assign(rId, retailRole, Nil, Nil, Nil, None)
+      _           <- AdminRepo.assign(fId, financeRole, Nil, Nil, Nil, None)
+      _           <- AdminRepo.assign(cId, ceoRole, Nil, Nil, Nil, None)
     } yield (retailKc, financeKc, ceoKc)
     prog.transact(xa)
   }
 
   private def quoteBody(lines: Json): Json =
-    Json.obj("channelId" -> channel.toString.asJson, "marketId" -> market.toString.asJson, "currency" -> "GBP".asJson, "lines" -> lines)
+    Json.obj(
+      "channelId" -> channel.toString.asJson,
+      "marketId"  -> market.toString.asJson,
+      "currency"  -> "GBP".asJson,
+      "lines"     -> lines
+    )
 
   test("a compliant quote returns correct ex/inc-VAT and standard ADLP category") { xa =>
     for {
-      kcs  <- seed(xa)
-      body  = quoteBody(Json.arr(Json.obj("sku" -> "HV-310".asJson, "qty" -> 2.asJson)))
+      kcs <- seed(xa)
+      body = quoteBody(Json.arr(Json.obj("sku" -> "HV-310".asJson, "qty" -> 2.asJson)))
       resp <- post(xa, "/api/v1/pricing/quote", s"dev:${kcs._1}", body)
       json <- resp.as[Json]
     } yield {
@@ -100,8 +108,9 @@ object PricingHttpSuite extends IOSuite {
 
   test("an out-of-band discount routes the quote to an ADLP exception") { xa =>
     for {
-      kcs  <- seed(xa)
-      body  = quoteBody(Json.arr(Json.obj("sku" -> "HV-310".asJson, "qty" -> 1.asJson, "unitPriceExVat" -> "400.00".asJson)))
+      kcs <- seed(xa)
+      body =
+        quoteBody(Json.arr(Json.obj("sku" -> "HV-310".asJson, "qty" -> 1.asJson, "unitPriceExVat" -> "400.00".asJson)))
       resp <- post(xa, "/api/v1/pricing/quote", s"dev:${kcs._1}", body)
       json <- resp.as[Json]
     } yield expect(resp.status == Status.Ok) and
@@ -125,20 +134,25 @@ object PricingHttpSuite extends IOSuite {
 
   test("a CEO can create and activate a price rule (governed, audited, immediately effective)") { xa =>
     for {
-      kcs   <- seed(xa)
+      kcs <- seed(xa)
       create = Json.obj(
-                 "surface"          -> "customer".asJson,
-                 "currency"         -> "GBP".asJson,
-                 "taxRegime"        -> "GB_STANDARD".asJson,
-                 "authorisedPrice"  -> "699.00".asJson,
-                 "maxDiscountPct"   -> "5.00".asJson
-               )
+        "surface"         -> "customer".asJson,
+        "currency"        -> "GBP".asJson,
+        "taxRegime"       -> "GB_STANDARD".asJson,
+        "authorisedPrice" -> "699.00".asJson,
+        "maxDiscountPct"  -> "5.00".asJson
+      )
       cResp <- post(xa, "/api/v1/pricing/rules", s"dev:${kcs._3}", create)
       cJson <- cResp.as[Json]
       ruleId = cJson.hcursor.get[String]("id").toOption.get
       aResp <- post(xa, s"/api/v1/pricing/rules/$ruleId/activate", s"dev:${kcs._3}", Json.obj())
-      status <- sql"SELECT status FROM price_rule WHERE id = ${UUID.fromString(ruleId)}".query[String].unique.transact(xa)
-      events <- sql"SELECT count(*) FROM outbox_event WHERE event_type='pricing.rule.changed' AND aggregate_id=${UUID.fromString(ruleId)}".query[Long].unique.transact(xa)
+      status <-
+        sql"SELECT status FROM price_rule WHERE id = ${UUID.fromString(ruleId)}".query[String].unique.transact(xa)
+      events <-
+        sql"SELECT count(*) FROM outbox_event WHERE event_type='pricing.rule.changed' AND aggregate_id=${UUID.fromString(ruleId)}"
+          .query[Long]
+          .unique
+          .transact(xa)
     } yield expect(cResp.status == Status.Created) and expect(aResp.status == Status.Ok) and
       expect(status == "active") and expect(events == 1L)
   }

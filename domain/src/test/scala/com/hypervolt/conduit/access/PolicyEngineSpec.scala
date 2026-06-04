@@ -43,14 +43,39 @@ object PolicyEngineSpec extends SimpleIOSuite {
     val interEntityOnly = Principal(
       me,
       Set.empty,
-      List(grant(List(Permission("price_rule", Action.View, Some("inter_entity"), Set(DataLayer.InterEntity), Set.empty, Breadth.All))))
+      List(
+        grant(
+          List(
+            Permission(
+              "price_rule",
+              Action.View,
+              Some("inter_entity"),
+              Set(DataLayer.InterEntity),
+              Set.empty,
+              Breadth.All
+            )
+          )
+        )
+      )
     )
-    expect(PolicyEngine.authorize(interEntityOnly, Action.View, "price_rule", Target(None, None, None, None), Some("inter_entity"))) and
+    expect(
+      PolicyEngine.authorize(
+        interEntityOnly,
+        Action.View,
+        "price_rule",
+        Target(None, None, None, None),
+        Some("inter_entity")
+      )
+    ) and
       expect(!PolicyEngine.authorize(interEntityOnly, Action.View, "price_rule", Target(None, None, None, None), None))
   }
 
   pureTest("own-breadth matches only the principal's own rows") {
-    val ownOnly = Principal(me, Set.empty, List(Grant(List(viewOrder.copy(dataBreadth = Breadth.Own)), Set.empty, Set.empty, Set.empty, None)))
+    val ownOnly = Principal(
+      me,
+      Set.empty,
+      List(Grant(List(viewOrder.copy(dataBreadth = Breadth.Own)), Set.empty, Set.empty, Set.empty, None))
+    )
     expect(PolicyEngine.authorize(ownOnly, Action.View, "order", Target(None, None, None, Some(me)))) and
       expect(!PolicyEngine.authorize(ownOnly, Action.View, "order", Target(None, None, None, Some(UUID.randomUUID()))))
   }

@@ -10,7 +10,12 @@ object PricingService {
 
   // Specificity: prefer exact channel > null, market > null, entity > null; then volume break (min_qty);
   // then highest version.
-  def resolve(candidates: List[PriceRuleCandidate], channel: UUID, market: UUID, entity: Option[UUID]): Option[PriceResolution] = {
+  def resolve(
+      candidates: List[PriceRuleCandidate],
+      channel: UUID,
+      market: UUID,
+      entity: Option[UUID]
+  ): Option[PriceResolution] = {
     def specificity(c: PriceRuleCandidate): Int =
       List(
         c.channelId.contains(channel),
@@ -54,7 +59,9 @@ object PricingService {
   }
 
   def assemble(lines: List[QuoteLineResult]): QuoteResult = {
-    val subtotal = lines.map(l => (l.unitPriceExVat * BigDecimal(l.qty)).setScale(2, RoundingMode.HALF_UP)).foldLeft(BigDecimal(0))(_ + _)
+    val subtotal = lines
+      .map(l => (l.unitPriceExVat * BigDecimal(l.qty)).setScale(2, RoundingMode.HALF_UP))
+      .foldLeft(BigDecimal(0))(_ + _)
     val vatTotal = lines.map(_.vat).foldLeft(BigDecimal(0))(_ + _)
     QuoteResult(
       lines = lines,

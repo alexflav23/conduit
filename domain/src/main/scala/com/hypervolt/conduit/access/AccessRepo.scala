@@ -17,11 +17,12 @@ object AccessRepo {
         for {
           members <- teamId.fold(List.empty[UUID].pure[ConnectionIO])(teamMembers)
           assigns <- assignments(userId)
-          grants <- assigns.traverse { case (roleId, entities, markets, channels, breadthOverride) =>
-                      permissions(roleId).map(ps =>
-                        Grant(ps, entities.toSet, markets.toSet, channels.toSet, breadthOverride.flatMap(Breadth.fromName))
-                      )
-                    }
+          grants <- assigns.traverse {
+            case (roleId, entities, markets, channels, breadthOverride) =>
+              permissions(roleId).map(ps =>
+                Grant(ps, entities.toSet, markets.toSet, channels.toSet, breadthOverride.flatMap(Breadth.fromName))
+              )
+          }
         } yield Some(Principal(userId, members.toSet, grants))
     }
 
@@ -44,14 +45,15 @@ object AccessRepo {
           FROM permission WHERE role_id = $roleId"""
       .query[(String, String, Option[String], List[String], List[String], String)]
       .to[List]
-      .map(_.map { case (objectType, action, section, viewable, editable, breadth) =>
-        Permission(
-          objectType = objectType,
-          action = Action.fromName(action).getOrElse(Action.View),
-          section = section,
-          viewableLayers = viewable.flatMap(DataLayer.fromCode).toSet,
-          editableLayers = editable.flatMap(DataLayer.fromCode).toSet,
-          dataBreadth = Breadth.fromName(breadth).getOrElse(Breadth.Scoped)
-        )
+      .map(_.map {
+        case (objectType, action, section, viewable, editable, breadth) =>
+          Permission(
+            objectType = objectType,
+            action = Action.fromName(action).getOrElse(Action.View),
+            section = section,
+            viewableLayers = viewable.flatMap(DataLayer.fromCode).toSet,
+            editableLayers = editable.flatMap(DataLayer.fromCode).toSet,
+            dataBreadth = Breadth.fromName(breadth).getOrElse(Breadth.Scoped)
+          )
       })
 }

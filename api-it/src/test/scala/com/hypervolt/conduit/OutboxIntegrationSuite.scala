@@ -15,7 +15,7 @@ import weaver.IOSuite
 object OutboxIntegrationSuite extends IOSuite {
 
   override type Res = HikariTransactor[IO]
-  override def maxParallelism: Int            = 1 // tests share one database
+  override def maxParallelism: Int               = 1 // tests share one database
   override def sharedResource: Resource[IO, Res] = TestPostgres.transactor
 
   private def event(partition: String, n: Int, aggId: UUID, eventId: UUID = UUID.randomUUID()): OutboxEvent =
@@ -41,11 +41,12 @@ object OutboxIntegrationSuite extends IOSuite {
 
   test("a business write and its outbox row commit atomically (happy path)") { xa =>
     for {
-      _  <- reset(xa)
-      _  <- EntityRepo
-              .insert("UK Ltd", "GB", "GBP", "operating")
-              .flatMap(eid => OutboxRepo.append(event("entity", 1, eid)))
-              .transact(xa)
+      _ <- reset(xa)
+      _ <-
+        EntityRepo
+          .insert("UK Ltd", "GB", "GBP", "operating")
+          .flatMap(eid => OutboxRepo.append(event("entity", 1, eid)))
+          .transact(xa)
       ec <- countEntities(xa)
       oc <- sql"SELECT count(*) FROM outbox_event".query[Long].unique.transact(xa)
     } yield expect(ec == 1L) and expect(oc == 1L)
@@ -54,20 +55,21 @@ object OutboxIntegrationSuite extends IOSuite {
   test("a failure in the same transaction rolls back the business write (no dual-write drift)") { xa =>
     val dup = UUID.randomUUID()
     for {
-      _       <- reset(xa)
-      _       <- OutboxRepo.append(event("seed", 1, UUID.randomUUID(), dup)).transact(xa)
-      attempt <- EntityRepo
-                   .insert("Should Rollback", "GB", "GBP", "operating")
-                   .flatMap(eid => OutboxRepo.append(event("entity", 2, eid, dup))) // duplicate PK -> fails
-                   .transact(xa)
-                   .attempt
-      ec      <- countEntities(xa)
+      _ <- reset(xa)
+      _ <- OutboxRepo.append(event("seed", 1, UUID.randomUUID(), dup)).transact(xa)
+      attempt <-
+        EntityRepo
+          .insert("Should Rollback", "GB", "GBP", "operating")
+          .flatMap(eid => OutboxRepo.append(event("entity", 2, eid, dup))) // duplicate PK -> fails
+          .transact(xa)
+          .attempt
+      ec <- countEntities(xa)
     } yield expect(attempt.isLeft) and expect(ec == 0L)
   }
 
   test("the relay publishes pending events in per-partition seq order") { xa =>
-    val a = UUID.randomUUID()
-    val b = UUID.randomUUID()
+    val a        = UUID.randomUUID()
+    val b        = UUID.randomUUID()
     val appended = List(("A", 1, a), ("B", 1, b), ("A", 2, a), ("B", 2, b), ("A", 3, a))
     for {
       _         <- reset(xa)
@@ -86,10 +88,10 @@ object OutboxIntegrationSuite extends IOSuite {
 
   test("re-running the relay does not re-publish already-published events") { xa =>
     for {
-      _     <- reset(xa)
-      _     <- OutboxRepo.append(event("A", 1, UUID.randomUUID())).transact(xa)
-      pub   <- InMemoryEventPublisher.create[IO]
-      relay  = new OutboxRelay[IO](xa, pub)
+      _   <- reset(xa)
+      _   <- OutboxRepo.append(event("A", 1, UUID.randomUUID())).transact(xa)
+      pub <- InMemoryEventPublisher.create[IO]
+      relay = new OutboxRelay[IO](xa, pub)
       first <- relay.runOnce()
       again <- relay.runOnce()
       total <- pub.published.map(_.size)

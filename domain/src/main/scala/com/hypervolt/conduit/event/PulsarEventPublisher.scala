@@ -21,7 +21,8 @@ final class PulsarEventPublisher[F[_]: Async](
     producerFor(Topics.forAggregate(event.aggregateType)).flatMap { producer =>
       Async[F]
         .fromCompletableFuture(
-          Sync[F].delay(producer.newMessage().key(event.partitionKey).value(EventEnvelope.fromOutbox(event)).sendAsync())
+          Sync[F]
+            .delay(producer.newMessage().key(event.partitionKey).value(EventEnvelope.fromOutbox(event)).sendAsync())
         )
         .void
     }

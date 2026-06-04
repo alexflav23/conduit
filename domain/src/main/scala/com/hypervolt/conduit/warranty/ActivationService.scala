@@ -22,34 +22,72 @@ object ActivationOutcome {
   case object NoSerialUnit     extends ActivationOutcome("no_serial_unit")
 }
 
-private final case class SerialRow(id: UUID, generation: String, familyId: UUID, lotBatchId: Option[UUID], entityId: Option[UUID])
+private final case class SerialRow(
+    id: UUID,
+    generation: String,
+    familyId: UUID,
+    lotBatchId: Option[UUID],
+    entityId: Option[UUID]
+)
 
 // Activation ingest (doc 04 §Serial): idempotent, first-write-wins per serial; V2 ignored; the warranty
 // clock starts at activation and a provision opens at the unit's specific batch cost. The Pulsar consumer
 // on `athena-placement-versioned` calls onActivation; replaying the topic is safe (first-write-wins).
 final class ActivationService[F[_]: Async](xa: Transactor[F]) {
 
-  def onActivation(serialNo: String, placementId: UUID, version: Int, activatedAt: Instant, companyId: Option[UUID]): F[ActivationOutcome] =
-    lookupSerial(serialNo).flatMap {
-      case None                              => (ActivationOutcome.NoSerialUnit: ActivationOutcome).pure[ConnectionIO]
-      case Some(su) if su.generation != "v3" => (ActivationOutcome.IgnoredV2: ActivationOutcome).pure[ConnectionIO]
-      case Some(su) =>
-        insertActivationFirstWriteWins(serialNo, placementId, version, activatedAt).flatMap { firstTime =>
-          if (!firstTime) (ActivationOutcome.AlreadyActivated: ActivationOutcome).pure[ConnectionIO]
-          else activate(su, serialNo, placementId, version, activatedAt, companyId)
-        }
-    }.transact(xa)
+  def onActivation(
+      serialNo: String,
+      placementId: UUID,
+      version: Int,
+      activatedAt: Instant,
+      companyId: Option[UUID]
+  ): F[ActivationOutcome] =
+    lookupSerial(serialNo)
+      .flatMap {
+        case None                              => (ActivationOutcome.NoSerialUnit: ActivationOutcome).pure[ConnectionIO]
+        case Some(su) if su.generation != "v3" => (ActivationOutcome.IgnoredV2: ActivationOutcome).pure[ConnectionIO]
+        case Some(su) =>
+          insertActivationFirstWriteWins(serialNo, placementId, version, activatedAt).flatMap { firstTime =>
+            if (!firstTime) (ActivationOutcome.AlreadyActivated: ActivationOutcome).pure[ConnectionIO]
+            else activate(su, serialNo, placementId, version, activatedAt, companyId)
+          }
+      }
+      .transact(xa)
 
-  private def activate(su: SerialRow, serialNo: String, placementId: UUID, version: Int, activatedAt: Instant, companyId: Option[UUID]): ConnectionIO[ActivationOutcome] = {
+  private def activate(
+      su: SerialRow,
+      serialNo: String,
+      placementId: UUID,
+      version: Int,
+      activatedAt: Instant,
+      companyId: Option[UUID]
+  ): ConnectionIO[ActivationOutcome] = {
     val start = activatedAt.atZone(ZoneOffset.UTC).toLocalDate
     for {
       months <- WarrantyProvisioning.legalMonths(su.familyId)
       extra  <- WarrantyProvisioning.extensionMonths(su.id)
-      end     = start.plusMonths((months + extra).toLong)
-      _ <- sql"""UPDATE serial_unit SET status = 'activated', company_id = $companyId, activated_at = $activatedAt, warranty_end = $end WHERE id = ${su.id}""".update.run
+      end = start.plusMonths((months + extra).toLong)
+      _ <-
+        sql"""UPDATE serial_unit SET status = 'activated', company_id = $companyId, activated_at = $activatedAt, warranty_end = $end WHERE id = ${su.id}""".update.run
       _ <- WarrantyProvisioning.open(su.id, su.entityId, su.lotBatchId, su.familyId, start, end)
-      _ <- OutboxRepo.append(event(serialNo, "activation.recorded", Json.obj("placement_id" -> placementId.toString.asJson, "version" -> version.asJson, "is_first" -> true.asJson)))
-      _ <- OutboxRepo.append(event(serialNo, "warranty.provision.accrued", Json.obj("warranty_start" -> start.toString.asJson, "warranty_end" -> end.toString.asJson)))
+      _ <- OutboxRepo.append(
+        event(
+          serialNo,
+          "activation.recorded",
+          Json.obj(
+            "placement_id" -> placementId.toString.asJson,
+            "version"      -> version.asJson,
+            "is_first"     -> true.asJson
+          )
+        )
+      )
+      _ <- OutboxRepo.append(
+        event(
+          serialNo,
+          "warranty.provision.accrued",
+          Json.obj("warranty_start" -> start.toString.asJson, "warranty_end" -> end.toString.asJson)
+        )
+      )
     } yield ActivationOutcome.Activated
   }
 
@@ -61,11 +99,28 @@ final class ActivationService[F[_]: Async](xa: Transactor[F]) {
       .option
       .map(_.map { case (id, gen, fam, batch, ent) => SerialRow(id, gen, fam, batch, ent) })
 
-  private def insertActivationFirstWriteWins(serialNo: String, placementId: UUID, version: Int, activatedAt: Instant): ConnectionIO[Boolean] =
+  private def insertActivationFirstWriteWins(
+      serialNo: String,
+      placementId: UUID,
+      version: Int,
+      activatedAt: Instant
+  ): ConnectionIO[Boolean] =
     sql"""INSERT INTO activation (serial, placement_id, placement_version, activated_at)
           VALUES ($serialNo, $placementId, $version, $activatedAt)
           ON CONFLICT (serial) DO NOTHING""".update.run.map(_ == 1)
 
   private def event(serial: String, eventType: String, payload: Json): OutboxEvent =
-    OutboxEvent(UUID.randomUUID(), eventType, 1, "serial", UUID.randomUUID(), serial, None, None, None, payload, Instant.now())
+    OutboxEvent(
+      UUID.randomUUID(),
+      eventType,
+      1,
+      "serial",
+      UUID.randomUUID(),
+      serial,
+      None,
+      None,
+      None,
+      payload,
+      Instant.now()
+    )
 }

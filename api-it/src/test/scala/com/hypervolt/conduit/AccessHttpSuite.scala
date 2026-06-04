@@ -41,10 +41,10 @@ object AccessHttpSuite extends IOSuite {
   // Seed an admin user (assigned the preset `admin` role) and a plain user (no grants).
   private def seedUsers(xa: HikariTransactor[IO], adminKc: String, plainKc: String): IO[Unit] =
     (for {
-      adminId  <- AdminRepo.ensureUser(adminKc, Some("Admin"))
-      _        <- AdminRepo.ensureUser(plainKc, Some("Plain"))
+      adminId   <- AdminRepo.ensureUser(adminKc, Some("Admin"))
+      _         <- AdminRepo.ensureUser(plainKc, Some("Plain"))
       adminRole <- sql"SELECT id FROM role WHERE name = 'admin'".query[UUID].unique
-      _        <- AdminRepo.assign(adminId, adminRole, Nil, Nil, Nil, Some("all"))
+      _         <- AdminRepo.assign(adminId, adminRole, Nil, Nil, Nil, Some("all"))
     } yield ()).transact(xa)
 
   test("no token -> 401") { xa =>
@@ -67,7 +67,7 @@ object AccessHttpSuite extends IOSuite {
     val adminKc = s"admin-${UUID.randomUUID()}"
     val newRole = Json.obj("name" -> s"custom-${UUID.randomUUID()}".asJson, "description" -> "x".asJson)
     for {
-      _        <- seedUsers(xa, adminKc, plainKc)
+      _         <- seedUsers(xa, adminKc, plainKc)
       forbidden <- post(xa, "/api/v1/admin/roles", Some(s"dev:$plainKc"), newRole)
       created   <- post(xa, "/api/v1/admin/roles", Some(s"dev:$adminKc"), newRole)
     } yield expect(forbidden.status == Status.Forbidden) and expect(created.status == Status.Created)

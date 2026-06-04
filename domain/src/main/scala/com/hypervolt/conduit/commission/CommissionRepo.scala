@@ -18,8 +18,9 @@ object CommissionRepo {
           WHERE s.status = 'active'"""
       .query[Row]
       .to[List]
-      .map(_.map { case (id, basis, rate, exc, vf, vt, team, ch, mk, en) =>
-        ResolvableScheme(CommissionScheme(id, basis, rate, exc, vf, vt), SchemeAssignment(id, team, ch, mk, en))
+      .map(_.map {
+        case (id, basis, rate, exc, vf, vt, team, ch, mk, en) =>
+          ResolvableScheme(CommissionScheme(id, basis, rate, exc, vf, vt), SchemeAssignment(id, team, ch, mk, en))
       })
 
   def insertEntry(
@@ -44,5 +45,6 @@ object CommissionRepo {
 
   def postedTotal(agentId: UUID): ConnectionIO[BigDecimal] =
     sql"SELECT COALESCE(SUM(amount), 0) FROM commission_entry WHERE agent_id = $agentId AND status = 'posted'"
-      .query[BigDecimal].unique
+      .query[BigDecimal]
+      .unique
 }

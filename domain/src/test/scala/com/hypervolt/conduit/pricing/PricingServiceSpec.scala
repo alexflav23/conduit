@@ -18,13 +18,24 @@ object PricingServiceSpec extends SimpleIOSuite {
       version: Int = 1,
       maxDisc: String = "0"
   ): PriceRuleCandidate =
-    PriceRuleCandidate(UUID.randomUUID(), ch, mk, en, BigDecimal(price), BigDecimal(maxDisc), minQty, version, "GB_STANDARD", BigDecimal("20"))
+    PriceRuleCandidate(
+      UUID.randomUUID(),
+      ch,
+      mk,
+      en,
+      BigDecimal(price),
+      BigDecimal(maxDisc),
+      minQty,
+      version,
+      "GB_STANDARD",
+      BigDecimal("20")
+    )
 
   pureTest("the most specific rule wins (channel+market+entity beats channel-only beats global)") {
-    val global  = candidate(None, None, None, "600")
+    val global   = candidate(None, None, None, "600")
     val chanOnly = candidate(Some(channel), None, None, "590")
-    val exact   = candidate(Some(channel), Some(market), Some(entity), "587.50")
-    val r = PricingService.resolve(List(global, chanOnly, exact), channel, market, Some(entity))
+    val exact    = candidate(Some(channel), Some(market), Some(entity), "587.50")
+    val r        = PricingService.resolve(List(global, chanOnly, exact), channel, market, Some(entity))
     expect(r.exists(_.exVat == BigDecimal("587.50")))
   }
 
@@ -37,16 +48,17 @@ object PricingServiceSpec extends SimpleIOSuite {
   }
 
   pureTest("a within-band discount is standard; an out-of-band discount is an exception") {
-    val res = PriceResolution(UUID.randomUUID(), BigDecimal("600.00"), BigDecimal("10.00"), "GB_STANDARD", BigDecimal("20"))
-    expect(PricingService.categorise(res, BigDecimal("550.00")) == "standard") and   // 8.33% <= 10%
-      expect(PricingService.categorise(res, BigDecimal("500.00")) == "exception")      // 16.67% > 10%
+    val res =
+      PriceResolution(UUID.randomUUID(), BigDecimal("600.00"), BigDecimal("10.00"), "GB_STANDARD", BigDecimal("20"))
+    expect(PricingService.categorise(res, BigDecimal("550.00")) == "standard") and // 8.33% <= 10%
+      expect(PricingService.categorise(res, BigDecimal("500.00")) == "exception")  // 16.67% > 10%
   }
 
   pureTest("VAT and a quote total compute correctly (GB 20%)") {
-    val res  = PriceResolution(UUID.randomUUID(), BigDecimal("587.50"), BigDecimal("0"), "GB_STANDARD", BigDecimal("20"))
-    val line = PricingService.priceLine(res, QuoteLine("HV-310", 2, None))
+    val res   = PriceResolution(UUID.randomUUID(), BigDecimal("587.50"), BigDecimal("0"), "GB_STANDARD", BigDecimal("20"))
+    val line  = PricingService.priceLine(res, QuoteLine("HV-310", 2, None))
     val quote = PricingService.assemble(List(line))
-    expect(line.vat == BigDecimal("235.00")) and          // 587.50 * 2 * 20%
+    expect(line.vat == BigDecimal("235.00")) and // 587.50 * 2 * 20%
       expect(quote.subtotalExVat == BigDecimal("1175.00")) and
       expect(quote.totalIncVat == BigDecimal("1410.00")) and
       expect(!quote.requiresException)

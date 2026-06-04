@@ -8,7 +8,19 @@ object LotBatchSpec extends SimpleIOSuite {
   private val v = UUID.randomUUID()
 
   private def batch(price: String, fx: String, freight: String, duty: String): NewBatch =
-    NewBatch("B", None, v, 100, BigDecimal(price), BigDecimal(fx), "spot", None, BigDecimal(freight), BigDecimal(duty), "GBP")
+    NewBatch(
+      "B",
+      None,
+      v,
+      100,
+      BigDecimal(price),
+      BigDecimal(fx),
+      "spot",
+      None,
+      BigDecimal(freight),
+      BigDecimal(duty),
+      "GBP"
+    )
 
   pureTest("landed unit cost = unit_cost_usd*fx + per-unit freight + per-unit duty") {
     // 100 * 0.79 + 500/100 + 200/100 = 79 + 5 + 2 = 86.0000

@@ -15,13 +15,20 @@ final class CommissionService[F[_]: Async](xa: Transactor[F], ledger: TigerBeetl
 
   private val gbpLedger = Ledgers.forCurrency(Currency.GBP)
 
-  def expenseAccount(currency: String): BigInt = TbIds.accountId(s"COMM_EXPENSE:$expenseEntity:$currency")
+  def expenseAccount(currency: String): BigInt                = TbIds.accountId(s"COMM_EXPENSE:$expenseEntity:$currency")
   def payableAccount(agentId: UUID, currency: String): BigInt = TbIds.accountId(s"COMM_PAYABLE:$agentId:$currency")
 
   private def minor(amount: BigDecimal): BigInt = (amount * 100).toBigInt
 
   // Accrue one line's commission: PENDING transfer + a `pending` commission_entry. Returns the entry id.
-  def accrue(agentId: UUID, schemeId: UUID, orderId: Option[UUID], currency: String, scheme: CommissionScheme, line: CommissionLineInput): F[UUID] = {
+  def accrue(
+      agentId: UUID,
+      schemeId: UUID,
+      orderId: Option[UUID],
+      currency: String,
+      scheme: CommissionScheme,
+      line: CommissionLineInput
+  ): F[UUID] = {
     val (basis, amount) = CommissionResolver.lineCommission(scheme, line)
     val entryId         = UUID.randomUUID()
     val transferId      = TbIds.transferId(entryId, 0)
@@ -35,7 +42,19 @@ final class CommissionService[F[_]: Async](xa: Transactor[F], ledger: TigerBeetl
       flags = LedgerFlags.Pending
     )
     ledger.postTransfers(List(transfer)) *>
-      CommissionRepo.insertEntry(entryId, agentId, schemeId, orderId, basis, scheme.ratePct, amount, currency, "pending", transferId.toString)
+      CommissionRepo
+        .insertEntry(
+          entryId,
+          agentId,
+          schemeId,
+          orderId,
+          basis,
+          scheme.ratePct,
+          amount,
+          currency,
+          "pending",
+          transferId.toString
+        )
         .transact(xa)
         .as(entryId)
   }
@@ -97,11 +116,25 @@ final class CommissionService[F[_]: Async](xa: Transactor[F], ledger: TigerBeetl
       else (payableAccount(agentId, currency), expenseAccount(currency))
     val post =
       if (delta == 0) Async[F].unit
-      else ledger.postTransfers(List(LedgerTransfer(transferId, debit, credit, absMinor, gbpLedger, LedgerTransferCode.Commission)))
+      else
+        ledger.postTransfers(
+          List(LedgerTransfer(transferId, debit, credit, absMinor, gbpLedger, LedgerTransferCode.Commission))
+        )
     post *>
       CommissionRepo
-        .insertEntry(entryId, agentId, schemeId, orderId, actualBasis.setScale(2, scala.math.BigDecimal.RoundingMode.HALF_UP),
-          rate, delta, currency, "posted", transferId.toString, kind = "true_up_adjustment")
+        .insertEntry(
+          entryId,
+          agentId,
+          schemeId,
+          orderId,
+          actualBasis.setScale(2, scala.math.BigDecimal.RoundingMode.HALF_UP),
+          rate,
+          delta,
+          currency,
+          "posted",
+          transferId.toString,
+          kind = "true_up_adjustment"
+        )
         .transact(xa)
         .as((entryId, delta))
   }

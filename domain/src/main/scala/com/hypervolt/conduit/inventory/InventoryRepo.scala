@@ -20,7 +20,13 @@ object InventoryRepo {
       sql"""INSERT INTO stock_movement (type, product_variant_id, location_id, entity_id, qty, ref_type)
             VALUES ('receipt', $variant, $location, $entity, $qty, 'seed')""".update.run).void
 
-  def addSerial(serialNo: String, generation: String, variant: UUID, entity: Option[UUID], location: UUID): ConnectionIO[UUID] =
+  def addSerial(
+      serialNo: String,
+      generation: String,
+      variant: UUID,
+      entity: Option[UUID],
+      location: UUID
+  ): ConnectionIO[UUID] =
     sql"""INSERT INTO serial_unit (serial_no, generation, product_variant_id, entity_id, location_id, status)
           VALUES ($serialNo, $generation, $variant, $entity, $location, 'in_stock') RETURNING id""".query[UUID].unique
 
@@ -29,8 +35,12 @@ object InventoryRepo {
           WHERE entity_id = $entity AND product_variant_id = $variant""".query[Int].unique
 
   def allocatedQty(entity: UUID, variant: UUID): ConnectionIO[Int] =
-    sql"SELECT COALESCE(SUM(qty_allocated), 0) FROM stock_item WHERE entity_id = $entity AND product_variant_id = $variant".query[Int].unique
+    sql"SELECT COALESCE(SUM(qty_allocated), 0) FROM stock_item WHERE entity_id = $entity AND product_variant_id = $variant"
+      .query[Int]
+      .unique
 
   def onHandFromMovements(variant: UUID, location: UUID): ConnectionIO[Int] =
-    sql"SELECT COALESCE(SUM(qty), 0) FROM stock_movement WHERE product_variant_id = $variant AND location_id = $location".query[Int].unique
+    sql"SELECT COALESCE(SUM(qty), 0) FROM stock_movement WHERE product_variant_id = $variant AND location_id = $location"
+      .query[Int]
+      .unique
 }

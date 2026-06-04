@@ -50,23 +50,26 @@ object AccessIntegrationSuite extends IOSuite {
     val kc     = s"user-${UUID.randomUUID()}"
     val market = UUID.randomUUID()
     val prog = for {
-      uid <- sql"INSERT INTO app_user (keycloak_id, name) VALUES ($kc, 'Tester') RETURNING id".query[UUID].unique
-      rid <- sql"INSERT INTO role (name) VALUES (${s"r-$kc"}) RETURNING id".query[UUID].unique
-      _ <- sql"""INSERT INTO permission (role_id, object_type, action, viewable_layers, data_breadth)
+      uid    <- sql"INSERT INTO app_user (keycloak_id, name) VALUES ($kc, 'Tester') RETURNING id".query[UUID].unique
+      rid    <- sql"INSERT INTO role (name) VALUES (${s"r-$kc"}) RETURNING id".query[UUID].unique
+      _      <- sql"""INSERT INTO permission (role_id, object_type, action, viewable_layers, data_breadth)
                  VALUES ($rid, 'order', 'view', '{volume,commercial}', 'scoped')""".update.run
-      aid <- sql"""INSERT INTO role_assignment (user_id, role_id, scope_markets)
+      aid    <- sql"""INSERT INTO role_assignment (user_id, role_id, scope_markets)
                    VALUES ($uid, $rid, ARRAY[$market]::uuid[]) RETURNING id""".query[UUID].unique
       before <- AccessRepo.loadPrincipal(kc)
       _      <- sql"DELETE FROM role_assignment WHERE id = $aid".update.run
       after  <- AccessRepo.loadPrincipal(kc)
     } yield (before, after)
-    prog.transact(xa).map { case (before, after) =>
-      val inScope    = Target(None, Some(market), None, None)
-      val grantedNow = before.exists(p => PolicyEngine.authorize(p, Action.View, "order", inScope))
-      val layersOk   = before.exists(_.grants.exists(_.permissions.exists(_.viewableLayers == Set(DataLayer.Volume, DataLayer.Commercial))))
-      val scopeOk    = before.exists(_.grants.exists(_.scopeMarkets == Set(market)))
-      val deniedAfter = after.forall(p => !PolicyEngine.authorize(p, Action.View, "order", inScope))
-      expect(grantedNow) and expect(layersOk) and expect(scopeOk) and expect(deniedAfter)
+    prog.transact(xa).map {
+      case (before, after) =>
+        val inScope    = Target(None, Some(market), None, None)
+        val grantedNow = before.exists(p => PolicyEngine.authorize(p, Action.View, "order", inScope))
+        val layersOk = before.exists(
+          _.grants.exists(_.permissions.exists(_.viewableLayers == Set(DataLayer.Volume, DataLayer.Commercial)))
+        )
+        val scopeOk     = before.exists(_.grants.exists(_.scopeMarkets == Set(market)))
+        val deniedAfter = after.forall(p => !PolicyEngine.authorize(p, Action.View, "order", inScope))
+        expect(grantedNow) and expect(layersOk) and expect(scopeOk) and expect(deniedAfter)
     }
   }
 
@@ -74,10 +77,14 @@ object AccessIntegrationSuite extends IOSuite {
     val prog = for {
       roles  <- sql"SELECT count(*) FROM role WHERE is_preset".query[Long].unique
       layers <- sql"SELECT count(*) FROM data_layer".query[Long].unique
-      flm    <- sql"SELECT data_layer FROM field_layer_map WHERE object_type='price_rule' AND field='tp_markup_pct'".query[String].unique
+      flm <-
+        sql"SELECT data_layer FROM field_layer_map WHERE object_type='price_rule' AND field='tp_markup_pct'"
+          .query[String]
+          .unique
     } yield (roles, layers, flm)
-    prog.transact(xa).map { case (roles, layers, flm) =>
-      expect(roles >= 9L) and expect(layers == 7L) and expect(flm == "inter_entity")
+    prog.transact(xa).map {
+      case (roles, layers, flm) =>
+        expect(roles >= 9L) and expect(layers == 7L) and expect(flm == "inter_entity")
     }
   }
 }

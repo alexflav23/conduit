@@ -34,8 +34,8 @@ object PolicyEngine {
       case Breadth.Team => target.ownerUserId.exists(principal.teamMemberIds.contains)
       case Breadth.Scoped =>
         (grant.scopeEntities.isEmpty || target.entityId.exists(grant.scopeEntities.contains)) &&
-        (grant.scopeMarkets.isEmpty || target.marketId.exists(grant.scopeMarkets.contains)) &&
-        (grant.scopeChannels.isEmpty || target.channelId.exists(grant.scopeChannels.contains))
+          (grant.scopeMarkets.isEmpty || target.marketId.exists(grant.scopeMarkets.contains)) &&
+          (grant.scopeChannels.isEmpty || target.channelId.exists(grant.scopeChannels.contains))
     }
   }
 }

@@ -60,7 +60,10 @@ final class DealDeskRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F])
         status =>
           if (!PolicyEngine.hasPermission(principal, Action.View, "adlp_exception"))
             Async[F].pure(Left(err(StatusCode.Forbidden, "forbidden", "requires view:adlp_exception")))
-          else service.listJson(principal, status).map(rows => Right(Json.fromValues(rows.map(r => Projection.projectFor(principal, "adlp_exception", r)))))
+          else
+            service
+              .listJson(principal, status)
+              .map(rows => Right(Json.fromValues(rows.map(r => Projection.projectFor(principal, "adlp_exception", r)))))
       )
 
   private val get =
@@ -89,20 +92,34 @@ final class DealDeskRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F])
       .in("api" / "v1" / "adlp" / "exceptions" / path[String]("id") / "submit")
       .in(jsonBody[SubmitNarrativeReq])
       .out(jsonBody[Json])
-      .serverLogic(principal => { case (idStr, req) =>
-        Try(UUID.fromString(idStr)).toEither match {
-          case Left(_) => Async[F].pure(Left(err(StatusCode.BadRequest, "bad_request", "invalid id")))
-          case Right(id) =>
-            service.ownerOf(id).flatMap { owner =>
-              if (!PolicyEngine.authorize(principal, Action.Edit, "adlp_exception", Target(None, None, None, owner)))
-                Async[F].pure(Left(err(StatusCode.Forbidden, "forbidden", "requires edit:adlp_exception")))
-              else
-                service.submit(id, Narrative(req.justification, req.volumeExpectation, req.volumeDenomination, req.strategicImportance, req.notes, None), principal.userId).map {
-                  case Left(e)  => Left(err(StatusCode.UnprocessableEntity, "invalid", e))
-                  case Right(_) => Right(Json.obj("id" -> id.toString.asJson, "status" -> "pending_ceo".asJson))
-                }
-            }
-        }
+      .serverLogic(principal => {
+        case (idStr, req) =>
+          Try(UUID.fromString(idStr)).toEither match {
+            case Left(_) => Async[F].pure(Left(err(StatusCode.BadRequest, "bad_request", "invalid id")))
+            case Right(id) =>
+              service.ownerOf(id).flatMap { owner =>
+                if (!PolicyEngine.authorize(principal, Action.Edit, "adlp_exception", Target(None, None, None, owner)))
+                  Async[F].pure(Left(err(StatusCode.Forbidden, "forbidden", "requires edit:adlp_exception")))
+                else
+                  service
+                    .submit(
+                      id,
+                      Narrative(
+                        req.justification,
+                        req.volumeExpectation,
+                        req.volumeDenomination,
+                        req.strategicImportance,
+                        req.notes,
+                        None
+                      ),
+                      principal.userId
+                    )
+                    .map {
+                      case Left(e)  => Left(err(StatusCode.UnprocessableEntity, "invalid", e))
+                      case Right(_) => Right(Json.obj("id" -> id.toString.asJson, "status" -> "pending_ceo".asJson))
+                    }
+              }
+          }
       })
 
   // CEO-only: the policy layer grants approve:adlp_exception to the `ceo` role alone.
@@ -111,24 +128,27 @@ final class DealDeskRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F])
       .in("api" / "v1" / "adlp" / "exceptions" / path[String]("id") / "decision")
       .in(jsonBody[DecisionReq])
       .out(jsonBody[Json])
-      .serverLogic(principal => { case (idStr, req) =>
-        if (!PolicyEngine.authorize(principal, Action.Approve, "adlp_exception", anchor))
-          Async[F].pure(Left(err(StatusCode.Forbidden, "forbidden", "only the CEO may approve a price deviation")))
-        else {
-          val parsed = for {
-            id   <- Try(UUID.fromString(idStr)).toEither.leftMap(_ => err(StatusCode.BadRequest, "bad_request", "invalid id"))
-            from <- req.validFrom.traverse(instant)
-            to   <- req.validTo.traverse(instant)
-          } yield (id, from, to)
-          parsed match {
-            case Left(e) => Async[F].pure(Left(e))
-            case Right((id, from, to)) =>
-              service.decide(id, principal.userId, req.decision == "approve", req.memo, from, to, req.volumeMin).map {
-                case Left(e)  => Left(err(StatusCode.UnprocessableEntity, "invalid", e))
-                case Right(_) => Right(Json.obj("id" -> id.toString.asJson, "decision" -> req.decision.asJson))
-              }
+      .serverLogic(principal => {
+        case (idStr, req) =>
+          if (!PolicyEngine.authorize(principal, Action.Approve, "adlp_exception", anchor))
+            Async[F].pure(Left(err(StatusCode.Forbidden, "forbidden", "only the CEO may approve a price deviation")))
+          else {
+            val parsed = for {
+              id <- Try(UUID.fromString(idStr)).toEither.leftMap(_ =>
+                err(StatusCode.BadRequest, "bad_request", "invalid id")
+              )
+              from <- req.validFrom.traverse(instant)
+              to   <- req.validTo.traverse(instant)
+            } yield (id, from, to)
+            parsed match {
+              case Left(e) => Async[F].pure(Left(e))
+              case Right((id, from, to)) =>
+                service.decide(id, principal.userId, req.decision == "approve", req.memo, from, to, req.volumeMin).map {
+                  case Left(e)  => Left(err(StatusCode.UnprocessableEntity, "invalid", e))
+                  case Right(_) => Right(Json.obj("id" -> id.toString.asJson, "decision" -> req.decision.asJson))
+                }
+            }
           }
-        }
       })
 
   val routes: HttpRoutes[F] =

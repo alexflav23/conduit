@@ -45,18 +45,21 @@ object Main extends IOApp.Simple {
     } yield (cfg, xa)
 
   override def run: IO[Unit] =
-    resources.use { case (cfg, xa) =>
-      val auth          = new AuthService[IO](xa, devMode = cfg.env != "prod")
-      val accessRoutes   = new AccessRoutes[IO](xa, auth).routes
-      val pricingRoutes  = new PricingRoutes[IO](xa, auth).routes
-      val commerceRoutes = new CommerceRoutes[IO](xa, auth).routes
-      val dealDeskRoutes = new DealDeskRoutes[IO](xa, auth).routes
-      val app =
-        Router("/" -> (HealthRoutes.routes[IO] <+> accessRoutes <+> pricingRoutes <+> commerceRoutes <+> dealDeskRoutes)).orNotFound
-      val host         = Ipv4Address.fromString(cfg.http.host).getOrElse(ipv4"0.0.0.0")
-      val apiPort      = Port.fromInt(cfg.http.port).getOrElse(port"8080")
-      val adminPort    = Port.fromInt(cfg.adminPort).getOrElse(port"9990")
-      logger.info(s"Listening on api=$apiPort admin=$adminPort") *>
-        (httpServer(host, apiPort, app), httpServer(host, adminPort, app)).tupled.useForever
+    resources.use {
+      case (cfg, xa) =>
+        val auth           = new AuthService[IO](xa, devMode = cfg.env != "prod")
+        val accessRoutes   = new AccessRoutes[IO](xa, auth).routes
+        val pricingRoutes  = new PricingRoutes[IO](xa, auth).routes
+        val commerceRoutes = new CommerceRoutes[IO](xa, auth).routes
+        val dealDeskRoutes = new DealDeskRoutes[IO](xa, auth).routes
+        val app =
+          Router(
+            "/" -> (HealthRoutes.routes[IO] <+> accessRoutes <+> pricingRoutes <+> commerceRoutes <+> dealDeskRoutes)
+          ).orNotFound
+        val host      = Ipv4Address.fromString(cfg.http.host).getOrElse(ipv4"0.0.0.0")
+        val apiPort   = Port.fromInt(cfg.http.port).getOrElse(port"8080")
+        val adminPort = Port.fromInt(cfg.adminPort).getOrElse(port"9990")
+        logger.info(s"Listening on api=$apiPort admin=$adminPort") *>
+          (httpServer(host, apiPort, app), httpServer(host, adminPort, app)).tupled.useForever
     }
 }

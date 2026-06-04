@@ -4,14 +4,14 @@ import java.util.UUID
 
 sealed abstract class Action(val name: String)
 object Action {
-  case object View   extends Action("view")
-  case object Edit   extends Action("edit")
-  case object Create extends Action("create")
-  case object Delete extends Action("delete")
+  case object View    extends Action("view")
+  case object Edit    extends Action("edit")
+  case object Create  extends Action("create")
+  case object Delete  extends Action("delete")
   case object Approve extends Action("approve")
-  case object Export extends Action("export")
+  case object Export  extends Action("export")
 
-  val all: List[Action] = List(View, Edit, Create, Delete, Approve, Export)
+  val all: List[Action]                   = List(View, Edit, Create, Delete, Approve, Export)
   def fromName(n: String): Option[Action] = all.find(_.name == n)
 }
 
@@ -23,7 +23,7 @@ object Breadth {
   case object Own    extends Breadth("own")
   case object Scoped extends Breadth("scoped")
 
-  val all: List[Breadth] = List(All, Team, Own, Scoped)
+  val all: List[Breadth]                   = List(All, Team, Own, Scoped)
   def fromName(n: String): Option[Breadth] = all.find(_.name == n)
 }
 

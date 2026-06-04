@@ -18,9 +18,9 @@ object DedupeIntegrationSuite extends IOSuite {
   test("a redelivered event is processed exactly once (dedupe on event_id)") { xa =>
     val eventId = UUID.randomUUID()
     for {
-      _        <- sql"DELETE FROM consumer_dedupe".update.run.transact(xa)
-      counter  <- Ref.of[IO, Int](0)
-      consumer  = new IdempotentConsumer[IO](xa, "ledger-poster")
+      _       <- sql"DELETE FROM consumer_dedupe".update.run.transact(xa)
+      counter <- Ref.of[IO, Int](0)
+      consumer = new IdempotentConsumer[IO](xa, "ledger-poster")
       first    <- consumer.process(eventId)(counter.update(_ + 1))
       second   <- consumer.process(eventId)(counter.update(_ + 1)) // redelivery
       observed <- counter.get
@@ -31,10 +31,10 @@ object DedupeIntegrationSuite extends IOSuite {
     for {
       _       <- sql"DELETE FROM consumer_dedupe".update.run.transact(xa)
       counter <- Ref.of[IO, Int](0)
-      c        = new IdempotentConsumer[IO](xa, "ledger-poster")
-      _       <- c.process(UUID.randomUUID())(counter.update(_ + 1))
-      _       <- c.process(UUID.randomUUID())(counter.update(_ + 1))
-      n       <- counter.get
+      c = new IdempotentConsumer[IO](xa, "ledger-poster")
+      _ <- c.process(UUID.randomUUID())(counter.update(_ + 1))
+      _ <- c.process(UUID.randomUUID())(counter.update(_ + 1))
+      n <- counter.get
     } yield expect(n == 2)
   }
 }

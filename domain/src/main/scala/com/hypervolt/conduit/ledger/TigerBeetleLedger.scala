@@ -22,7 +22,12 @@ final case class LedgerTransfer(
     pendingId: Option[BigInt] = None
 )
 
-final case class AccountBalance(debitsPosted: BigInt, creditsPosted: BigInt, debitsPending: BigInt, creditsPending: BigInt)
+final case class AccountBalance(
+    debitsPosted: BigInt,
+    creditsPosted: BigInt,
+    debitsPending: BigInt,
+    creditsPending: BigInt
+)
 
 // The only writer to TigerBeetle (doc 01 §5). Posting is idempotent: a transfer whose id already exists
 // returns `Exists`, which we treat as success — so redelivery never double-posts.
@@ -54,8 +59,8 @@ object TigerBeetleLedger {
             batch.setCode(a.code)
             batch.setFlags(0)
           }
-          val res         = client.createAccounts(batch)
-          var failures    = List.empty[String]
+          val res      = client.createAccounts(batch)
+          var failures = List.empty[String]
           while (res.next()) {
             val r = res.getResult
             if (r != CreateAccountResult.Exists) failures = r.toString :: failures

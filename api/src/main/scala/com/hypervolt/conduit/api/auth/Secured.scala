@@ -18,6 +18,8 @@ object Secured {
       .securityIn(sttp.tapir.auth.bearer[String]())
       .errorOut(statusCode.and(jsonBody[ApiError]))
       .serverSecurityLogic[Principal, F](token =>
-        auth.resolve(token).map(_.toRight((StatusCode.Unauthorized, ApiError("unauthorized", "missing or invalid token"))))
+        auth
+          .resolve(token)
+          .map(_.toRight((StatusCode.Unauthorized, ApiError("unauthorized", "missing or invalid token"))))
       )
 }

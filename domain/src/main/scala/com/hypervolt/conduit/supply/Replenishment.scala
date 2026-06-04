@@ -26,7 +26,7 @@ final class ReplenishmentService[F[_]: Async](xa: Transactor[F]) {
   // Run-rate = units dispatched for the variant within the window; a sustained rate change moves the suggestion.
   def suggest(entity: UUID, variant: UUID, windowDays: Int, leadTimeDays: Int, safetyDays: Int): F[Int] =
     for {
-      runRate <- sql"""SELECT COALESCE(-SUM(qty), 0) FROM stock_movement
+      runRate   <- sql"""SELECT COALESCE(-SUM(qty), 0) FROM stock_movement
                        WHERE product_variant_id = $variant AND type = 'dispatch'
                          AND occurred_at > now() - make_interval(days => $windowDays)""".query[Int].unique.transact(xa)
       available <- InventoryRepo.available(entity, variant).transact(xa)

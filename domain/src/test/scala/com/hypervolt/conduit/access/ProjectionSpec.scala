@@ -9,7 +9,19 @@ object ProjectionSpec extends SimpleIOSuite {
   private val me = UUID.randomUUID()
 
   private def principalWithLayers(layers: Set[DataLayer]): Principal =
-    Principal(me, Set.empty, List(Grant(List(Permission("price_rule", Action.View, None, layers, Set.empty, Breadth.All)), Set.empty, Set.empty, Set.empty, None)))
+    Principal(
+      me,
+      Set.empty,
+      List(
+        Grant(
+          List(Permission("price_rule", Action.View, None, layers, Set.empty, Breadth.All)),
+          Set.empty,
+          Set.empty,
+          Set.empty,
+          None
+        )
+      )
+    )
 
   // A price_rule row carrying both customer (commercial) and inter-entity fields.
   private val priceRuleRow = Json.obj(
@@ -22,7 +34,9 @@ object ProjectionSpec extends SimpleIOSuite {
     "to_entity_id"     -> Json.fromString("e-sg")
   )
 
-  pureTest("Deal Desk (volume+commercial, no inter_entity) cannot see inter-entity fields — they are absent from the payload") {
+  pureTest(
+    "Deal Desk (volume+commercial, no inter_entity) cannot see inter-entity fields — they are absent from the payload"
+  ) {
     val dealDesk = principalWithLayers(Set(DataLayer.Volume, DataLayer.Commercial))
     val out      = Projection.projectFor(dealDesk, "price_rule", priceRuleRow)
     val keys     = out.asObject.toList.flatMap(_.keys)

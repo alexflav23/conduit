@@ -13,7 +13,13 @@ import java.util.UUID
 // serial → batch → order → customer → lifecycle, and batch → all serials/holders.
 object Genealogy {
 
-  def record(serialId: UUID, eventType: String, refType: Option[String], refId: Option[UUID], actor: Option[UUID]): ConnectionIO[Int] =
+  def record(
+      serialId: UUID,
+      eventType: String,
+      refType: Option[String],
+      refId: Option[UUID],
+      actor: Option[UUID]
+  ): ConnectionIO[Int] =
     sql"""INSERT INTO unit_lifecycle_event (serial_unit_id, event_type, ref_type, ref_id, actor_user_id)
           VALUES ($serialId, $eventType, $refType, $refId, $actor)""".update.run
 
@@ -26,7 +32,19 @@ object Genealogy {
           LEFT JOIN order_line ol ON ol.id = s.order_line_id
           LEFT JOIN "order" o ON o.id = ol.order_id
           WHERE s.serial_no = $serialNo"""
-      .query[(UUID, String, String, Option[UUID], Option[String], Option[BigDecimal], Option[UUID], Option[String], Option[UUID])]
+      .query[
+        (
+            UUID,
+            String,
+            String,
+            Option[UUID],
+            Option[String],
+            Option[BigDecimal],
+            Option[UUID],
+            Option[String],
+            Option[UUID]
+        )
+      ]
       .option
       .flatMap {
         case None => Option.empty[Json].pure[ConnectionIO]
@@ -34,12 +52,14 @@ object Genealogy {
           events(sid).map { evs =>
             Some(
               Json.obj(
-                "serial_no"        -> serial.asJson,
-                "status"           -> status.asJson,
-                "batch"            -> batchId.map(_ => Json.obj("batch_no" -> batchNo.asJson, "landed_unit_cost" -> landed.map(_.toString).asJson)).getOrElse(Json.Null),
-                "order_no"         -> orderNo.asJson,
-                "customer_party"   -> soldTo.map(_.toString).asJson,
-                "lifecycle"        -> Json.fromValues(evs)
+                "serial_no" -> serial.asJson,
+                "status"    -> status.asJson,
+                "batch" -> batchId
+                  .map(_ => Json.obj("batch_no" -> batchNo.asJson, "landed_unit_cost" -> landed.map(_.toString).asJson))
+                  .getOrElse(Json.Null),
+                "order_no"       -> orderNo.asJson,
+                "customer_party" -> soldTo.map(_.toString).asJson,
+                "lifecycle"      -> Json.fromValues(evs)
               )
             )
           }
@@ -58,7 +78,13 @@ object Genealogy {
           WHERE b.batch_no = $batchNo ORDER BY s.serial_no"""
       .query[(String, String, Option[UUID], Option[UUID])]
       .to[List]
-      .map(_.map { case (serial, status, holder, line) =>
-        Json.obj("serial_no" -> serial.asJson, "status" -> status.asJson, "holder_party" -> holder.map(_.toString).asJson, "order_line" -> line.map(_.toString).asJson)
+      .map(_.map {
+        case (serial, status, holder, line) =>
+          Json.obj(
+            "serial_no"    -> serial.asJson,
+            "status"       -> status.asJson,
+            "holder_party" -> holder.map(_.toString).asJson,
+            "order_line"   -> line.map(_.toString).asJson
+          )
       })
 }

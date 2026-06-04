@@ -30,8 +30,9 @@ object OutboxRepo {
           FROM outbox_event WHERE status = 'pending' ORDER BY seq ASC LIMIT $limit"""
       .query[Row]
       .to[List]
-      .map(_.map { case (seq, id, et, sv, at, ai, pk, sc, corr, caus, pl, occ) =>
-        PendingOutbox(seq, OutboxEvent(id, et, sv, at, ai, pk, sc, corr, caus, pl, occ))
+      .map(_.map {
+        case (seq, id, et, sv, at, ai, pk, sc, corr, caus, pl, occ) =>
+          PendingOutbox(seq, OutboxEvent(id, et, sv, at, ai, pk, sc, corr, caus, pl, occ))
       })
 
   def markPublished(ids: NonEmptyList[UUID]): ConnectionIO[Int] =

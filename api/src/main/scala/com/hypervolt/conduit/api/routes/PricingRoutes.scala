@@ -28,7 +28,13 @@ import sttp.tapir.server.http4s.Http4sServerInterpreter
 final case class QuoteLineReq(sku: String, qty: Int, unitPriceExVat: Option[String])
 object QuoteLineReq { implicit val codec: Codec[QuoteLineReq] = deriveCodec }
 
-final case class QuoteReq(entityId: Option[String], channelId: String, marketId: String, currency: String, lines: List[QuoteLineReq])
+final case class QuoteReq(
+    entityId: Option[String],
+    channelId: String,
+    marketId: String,
+    currency: String,
+    lines: List[QuoteLineReq]
+)
 object QuoteReq { implicit val codec: Codec[QuoteReq] = deriveCodec }
 
 final case class QuoteLineResp(
@@ -78,7 +84,7 @@ final class PricingRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) 
   private val anchor       = Target(None, None, None, None)
 
   private def badRequest(msg: String): (StatusCode, ApiError) = (StatusCode.BadRequest, ApiError("bad_request", msg))
-  private def forbidden(msg: String): (StatusCode, ApiError)   = (StatusCode.Forbidden, ApiError("forbidden", msg))
+  private def forbidden(msg: String): (StatusCode, ApiError)  = (StatusCode.Forbidden, ApiError("forbidden", msg))
 
   private def uuid(s: String): Either[(StatusCode, ApiError), UUID] =
     Try(UUID.fromString(s)).toEither.leftMap(_ => badRequest(s"invalid uuid: $s"))
@@ -102,7 +108,7 @@ final class PricingRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) 
             channel <- uuid(req.channelId)
             market  <- uuid(req.marketId)
             entity  <- optUuid(req.entityId)
-            lines <- req.lines.traverse(l => l.unitPriceExVat.traverse(decimal).map(p => QuoteLine(l.sku, l.qty, p)))
+            lines   <- req.lines.traverse(l => l.unitPriceExVat.traverse(decimal).map(p => QuoteLine(l.sku, l.qty, p)))
           } yield (channel, market, entity, lines)
           parsed match {
             case Left(e) => Async[F].pure(Left(e))
@@ -152,8 +158,21 @@ final class PricingRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) 
             case Right((channel, market, entity, fromE, toE, price, maxDisc, markup)) =>
               val program = req.sku.traverse(VariantRepo.idBySku).flatMap { maybeVariant =>
                 PriceRuleRepo.insert(
-                  req.surface, maybeVariant.flatten, channel, market, entity, req.currency, req.taxRegime,
-                  price, maxDisc, req.minQty.getOrElse(1), fromE, toE, req.tpMethod, markup, Some(principal.userId)
+                  req.surface,
+                  maybeVariant.flatten,
+                  channel,
+                  market,
+                  entity,
+                  req.currency,
+                  req.taxRegime,
+                  price,
+                  maxDisc,
+                  req.minQty.getOrElse(1),
+                  fromE,
+                  toE,
+                  req.tpMethod,
+                  markup,
+                  Some(principal.userId)
                 )
               }
               program.transact(xa).map(id => Right(Json.obj("id" -> id.toString.asJson, "status" -> "draft".asJson)))
@@ -174,8 +193,17 @@ final class PricingRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) 
             case Right(ruleId) =>
               val after = Json.obj("status" -> "active".asJson, "approved_by" -> principal.userId.toString.asJson)
               val event = OutboxEvent(
-                UUID.randomUUID(), "pricing.rule.changed", 1, "price_rule", ruleId, ruleId.toString,
-                None, None, None, after, Instant.now()
+                UUID.randomUUID(),
+                "pricing.rule.changed",
+                1,
+                "price_rule",
+                ruleId,
+                ruleId.toString,
+                None,
+                None,
+                None,
+                after,
+                Instant.now()
               )
               val tx = for {
                 updated <- PriceRuleRepo.activate(ruleId, principal.userId)
@@ -193,8 +221,15 @@ final class PricingRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) 
     QuoteResp(
       lines = r.lines.map(l =>
         QuoteLineResp(
-          l.sku, l.qty, l.resolvedExVat.toString, l.maxDiscountPct.toString, l.appliedDiscountPct.toString,
-          l.unitPriceExVat.toString, l.adlpCategory, l.vat.toString, l.lineTotalIncVat.toString
+          l.sku,
+          l.qty,
+          l.resolvedExVat.toString,
+          l.maxDiscountPct.toString,
+          l.appliedDiscountPct.toString,
+          l.unitPriceExVat.toString,
+          l.adlpCategory,
+          l.vat.toString,
+          l.lineTotalIncVat.toString
         )
       ),
       subtotalExVat = r.subtotalExVat.toString,

@@ -19,11 +19,12 @@ object AllocationSpec extends SimpleIOSuite with Checkers {
   } yield (Money((BigDecimal(cents) / 100).setScale(2), GBP), ws)
 
   test("allocate conserves the total exactly (GBP, integer weights)") {
-    forall(gbpIntegerWeights) { case (total, ws) =>
-      val parts = Money.allocate(total, ws)
-      expect(parts.map(_.amount).sum == total.amount) and
-        expect(parts.length == ws.length) and
-        expect(parts.forall(_.amount.scale == 2))
+    forall(gbpIntegerWeights) {
+      case (total, ws) =>
+        val parts = Money.allocate(total, ws)
+        expect(parts.map(_.amount).sum == total.amount) and
+          expect(parts.length == ws.length) and
+          expect(parts.forall(_.amount.scale == 2))
     }
   }
 
@@ -34,8 +35,9 @@ object AllocationSpec extends SimpleIOSuite with Checkers {
   } yield (Money((BigDecimal(cents) / 100).setScale(2), GBP), ws)
 
   test("allocate conserves the total exactly (GBP, fractional weights)") {
-    forall(gbpFractionalWeights) { case (total, ws) =>
-      expect(Money.allocate(total, ws).map(_.amount).sum == total.amount)
+    forall(gbpFractionalWeights) {
+      case (total, ws) =>
+        expect(Money.allocate(total, ws).map(_.amount).sum == total.amount)
     }
   }
 
@@ -46,8 +48,9 @@ object AllocationSpec extends SimpleIOSuite with Checkers {
   } yield (Money(BigDecimal(yen).setScale(0), JPY), ws)
 
   test("allocate conserves the total exactly (JPY, zero minor units)") {
-    forall(jpyCase) { case (total, ws) =>
-      expect(Money.allocate(total, ws).map(_.amount).sum == total.amount)
+    forall(jpyCase) {
+      case (total, ws) =>
+        expect(Money.allocate(total, ws).map(_.amount).sum == total.amount)
     }
   }
 

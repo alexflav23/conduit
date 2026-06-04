@@ -22,9 +22,9 @@ final case class Money[C <: Currency](amount: BigDecimal, currency: C) {
   def convert[D <: Currency](fx: FxRate[C, D], policy: RoundingPolicy): Money[D] =
     Money((amount * fx.rate).setScale(fx.to.minorUnits, policy.mode), fx.to)
 
-  def isZero: Boolean        = amount.signum == 0
-  def isPositive: Boolean    = amount.signum > 0
-  def isNegative: Boolean    = amount.signum < 0
+  def isZero: Boolean     = amount.signum == 0
+  def isPositive: Boolean = amount.signum > 0
+  def isNegative: Boolean = amount.signum < 0
   def render: String =
     s"${amount.setScale(currency.minorUnits, currency.defaultRounding).bigDecimal.toPlainString} ${currency.code}"
 }
@@ -51,7 +51,7 @@ object Money {
         .getOrElse(throw new IllegalArgumentException(s"total ${total.amount} not exact at $scale dp"))
 
     // Promote weights to a common integer basis so all subsequent maths are exact.
-    val maxScale  = weights.map(_.scale).foldLeft(0)(_ max _)
+    val maxScale   = weights.map(_.scale).foldLeft(0)(_ max _)
     val weightUnit = BigInt(10).pow(maxScale)
     val intWeights: Vector[BigInt] =
       weights.map(w => (w * BigDecimal(weightUnit)).toBigIntExact.getOrElse(BigInt(0)))
@@ -67,9 +67,10 @@ object Money {
     val bumped: Set[Int] =
       remainders.zipWithIndex.sortBy { case (r, i) => (-r, i) }.take(deficit).map(_._2).toSet
 
-    floored.zipWithIndex.map { case (f, i) =>
-      val minor = if (bumped.contains(i)) f + 1 else f
-      Money((BigDecimal(minor) / BigDecimal(unit)).setScale(scale), total.currency)
+    floored.zipWithIndex.map {
+      case (f, i) =>
+        val minor = if (bumped.contains(i)) f + 1 else f
+        Money((BigDecimal(minor) / BigDecimal(unit)).setScale(scale), total.currency)
     }
   }
 }

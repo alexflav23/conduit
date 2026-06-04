@@ -23,6 +23,8 @@ object WarrantyMathSpec extends SimpleIOSuite {
   }
 
   pureTest("outstanding = estimated - released - consumed") {
-    expect(WarrantyMath.outstanding(BigDecimal("100.00"), BigDecimal("40.00"), BigDecimal("10.00")) == BigDecimal("50.00"))
+    expect(
+      WarrantyMath.outstanding(BigDecimal("100.00"), BigDecimal("40.00"), BigDecimal("10.00")) == BigDecimal("50.00")
+    )
   }
 }

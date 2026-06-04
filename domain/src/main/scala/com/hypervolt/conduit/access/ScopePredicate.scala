@@ -21,7 +21,12 @@ object ScopePredicate {
     NonEmptyList.fromList(frags).fold(fr"false")(nel => Fragments.or(nel))
   }
 
-  private def grantFragment(grant: Grant, principal: Principal, objectType: String, cols: ScopeColumns): Option[Fragment] = {
+  private def grantFragment(
+      grant: Grant,
+      principal: Principal,
+      objectType: String,
+      cols: ScopeColumns
+  ): Option[Fragment] = {
     val viewPerms = grant.permissions.filter(p => p.objectType == objectType && p.action == Action.View)
     if (viewPerms.isEmpty) None
     else {

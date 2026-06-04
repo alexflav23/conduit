@@ -15,7 +15,7 @@ import weaver.IOSuite
 object LedgerIntegrationSuite extends IOSuite {
 
   override type Res = Client
-  override def maxParallelism: Int            = 1
+  override def maxParallelism: Int               = 1
   override def sharedResource: Resource[IO, Res] = TestTigerBeetle.client
 
   test("a transfer posts once and is idempotent on its deterministic id (redelivery is a no-op)") { client =>
@@ -33,9 +33,12 @@ object LedgerIntegrationSuite extends IOSuite {
       code = LedgerTransferCode.Generic
     )
     for {
-      _      <- ledger.createAccounts(
-                  List(LedgerAccount(ar, gbpLedger, LedgerAccountCode.Ar), LedgerAccount(revenue, gbpLedger, LedgerAccountCode.Revenue))
-                )
+      _ <- ledger.createAccounts(
+        List(
+          LedgerAccount(ar, gbpLedger, LedgerAccountCode.Ar),
+          LedgerAccount(revenue, gbpLedger, LedgerAccountCode.Revenue)
+        )
+      )
       _      <- ledger.postTransfers(List(transfer))
       _      <- ledger.postTransfers(List(transfer)) // redelivery: same deterministic id -> Exists -> no-op
       arBal  <- ledger.balance(ar)

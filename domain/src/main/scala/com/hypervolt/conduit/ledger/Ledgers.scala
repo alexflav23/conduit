@@ -13,20 +13,22 @@ object Ledgers {
 
 // TigerBeetle account `code` = the GL account role (doc 04 §Ledger). u16 categorisation.
 object LedgerAccountCode {
-  val Ar: Int          = 1 // receivable per trade customer
-  val Ap: Int          = 2 // payable per supplier
-  val Inv: Int         = 3 // inventory asset per entity (specific-identification batch cost)
-  val CosClearing: Int = 4 // cost-of-sales clearing — relieved on delivery, reclassified downstream
-  val Vat: Int         = 5 // tax control
-  val CommPayable: Int = 6 // commission payable per agent
-  val Intercompany: Int = 7 // intercompany clearing
-  val FxClearing: Int  = 8 // cross-currency bridge
-  val Revenue: Int     = 9
+  val Ar: Int            = 1  // receivable per trade customer
+  val Ap: Int            = 2  // payable per supplier
+  val Inv: Int           = 3  // inventory asset per entity (specific-identification batch cost)
+  val CosClearing: Int   = 4  // cost-of-sales clearing — relieved on delivery, reclassified downstream
+  val Vat: Int           = 5  // tax control
+  val CommPayable: Int   = 6  // commission payable per agent
+  val Intercompany: Int  = 7  // intercompany clearing
+  val FxClearing: Int    = 8  // cross-currency bridge
+  val Revenue: Int       = 9
+  val OpeningEquity: Int = 10 // OPENING_BALANCE_EQUITY contra — migration opening balances post against it (doc 18 §2)
 }
 
 object LedgerTransferCode {
   val Generic: Int    = 1
   val Commission: Int = 10
+  val Opening: Int    = 20 // migration opening-balance transfer (doc 18 §2)
 }
 
 // TigerBeetle transfer flags (two-phase + linking).
