@@ -10,6 +10,7 @@ import com.hypervolt.conduit.forecast.ForecastLine
 import com.hypervolt.conduit.forecast.ForecastQueryRepo
 import com.hypervolt.conduit.forecast.ForecastService
 import com.hypervolt.conduit.notification.NotificationRepo
+import com.hypervolt.conduit.revenue.RevenueQueryRepo
 import com.hypervolt.conduit.supply.AutoPoProposer
 import com.hypervolt.conduit.supply.SerialShelfRepo
 import com.hypervolt.conduit.supply.SupplyCommitmentService
@@ -314,6 +315,27 @@ final class H6QRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
             }
       )
 
+  // The immutable-log view: recognised revenue + the TigerBeetle transfer ids that prove it (doc 04 §Ledger).
+  private val ledger =
+    base.get
+      .in("api" / "v1" / "h6q" / "ledger")
+      .in(query[String]("market"))
+      .in(query[String]("period"))
+      .out(jsonBody[Json])
+      .serverLogic(principal => {
+        case (marketStr, periodStr) =>
+          if (!PolicyEngine.hasPermission(principal, Action.View, "pipeline_coverage"))
+            Async[F].pure(Left(err(StatusCode.Forbidden, "forbidden", "requires view:pipeline_coverage")))
+          else
+            (uuid(marketStr), date(normaliseMonth(periodStr))).tupled match {
+              case Left(e) => Async[F].pure(Left(e))
+              case Right((market, period)) =>
+                (RevenueQueryRepo.totals(market, period), RevenueQueryRepo.recognitions(market, period)).tupled
+                  .transact(xa)
+                  .map { case (tot, rows) => Right(Json.obj("totals" -> tot, "recognitions" -> Json.fromValues(rows))) }
+            }
+      })
+
   // Real-time per-account shelf (shipped/activated/on-shelf), attributed by Conduit at dispatch.
   private val shelf =
     base.get
@@ -474,6 +496,7 @@ final class H6QRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
         waterfall,
         autoPoPropose,
         shelf,
+        ledger,
         reconcile,
         exportCsv
       )

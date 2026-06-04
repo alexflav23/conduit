@@ -81,3 +81,27 @@ BEGIN
     VALUES (cyc, agent_id, acct, 'outstanding')
     ON CONFLICT (cycle_id, forecaster_user_id, company_id) DO UPDATE SET status='outstanding', submitted_at=NULL;
 END $$;
+
+-- Flow demo: a forecast for HV-310 in the demo market (2026-09) + a shipped + ASC-606-recognised dispatch, so
+-- the Flow tab shows the variants over time and the ledger panel shows the TigerBeetle transfer ids.
+DO $$
+DECLARE v_id uuid; sc uuid; mkt uuid := '22222222-2222-2222-2222-222222222222'; per date := '2026-09-01';
+  party_id uuid; ord uuid; ol uuid; dsp uuid;
+BEGIN
+  SELECT id INTO v_id FROM product_variant WHERE sku = 'HV-310';
+  SELECT id INTO sc FROM forecast_scenario WHERE type = 'P50' AND toggle_basis IS NULL;
+  DELETE FROM pipeline_coverage WHERE market_id = mkt AND period_month = per AND product_variant_id = v_id;
+  INSERT INTO pipeline_coverage (level, market_id, product_variant_id, period_month, scenario_id, forecast_qty)
+    VALUES ('market', mkt, v_id, per, sc, 100);
+  IF NOT EXISTS (SELECT 1 FROM "order" WHERE order_no = 'ORD-FLOW') THEN
+    INSERT INTO party (display_name, party_type, is_organization) VALUES ('Flow Cust','wholesaler',true) RETURNING id INTO party_id;
+    INSERT INTO "order" (order_no, type, sold_to_party_id, bill_to_party_id, market_id, status, txn_currency, payment_method, order_date, subtotal_ex_vat, vat_total, total_inc_vat)
+      VALUES ('ORD-FLOW','trade',party_id,party_id,mkt,'placed','GBP','stripe','2026-09-01',25000,5000,30000) RETURNING id INTO ord;
+    INSERT INTO order_line (order_id, product_variant_id, qty, unit_price_ex_vat, vat_amount) VALUES (ord, v_id, 50, 500.00, 5000.00) RETURNING id INTO ol;
+    INSERT INTO dispatch (dispatch_no, order_id, date, status) VALUES ('DSP-FLOW', ord, '2026-09-10', 'delivered') RETURNING id INTO dsp;
+    INSERT INTO dispatch_line (dispatch_id, order_line_id, qty) VALUES (dsp, ol, 50);
+    INSERT INTO revenue_recognition (dispatch_id, order_id, invoice_no, currency, revenue_ex_vat, vat, cogs, gross_margin, ar_transfer_id, vat_transfer_id, cogs_transfer_id, recognized_at)
+      VALUES (dsp, ord, 'INV-FLOW', 'GBP', 25000, 5000, 12000, 13000,
+              123456789012345678901234567890, 223456789012345678901234567890, 323456789012345678901234567890, '2026-09-15');
+  END IF;
+END $$;

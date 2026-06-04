@@ -84,6 +84,14 @@ export function getNotifications(token: string) {
   return call('/api/v1/h6q/notifications', token, 'GET');
 }
 
+export function getWaterfall(token: string, variant: string, period: string) {
+  return call(`/api/v1/h6q/waterfall?variant=${variant}&period=${period}`, token, 'GET');
+}
+
+export function getLedger(token: string, market: string, period: string) {
+  return call(`/api/v1/h6q/ledger?market=${market}&period=${period}`, token, 'GET');
+}
+
 export const H6Q_MARKET = DEMO_MARKET;
 
 export async function placeOrder(token: string, lines: QuoteLine[]) {
