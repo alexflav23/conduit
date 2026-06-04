@@ -100,6 +100,41 @@ object ForecastQueryRepo {
         )
     }
 
+  // Accuracy rows for an owner/account (doc 12 §9). mape vs the 0.20 Volex margin is the discipline metric.
+  def accuracy(company: UUID, period: LocalDate, basis: String): ConnectionIO[List[Json]] =
+    sql"""SELECT forecaster_user_id, product_variant_id, forecast_qty, actual_qty, error, bias, mape, actual_basis
+          FROM forecast_accuracy
+          WHERE company_id = $company AND period_month = $period AND actual_basis = $basis
+          ORDER BY abs(error) DESC"""
+      .query[(Option[UUID], Option[UUID], Int, Int, Int, Option[BigDecimal], Option[BigDecimal], String)]
+      .to[List]
+      .map(_.map {
+        case (f, v, fq, aq, err, bias, mape, b) =>
+          Json.obj(
+            "forecaster"    -> f.map(_.toString).asJson,
+            "variant"       -> v.map(_.toString).asJson,
+            "forecast_qty"  -> fq.asJson,
+            "actual_qty"    -> aq.asJson,
+            "error"         -> err.asJson,
+            "bias"          -> bias.map(_.toString).asJson,
+            "mape"          -> mape.map(_.toString).asJson,
+            "actual_basis"  -> b.asJson,
+            "within_margin" -> mape.map(_ <= BigDecimal("0.20")).asJson
+          )
+      })
+
+  // The forecast total CURRENT AS OF an instant, reconstructed from append-only history (doc 12 §4.5): an entry
+  // counts if it was created on/before `asOf` and was not yet superseded then. This is what makes WoW a query
+  // over history rather than a stored snapshot.
+  def forecastAsOf(market: UUID, period: LocalDate, scenario: UUID, asOf: Instant): ConnectionIO[Int] =
+    sql"""SELECT COALESCE(SUM(e.qty),0)::int FROM forecast_entry e
+          WHERE e.market_id = $market AND e.period_month = $period AND e.scenario_id = $scenario
+            AND e.source = 'manual' AND e.created_at <= $asOf
+            AND (e.superseded_by IS NULL
+                 OR EXISTS (SELECT 1 FROM forecast_entry n WHERE n.id = e.superseded_by AND n.created_at > $asOf))"""
+      .query[Int]
+      .unique
+
   def outstanding(cycleId: UUID): ConnectionIO[List[Json]] =
     sql"""SELECT s.forecaster_user_id, u.name,
                  count(*) FILTER (WHERE s.status='outstanding'),

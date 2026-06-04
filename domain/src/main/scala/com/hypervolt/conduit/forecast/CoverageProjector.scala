@@ -35,7 +35,11 @@ final class CoverageProjector[F[_]: Async](xa: Transactor[F]) {
       leaves <- readLeaves(market, period, scenario)
       rows = Coverage.rollup(leaves)
       _ <- deleteSlice(market, period, scenario)
-      _ <- rows.traverse_(insertRow(_, period, scenario))
+      // WoW: the market row carries the movement since the last recompute (doc 12 §4.5) — a forward-visibility
+      // shift indicator the board renders as a ▲▼ chip.
+      withWow =
+        rows.map(r => if (r.level == "market") r.copy(wowDelta = Some(BigDecimal(r.forecastQty - prior))) else r)
+      _ <- withWow.traverse_(insertRow(_, period, scenario))
       marketRow   = rows.find(_.level == "market")
       newForecast = marketRow.map(_.forecastQty).getOrElse(0)
       coverage    = marketRow.flatMap(_.coveragePct)
@@ -152,9 +156,9 @@ final class CoverageProjector[F[_]: Async](xa: Transactor[F]) {
     sql"""INSERT INTO pipeline_coverage
             (level, channel_id, sub_channel_id, segment, company_id, branch_company_id, agent_user_id, market_id,
              period_month, scenario_id, forecast_qty, weighted_pipeline_qty, shipped_qty, activated_qty,
-             coverage_pct, forecast_qty_ex, coverage_ex_account_pct, forecast_source)
+             coverage_pct, forecast_qty_ex, coverage_ex_account_pct, forecast_source, wow_delta)
           VALUES (${r.level}, ${r.channelId}, ${r.subChannelId}, ${r.segment}, ${r.companyId}, ${r.branchId},
              ${r.agentUserId}, ${r.marketId}, $period, $scenario, ${r.forecastQty}, ${r.weightedPipelineQty},
              ${r.shippedQty}, ${r.activatedQty}, ${r.coveragePct}, ${r.forecastQtyEx}, ${r.coverageExAccountPct},
-             ${r.forecastSource})""".update.run
+             ${r.forecastSource}, ${r.wowDelta})""".update.run
 }

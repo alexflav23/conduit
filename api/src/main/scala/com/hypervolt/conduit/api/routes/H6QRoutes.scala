@@ -155,6 +155,28 @@ final class H6QRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
             }
       )
 
+  private val accuracy =
+    base.get
+      .in("api" / "v1" / "h6q" / "accuracy")
+      .in(query[String]("company"))
+      .in(query[String]("period"))
+      .in(query[Option[String]]("basis"))
+      .out(jsonBody[Json])
+      .serverLogic(principal => {
+        case (companyStr, periodStr, basisOpt) =>
+          if (!PolicyEngine.hasPermission(principal, Action.View, "pipeline_coverage"))
+            Async[F].pure(Left(err(StatusCode.Forbidden, "forbidden", "requires view:pipeline_coverage")))
+          else
+            (uuid(companyStr), date(normaliseMonth(periodStr))).tupled match {
+              case Left(e) => Async[F].pure(Left(e))
+              case Right((company, period)) =>
+                ForecastQueryRepo
+                  .accuracy(company, period, basisOpt.getOrElse("sell_in"))
+                  .transact(xa)
+                  .map(rows => Right(Json.fromValues(rows)))
+            }
+      })
+
   // Forward-visibility notifications (doc 12 §2.6): who was told H6Q shifted, on what channel, with what status.
   private val notifications =
     base.get
@@ -217,6 +239,18 @@ final class H6QRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
 
   val routes: HttpRoutes[F] =
     Http4sServerInterpreter[F]().toRoutes(
-      List(scenarios, variants, cycles, myForecasts, submit, skip, outstanding, notifications, coverage, reconcile)
+      List(
+        scenarios,
+        variants,
+        cycles,
+        myForecasts,
+        submit,
+        skip,
+        outstanding,
+        accuracy,
+        notifications,
+        coverage,
+        reconcile
+      )
     )
 }

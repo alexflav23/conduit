@@ -44,7 +44,8 @@ final case class CoverageRow(
     shippedQty: Int,
     activatedQty: Int,
     forecastQtyEx: Int,
-    forecastSource: String
+    forecastSource: String,
+    wowDelta: Option[BigDecimal] = None
 ) {
   // (shipped + weighted_pipeline) / forecast — None when forecast is 0 (the 0-forecast guard, doc 12 §4.3).
   def coveragePct: Option[BigDecimal]          = Coverage.ratio(shippedQty, weightedPipelineQty, forecastQty)
