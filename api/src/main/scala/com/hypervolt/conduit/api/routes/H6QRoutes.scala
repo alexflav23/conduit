@@ -198,6 +198,39 @@ final class H6QRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
       .in(query[String]("period"))
       .in(query[String]("scenario"))
       .in(query[Option[String]]("group_by"))
+      .in(query[Option[String]]("variant"))
+      .out(jsonBody[Json])
+      .serverLogic(principal => {
+        case (marketStr, periodStr, scenarioStr, groupByOpt, variantOpt) =>
+          if (!PolicyEngine.hasPermission(principal, Action.View, "pipeline_coverage"))
+            Async[F].pure(Left(err(StatusCode.Forbidden, "forbidden", "requires view:pipeline_coverage")))
+          else
+            (
+              uuid(marketStr),
+              date(normaliseMonth(periodStr)),
+              uuid(scenarioStr),
+              variantOpt.traverse(uuid)
+            ).tupled match {
+              case Left(e) => Async[F].pure(Left(e))
+              case Right((market, period, scenario, variant)) =>
+                val level = groupByOpt.getOrElse("market")
+                ForecastQueryRepo
+                  .coverage(market, period, scenario, level, variant)
+                  .transact(xa)
+                  .map(rows =>
+                    Right(Json.fromValues(rows.map(r => Projection.projectFor(principal, "pipeline_coverage", r))))
+                  )
+            }
+      })
+
+  // The per-SKU breakdown of a level (the Quarterly-Forecast-Dashboard view: total split by SKU).
+  private val coverageBySku =
+    base.get
+      .in("api" / "v1" / "h6q" / "coverage" / "by-sku")
+      .in(query[String]("market"))
+      .in(query[String]("period"))
+      .in(query[String]("scenario"))
+      .in(query[Option[String]]("group_by"))
       .out(jsonBody[Json])
       .serverLogic(principal => {
         case (marketStr, periodStr, scenarioStr, groupByOpt) =>
@@ -207,9 +240,8 @@ final class H6QRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
             (uuid(marketStr), date(normaliseMonth(periodStr)), uuid(scenarioStr)).tupled match {
               case Left(e) => Async[F].pure(Left(e))
               case Right((market, period, scenario)) =>
-                val level = groupByOpt.getOrElse("market")
                 ForecastQueryRepo
-                  .coverage(market, period, scenario, level)
+                  .coverageBySku(market, period, scenario, groupByOpt.getOrElse("market"))
                   .transact(xa)
                   .map(rows =>
                     Right(Json.fromValues(rows.map(r => Projection.projectFor(principal, "pipeline_coverage", r))))
@@ -256,7 +288,7 @@ final class H6QRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
               case Right((market, period, scenario)) =>
                 val level = groupByOpt.getOrElse("branch")
                 ForecastQueryRepo
-                  .coverage(market, period, scenario, level)
+                  .coverage(market, period, scenario, level, None)
                   .flatMap { rows =>
                     val projected = rows.map(r => Projection.projectFor(principal, "pipeline_coverage", r))
                     sql"INSERT INTO audit_log (entity_type, entity_id, action, actor_user_id) VALUES ('pipeline_coverage', $market, 'export', ${principal.userId})".update.run
@@ -306,6 +338,7 @@ final class H6QRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
         accuracy,
         notifications,
         coverage,
+        coverageBySku,
         reconcile,
         exportCsv
       )

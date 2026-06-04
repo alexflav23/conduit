@@ -4,10 +4,11 @@ import java.time.LocalDate
 import java.util.UUID
 import scala.math.BigDecimal.RoundingMode
 
-// The atomic forecast leaf (doc 12 §4.2): one branch/account's resolved current estimate for a
-// (market, channel, sub_channel, segment, company, branch, agent, period_month, scenario) with its coverage
-// components. Both the org axis and the agent axis are rolled up from the SAME leaves — that shared origin is
-// exactly why the two axes reconcile (doc 12 §4.4).
+// The atomic forecast leaf (doc 12 §4.2): one branch/account's resolved current estimate for ONE SKU in a
+// (market, channel, sub_channel, segment, company, branch, agent, product_variant, period_month, scenario), with
+// its coverage components. SKU granularity is load-bearing — you can't cover a Home 3 Pro forecast with a
+// Home 2.2 shipment, so coverage must be computed per variant. Both the org axis and the agent axis roll up from
+// the SAME leaves, which is why the two reconcile (doc 12 §4.4).
 final case class Leaf(
     marketId: UUID,
     channelId: Option[UUID],
@@ -16,6 +17,7 @@ final case class Leaf(
     companyId: UUID,
     branchId: Option[UUID],
     agentUserId: UUID,
+    productVariantId: UUID,
     periodMonth: LocalDate,
     scenarioId: UUID,
     forecastQty: Int,
@@ -26,8 +28,9 @@ final case class Leaf(
     excluded: Boolean = false // true when this leaf's account is removed by the scenario's ex-cut (doc 12 §5.2)
 )
 
-// A rolled-up coverage row at one level of the hierarchy (or the agent axis). Quantities sum on rollup;
-// coverage_pct is RECOMPUTED from the summed components, never averaged (doc 12 §4.4).
+// A rolled-up coverage row at one level of the hierarchy (or the agent axis), at a SKU (productVariantId set) or
+// as the all-SKU total (productVariantId None). Quantities sum on rollup; coverage_pct is RECOMPUTED from the
+// summed components, never averaged (doc 12 §4.4).
 final case class CoverageRow(
     level: String,
     marketId: Option[UUID],
@@ -37,6 +40,7 @@ final case class CoverageRow(
     companyId: Option[UUID],
     branchId: Option[UUID],
     agentUserId: Option[UUID],
+    productVariantId: Option[UUID],
     periodMonth: LocalDate,
     scenarioId: UUID,
     forecastQty: Int,
@@ -61,29 +65,30 @@ object Coverage {
     if (forecast == 0) None
     else Some(((BigDecimal(shipped) + weightedPipeline) / BigDecimal(forecast)).setScale(4, RoundingMode.HALF_UP))
 
-  // The full bottom-up rollup. From the leaves it produces a row at every ORG level
-  // (branch → company → segment → sub_channel → channel → market) AND a row per AGENT — all summing the same
-  // leaves. The reconciliation guarantee (doc 12 §4.4): within any (market, period, scenario),
-  // Σ branch-level == Σ agent-level == the market row, on every quantity.
-  def rollup(leaves: List[Leaf]): List[CoverageRow] = {
-    val branch = roll(
-      leaves,
+  // The all-SKU rollup: a row at every ORG level (branch → company → segment → sub_channel → channel → market)
+  // AND a row per AGENT, summed ACROSS SKUs (productVariantId None). The reconciliation guarantee (doc 12 §4.4):
+  // within any (market, period, scenario), Σ branch == Σ agent == the market row, on every quantity.
+  def rollup(leaves: List[Leaf]): List[CoverageRow] = roll(leaves, _ => None)
+
+  // The per-SKU rollup: the same levels, but keyed additionally by product_variant — so coverage exists per SKU
+  // and reconciles per SKU. Σ over SKUs of a per-SKU row == the matching all-SKU row.
+  def rollupBySku(leaves: List[Leaf]): List[CoverageRow] = roll(leaves, l => Some(l.productVariantId))
+
+  private def roll(leaves: List[Leaf], variantOf: Leaf => Option[UUID]): List[CoverageRow] = {
+    def at(level: String, key: Leaf => Key): List[CoverageRow] = group(leaves, level, key, variantOf)
+    at(
       "branch",
       l => Key(Some(l.marketId), l.channelId, l.subChannelId, l.segment, Some(l.companyId), l.branchId, None)
-    )
-    val company = roll(
-      leaves,
-      "company",
-      l => Key(Some(l.marketId), l.channelId, l.subChannelId, l.segment, Some(l.companyId), None, None)
-    )
-    val segment =
-      roll(leaves, "segment", l => Key(Some(l.marketId), l.channelId, l.subChannelId, l.segment, None, None, None))
-    val subChannel =
-      roll(leaves, "sub_channel", l => Key(Some(l.marketId), l.channelId, l.subChannelId, None, None, None, None))
-    val channel = roll(leaves, "channel", l => Key(Some(l.marketId), l.channelId, None, None, None, None, None))
-    val market  = roll(leaves, "market", l => Key(Some(l.marketId), None, None, None, None, None, None))
-    val agent   = roll(leaves, "agent", l => Key(Some(l.marketId), None, None, None, None, None, Some(l.agentUserId)))
-    branch ::: company ::: segment ::: subChannel ::: channel ::: market ::: agent
+    ) :::
+      at(
+        "company",
+        l => Key(Some(l.marketId), l.channelId, l.subChannelId, l.segment, Some(l.companyId), None, None)
+      ) :::
+      at("segment", l => Key(Some(l.marketId), l.channelId, l.subChannelId, l.segment, None, None, None)) :::
+      at("sub_channel", l => Key(Some(l.marketId), l.channelId, l.subChannelId, None, None, None, None)) :::
+      at("channel", l => Key(Some(l.marketId), l.channelId, None, None, None, None, None)) :::
+      at("market", l => Key(Some(l.marketId), None, None, None, None, None, None)) :::
+      at("agent", l => Key(Some(l.marketId), None, None, None, None, None, Some(l.agentUserId)))
   }
 
   private final case class Key(
@@ -96,12 +101,17 @@ object Coverage {
       agentUserId: Option[UUID]
   )
 
-  private def roll(leaves: List[Leaf], level: String, key: Leaf => Key): List[CoverageRow] =
+  private def group(
+      leaves: List[Leaf],
+      level: String,
+      key: Leaf => Key,
+      variantOf: Leaf => Option[UUID]
+  ): List[CoverageRow] =
     leaves
-      .groupBy(l => (key(l), l.periodMonth, l.scenarioId))
+      .groupBy(l => (key(l), variantOf(l), l.periodMonth, l.scenarioId))
       .toList
       .map {
-        case ((k, period, scenario), group) =>
+        case ((k, variant, period, scenario), grp) =>
           CoverageRow(
             level = level,
             marketId = k.marketId,
@@ -111,18 +121,17 @@ object Coverage {
             companyId = k.companyId,
             branchId = k.branchId,
             agentUserId = k.agentUserId,
+            productVariantId = variant,
             periodMonth = period,
             scenarioId = scenario,
-            forecastQty = group.map(_.forecastQty).sum,
-            weightedPipelineQty = group.map(_.weightedPipelineQty).foldLeft(BigDecimal(0))(_ + _),
-            shippedQty = group.map(_.shippedQty).sum,
-            activatedQty = group.map(_.activatedQty).sum,
-            // ex-cut aggregates: excluded leaves drop out of forecast AND its covering components.
-            forecastQtyEx = group.filterNot(_.excluded).map(_.forecastQty).sum,
-            weightedPipelineQtyEx =
-              group.filterNot(_.excluded).map(_.weightedPipelineQty).foldLeft(BigDecimal(0))(_ + _),
-            shippedQtyEx = group.filterNot(_.excluded).map(_.shippedQty).sum,
-            forecastSource = sourceOf(group)
+            forecastQty = grp.map(_.forecastQty).sum,
+            weightedPipelineQty = grp.map(_.weightedPipelineQty).foldLeft(BigDecimal(0))(_ + _),
+            shippedQty = grp.map(_.shippedQty).sum,
+            activatedQty = grp.map(_.activatedQty).sum,
+            forecastQtyEx = grp.filterNot(_.excluded).map(_.forecastQty).sum,
+            weightedPipelineQtyEx = grp.filterNot(_.excluded).map(_.weightedPipelineQty).foldLeft(BigDecimal(0))(_ + _),
+            shippedQtyEx = grp.filterNot(_.excluded).map(_.shippedQty).sum,
+            forecastSource = sourceOf(grp)
           )
       }
 

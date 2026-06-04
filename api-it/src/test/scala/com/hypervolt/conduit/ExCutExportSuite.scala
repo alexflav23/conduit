@@ -96,7 +96,7 @@ object ExCutExportSuite extends IOSuite {
       _   <- svc.submit(agentId, octopus, cyc, List(ForecastLine(v, month, sc, 60)), None)
       _   <- proj.recompute(market, month, sc)
       row <-
-        sql"SELECT forecast_qty, forecast_qty_ex FROM pipeline_coverage WHERE market_id=$market AND period_month=$month AND scenario_id=$sc AND level='market'"
+        sql"SELECT forecast_qty, forecast_qty_ex FROM pipeline_coverage WHERE market_id=$market AND period_month=$month AND scenario_id=$sc AND level='market' AND product_variant_id IS NULL"
           .query[(Int, Int)]
           .unique
           .transact(xa)

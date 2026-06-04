@@ -100,7 +100,7 @@ object SellThroughSuite extends IOSuite {
       _     <- actuals(xa, acct, market, v, shipped = 60, activated = 25)
       _     <- proj.recompute(market, month, sc)                                         // recompute after actuals land
       row <-
-        sql"SELECT shipped_qty, activated_qty, coverage_pct FROM pipeline_coverage WHERE market_id=$market AND period_month=$month AND scenario_id=$sc AND level='branch'"
+        sql"SELECT shipped_qty, activated_qty, coverage_pct FROM pipeline_coverage WHERE market_id=$market AND period_month=$month AND scenario_id=$sc AND level='branch' AND product_variant_id IS NULL"
           .query[(Int, Int, BigDecimal)]
           .unique
           .transact(xa)

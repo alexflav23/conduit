@@ -28,6 +28,7 @@ object CoverageSpec extends SimpleIOSuite with Checkers {
   private val companies = pool(3, 2)
   private val branches  = pool(4, 3)
   private val agents    = pool(3, 4)
+  private val variants  = pool(3, 5)
 
   private val leafGen: Gen[Leaf] = for {
     ch  <- Gen.oneOf(channels)
@@ -35,12 +36,13 @@ object CoverageSpec extends SimpleIOSuite with Checkers {
     co  <- Gen.oneOf(companies)
     br  <- Gen.oneOf(branches)
     ag  <- Gen.oneOf(agents)
+    vr  <- Gen.oneOf(variants)
     fq  <- Gen.choose(0, 500)
     wp  <- Gen.choose(0, 2000).map(i => BigDecimal(i) / 10)
     sh  <- Gen.choose(0, 500)
     av  <- Gen.choose(0, 500)
     src <- Gen.oneOf("manual", "hyperview")
-  } yield Leaf(market, Some(ch), Some(ch), Some(seg), co, Some(br), ag, month, scenario, fq, wp, sh, av, src)
+  } yield Leaf(market, Some(ch), Some(ch), Some(seg), co, Some(br), ag, vr, month, scenario, fq, wp, sh, av, src)
 
   private val leavesGen: Gen[List[Leaf]] = Gen.choose(1, 60).flatMap(n => Gen.listOfN(n, leafGen))
 
@@ -98,6 +100,7 @@ object CoverageSpec extends SimpleIOSuite with Checkers {
       companies(0),
       Some(branches(0)),
       agents(0),
+      variants(0),
       month,
       scenario,
       0,
@@ -114,6 +117,7 @@ object CoverageSpec extends SimpleIOSuite with Checkers {
       companies(0),
       Some(branches(1)),
       agents(0),
+      variants(0),
       month,
       scenario,
       100,

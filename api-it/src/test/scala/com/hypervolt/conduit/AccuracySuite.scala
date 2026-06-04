@@ -128,7 +128,7 @@ object AccuracySuite extends IOSuite {
       _   <- svc.submit(agent, acct, cyc, List(ForecastLine(v, month, sc, 100)), None) // prior 0 -> 100, wow +100
       _   <- svc.submit(agent, acct, cyc, List(ForecastLine(v, month, sc, 130)), None) // 100 -> 130, wow +30
       wow <-
-        sql"SELECT wow_delta FROM pipeline_coverage WHERE market_id=$market AND period_month=$month AND scenario_id=$sc AND level='market'"
+        sql"SELECT wow_delta FROM pipeline_coverage WHERE market_id=$market AND period_month=$month AND scenario_id=$sc AND level='market' AND product_variant_id IS NULL"
           .query[Option[BigDecimal]]
           .unique
           .transact(xa)

@@ -158,23 +158,91 @@ object ForecastQueryRepo {
   // The coverage board at one level (doc 12 §8.2). Only unit fields are materialised — commercial/profitability
   // overlays are derived at read time when the layer is present (doc 12 §8.3), so a volume-only viewer's payload
   // simply has no money (absent, not zeroed).
-  def coverage(market: UUID, period: LocalDate, scenario: UUID, level: String): ConnectionIO[List[Json]] =
-    sql"""SELECT level, market_id, channel_id, sub_channel_id, segment, company_id, branch_company_id, agent_user_id,
-                 forecast_qty, weighted_pipeline_qty, shipped_qty, activated_qty, coverage_pct,
+  // variant = None returns the all-SKU total rows (product_variant_id IS NULL — the default board); a value
+  // returns the per-SKU breakdown for that variant. Per-SKU granularity is load-bearing (different SKUs don't
+  // equate), so the projector materialises both.
+  def coverage(
+      market: UUID,
+      period: LocalDate,
+      scenario: UUID,
+      level: String,
+      variant: Option[UUID]
+  ): ConnectionIO[List[Json]] = {
+    val variantF = variant.fold(fr"AND product_variant_id IS NULL")(v => fr"AND product_variant_id = $v")
+    (fr"""SELECT level, market_id, channel_id, sub_channel_id, segment, company_id, branch_company_id, agent_user_id,
+                 product_variant_id, forecast_qty, weighted_pipeline_qty, shipped_qty, activated_qty, coverage_pct,
                  coverage_ex_account_pct, wow_delta, forecast_source
           FROM pipeline_coverage
-          WHERE market_id = $market AND period_month = $period AND scenario_id = $scenario AND level = $level
-          ORDER BY forecast_qty DESC"""
+          WHERE market_id = $market AND period_month = $period AND scenario_id = $scenario AND level = $level """
+      ++ variantF ++ fr"ORDER BY forecast_qty DESC")
       .query[CoverageJsonRow]
       .to[List]
       .map(_.map(_.json))
+  }
+
+  // The per-SKU breakdown at a level (the Quarterly-Forecast-Dashboard view: the total, split by SKU).
+  def coverageBySku(market: UUID, period: LocalDate, scenario: UUID, level: String): ConnectionIO[List[Json]] =
+    sql"""SELECT pc.level, pc.market_id, pc.channel_id, pc.sub_channel_id, pc.segment, pc.company_id,
+                 pc.branch_company_id, pc.agent_user_id, pc.product_variant_id, pc.forecast_qty,
+                 pc.weighted_pipeline_qty, pc.shipped_qty, pc.activated_qty, pc.coverage_pct,
+                 pc.coverage_ex_account_pct, pc.wow_delta, pc.forecast_source, v.sku
+          FROM pipeline_coverage pc LEFT JOIN product_variant v ON v.id = pc.product_variant_id
+          WHERE pc.market_id = $market AND pc.period_month = $period AND pc.scenario_id = $scenario
+            AND pc.level = $level AND pc.product_variant_id IS NOT NULL
+          ORDER BY pc.forecast_qty DESC"""
+      .query[
+        (
+            String,
+            Option[UUID],
+            Option[UUID],
+            Option[UUID],
+            Option[String],
+            Option[UUID],
+            Option[UUID],
+            Option[UUID],
+            Option[UUID],
+            Int,
+            BigDecimal,
+            Int,
+            Int,
+            Option[BigDecimal],
+            Option[BigDecimal],
+            Option[BigDecimal],
+            Option[String],
+            Option[String]
+        )
+      ]
+      .to[List]
+      .map(_.map { t =>
+        CoverageJsonRow(
+          t._1,
+          t._2,
+          t._3,
+          t._4,
+          t._5,
+          t._6,
+          t._7,
+          t._8,
+          t._9,
+          t._10,
+          t._11,
+          t._12,
+          t._13,
+          t._14,
+          t._15,
+          t._16,
+          t._17
+        ).json
+          .deepMerge(Json.obj("sku" -> t._18.asJson))
+      })
 
   // Reconcile (doc 12 §11 GET /h6q/coverage/reconcile): the branch axis and the agent axis must tie.
   def reconcile(market: UUID, period: LocalDate, scenario: UUID): ConnectionIO[Json] =
     sql"""SELECT level, COALESCE(SUM(forecast_qty),0), COALESCE(SUM(weighted_pipeline_qty),0),
                  COALESCE(SUM(shipped_qty),0), COALESCE(SUM(activated_qty),0)
           FROM pipeline_coverage
-          WHERE market_id = $market AND period_month = $period AND scenario_id = $scenario AND level IN ('branch','agent')
+          WHERE market_id = $market AND period_month = $period AND scenario_id = $scenario
+            AND level IN ('branch','agent') AND product_variant_id IS NULL
           GROUP BY level"""
       .query[(String, Long, BigDecimal, Long, Long)]
       .to[List]
@@ -205,6 +273,7 @@ private final case class CoverageJsonRow(
     companyId: Option[UUID],
     branchId: Option[UUID],
     agentUserId: Option[UUID],
+    productVariantId: Option[UUID],
     forecastQty: Int,
     weightedPipelineQty: BigDecimal,
     shippedQty: Int,
@@ -224,6 +293,7 @@ private final case class CoverageJsonRow(
       "company_id"              -> companyId.map(_.toString).asJson,
       "branch_company_id"       -> branchId.map(_.toString).asJson,
       "agent_user_id"           -> agentUserId.map(_.toString).asJson,
+      "product_variant_id"      -> productVariantId.map(_.toString).asJson,
       "forecast_qty"            -> forecastQty.asJson,
       "weighted_pipeline_qty"   -> weightedPipelineQty.asJson,
       "shipped_qty"             -> shippedQty.asJson,

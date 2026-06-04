@@ -167,22 +167,22 @@ object ForecastSuite extends IOSuite {
       n1     <- proj.recompute(market, month, sc)
       n2     <- proj.recompute(market, month, sc) // redeliver — must be a no-op (same end state)
       branchSum <-
-        sql"SELECT COALESCE(SUM(forecast_qty),0) FROM pipeline_coverage WHERE market_id=$market AND period_month=$month AND scenario_id=$sc AND level='branch'"
+        sql"SELECT COALESCE(SUM(forecast_qty),0) FROM pipeline_coverage WHERE market_id=$market AND period_month=$month AND scenario_id=$sc AND level='branch' AND product_variant_id IS NULL"
           .query[Long]
           .unique
           .transact(xa)
       agentSum <-
-        sql"SELECT COALESCE(SUM(forecast_qty),0) FROM pipeline_coverage WHERE market_id=$market AND period_month=$month AND scenario_id=$sc AND level='agent'"
+        sql"SELECT COALESCE(SUM(forecast_qty),0) FROM pipeline_coverage WHERE market_id=$market AND period_month=$month AND scenario_id=$sc AND level='agent' AND product_variant_id IS NULL"
           .query[Long]
           .unique
           .transact(xa)
       marketRow <-
-        sql"SELECT forecast_qty FROM pipeline_coverage WHERE market_id=$market AND period_month=$month AND scenario_id=$sc AND level='market'"
+        sql"SELECT forecast_qty FROM pipeline_coverage WHERE market_id=$market AND period_month=$month AND scenario_id=$sc AND level='market' AND product_variant_id IS NULL"
           .query[Int]
           .unique
           .transact(xa)
       agentArow <-
-        sql"SELECT forecast_qty FROM pipeline_coverage WHERE market_id=$market AND period_month=$month AND scenario_id=$sc AND level='agent' AND agent_user_id=$agentA"
+        sql"SELECT forecast_qty FROM pipeline_coverage WHERE market_id=$market AND period_month=$month AND scenario_id=$sc AND level='agent' AND agent_user_id=$agentA AND product_variant_id IS NULL"
           .query[Int]
           .unique
           .transact(xa)

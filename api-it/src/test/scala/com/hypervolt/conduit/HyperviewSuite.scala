@@ -53,7 +53,7 @@ object HyperviewSuite extends IOSuite {
     sql"SELECT id FROM forecast_scenario WHERE type='P50' AND toggle_basis IS NULL".query[UUID].unique.transact(xa)
 
   private def branchCoverage(xa: HikariTransactor[IO], market: UUID, sc: UUID): IO[(Int, String)] =
-    sql"SELECT forecast_qty, forecast_source FROM pipeline_coverage WHERE market_id=$market AND period_month=$month AND scenario_id=$sc AND level='branch'"
+    sql"SELECT forecast_qty, forecast_source FROM pipeline_coverage WHERE market_id=$market AND period_month=$month AND scenario_id=$sc AND level='branch' AND product_variant_id IS NULL"
       .query[(Int, String)]
       .unique
       .transact(xa)
