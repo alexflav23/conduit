@@ -22,8 +22,8 @@ final case class Leaf(
     weightedPipelineQty: BigDecimal,
     shippedQty: Int,
     activatedQty: Int,
-    forecastQtyEx: Int, // forecast with the scenario's ex-cut account removed (doc 12 §5.2)
-    source: String
+    source: String,
+    excluded: Boolean = false // true when this leaf's account is removed by the scenario's ex-cut (doc 12 §5.2)
 )
 
 // A rolled-up coverage row at one level of the hierarchy (or the agent axis). Quantities sum on rollup;
@@ -44,12 +44,15 @@ final case class CoverageRow(
     shippedQty: Int,
     activatedQty: Int,
     forecastQtyEx: Int,
+    weightedPipelineQtyEx: BigDecimal,
+    shippedQtyEx: Int,
     forecastSource: String,
     wowDelta: Option[BigDecimal] = None
 ) {
   // (shipped + weighted_pipeline) / forecast — None when forecast is 0 (the 0-forecast guard, doc 12 §4.3).
-  def coveragePct: Option[BigDecimal]          = Coverage.ratio(shippedQty, weightedPipelineQty, forecastQty)
-  def coverageExAccountPct: Option[BigDecimal] = Coverage.ratio(shippedQty, weightedPipelineQty, forecastQtyEx)
+  def coveragePct: Option[BigDecimal] = Coverage.ratio(shippedQty, weightedPipelineQty, forecastQty)
+  // The ex-cut figure (doc 12 §5.2): the named account removed from BOTH forecast and the covering components.
+  def coverageExAccountPct: Option[BigDecimal] = Coverage.ratio(shippedQtyEx, weightedPipelineQtyEx, forecastQtyEx)
 }
 
 object Coverage {
@@ -114,7 +117,11 @@ object Coverage {
             weightedPipelineQty = group.map(_.weightedPipelineQty).foldLeft(BigDecimal(0))(_ + _),
             shippedQty = group.map(_.shippedQty).sum,
             activatedQty = group.map(_.activatedQty).sum,
-            forecastQtyEx = group.map(_.forecastQtyEx).sum,
+            // ex-cut aggregates: excluded leaves drop out of forecast AND its covering components.
+            forecastQtyEx = group.filterNot(_.excluded).map(_.forecastQty).sum,
+            weightedPipelineQtyEx =
+              group.filterNot(_.excluded).map(_.weightedPipelineQty).foldLeft(BigDecimal(0))(_ + _),
+            shippedQtyEx = group.filterNot(_.excluded).map(_.shippedQty).sum,
             forecastSource = sourceOf(group)
           )
       }

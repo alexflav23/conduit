@@ -11,6 +11,7 @@ import com.hypervolt.conduit.forecast.ForecastQueryRepo
 import com.hypervolt.conduit.forecast.ForecastService
 import com.hypervolt.conduit.notification.NotificationRepo
 import doobie.implicits._
+import doobie.postgres.implicits._
 import doobie.util.transactor.Transactor
 import io.circe.Codec
 import io.circe.Json
@@ -235,6 +236,61 @@ final class H6QRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
             }
       })
 
+  // Output-only export (doc 12 §8.4): a layer-respecting CSV of the board. Volume-only principals get no money
+  // (the rows are layer-projected first); requires the export action and is audited. Nothing is ever imported.
+  private val exportCsv =
+    base.get
+      .in("api" / "v1" / "h6q" / "export")
+      .in(query[String]("market"))
+      .in(query[String]("period"))
+      .in(query[String]("scenario"))
+      .in(query[Option[String]]("group_by"))
+      .out(stringBody)
+      .serverLogic(principal => {
+        case (marketStr, periodStr, scenarioStr, groupByOpt) =>
+          if (!PolicyEngine.hasPermission(principal, Action.Export, "pipeline_coverage"))
+            Async[F].pure(Left(err(StatusCode.Forbidden, "forbidden", "requires export:pipeline_coverage")))
+          else
+            (uuid(marketStr), date(normaliseMonth(periodStr)), uuid(scenarioStr)).tupled match {
+              case Left(e) => Async[F].pure(Left(e))
+              case Right((market, period, scenario)) =>
+                val level = groupByOpt.getOrElse("branch")
+                ForecastQueryRepo
+                  .coverage(market, period, scenario, level)
+                  .flatMap { rows =>
+                    val projected = rows.map(r => Projection.projectFor(principal, "pipeline_coverage", r))
+                    sql"INSERT INTO audit_log (entity_type, entity_id, action, actor_user_id) VALUES ('pipeline_coverage', $market, 'export', ${principal.userId})".update.run
+                      .as(toCsv(projected))
+                  }
+                  .transact(xa)
+                  .map(Right(_))
+            }
+      })
+
+  private def toCsv(rows: List[Json]): String = {
+    val cols = List(
+      "level",
+      "branch_company_id",
+      "agent_user_id",
+      "forecast_qty",
+      "shipped_qty",
+      "activated_qty",
+      "coverage_pct",
+      "coverage_ex_account_pct",
+      "wow_delta",
+      "forecast_revenue",
+      "forecast_margin"
+    )
+    // layer-projected: a column the principal's layer can't see is absent from every row, so it drops from the export.
+    val present = cols.filter(c => rows.exists(r => r.hcursor.downField(c).focus.exists(!_.isNull)))
+    def cell(r: Json, c: String): String =
+      r.hcursor.downField(c).focus match {
+        case Some(j) if !j.isNull => j.asString.getOrElse(j.noSpaces)
+        case _                    => ""
+      }
+    (present.mkString(",") :: rows.map(r => present.map(cell(r, _)).mkString(","))).mkString("\n")
+  }
+
   private def normaliseMonth(s: String): String = if (s.length == 7) s + "-01" else s
 
   val routes: HttpRoutes[F] =
@@ -250,7 +306,8 @@ final class H6QRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
         accuracy,
         notifications,
         coverage,
-        reconcile
+        reconcile,
+        exportCsv
       )
     )
 }

@@ -114,16 +114,22 @@ final class CoverageProjector[F[_]: Async](xa: Transactor[F]) {
             FROM cur
             ORDER BY branch_company_id, product_variant_id, CASE source WHEN 'manual' THEN 0 ELSE 1 END
           )
-          SELECT market_id, channel_id, sub_channel_id, segment, company_id, branch_company_id, agent,
-                 SUM(qty)::int AS forecast_qty,
-                 CASE WHEN COUNT(DISTINCT source) > 1 THEN 'mixed' ELSE MIN(source) END AS src
-          FROM resolved
-          GROUP BY market_id, channel_id, sub_channel_id, segment, company_id, branch_company_id, agent"""
-      .query[(UUID, Option[UUID], Option[UUID], Option[String], UUID, UUID, UUID, Int, String)]
+          SELECT r.market_id, r.channel_id, r.sub_channel_id, r.segment, r.company_id, r.branch_company_id, r.agent,
+                 SUM(r.qty)::int AS forecast_qty,
+                 CASE WHEN COUNT(DISTINCT r.source) > 1 THEN 'mixed' ELSE MIN(r.source) END AS src,
+                 (COALESCE((p.attributes->>'h6q_excludable') = 'true', false)
+                  OR COALESCE((pp.attributes->>'h6q_excludable') = 'true', false)) AS excluded
+          FROM resolved r
+            JOIN party p ON p.id = r.branch_company_id
+            LEFT JOIN party pp ON pp.id = p.parent_party_id
+          GROUP BY r.market_id, r.channel_id, r.sub_channel_id, r.segment, r.company_id, r.branch_company_id, r.agent,
+                   (COALESCE((p.attributes->>'h6q_excludable') = 'true', false)
+                    OR COALESCE((pp.attributes->>'h6q_excludable') = 'true', false))"""
+      .query[(UUID, Option[UUID], Option[UUID], Option[String], UUID, UUID, UUID, Int, String, Boolean)]
       .to[List]
       .map(_.map {
-        case (mkt, ch, sub, seg, co, br, ag, fq, src) =>
-          Leaf(mkt, ch, sub, seg, co, Some(br), ag, period, scenario, fq, BigDecimal(0), 0, 0, fq, src)
+        case (mkt, ch, sub, seg, co, br, ag, fq, src, excluded) =>
+          Leaf(mkt, ch, sub, seg, co, Some(br), ag, period, scenario, fq, BigDecimal(0), 0, 0, src, excluded)
       })
 
   // Sell-in: units dispatched to the account in the period (doc 12 §4.3).

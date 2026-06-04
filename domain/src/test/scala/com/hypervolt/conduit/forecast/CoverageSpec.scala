@@ -39,9 +39,8 @@ object CoverageSpec extends SimpleIOSuite with Checkers {
     wp  <- Gen.choose(0, 2000).map(i => BigDecimal(i) / 10)
     sh  <- Gen.choose(0, 500)
     av  <- Gen.choose(0, 500)
-    exc <- Gen.choose(0, fq)
     src <- Gen.oneOf("manual", "hyperview")
-  } yield Leaf(market, Some(ch), Some(ch), Some(seg), co, Some(br), ag, month, scenario, fq, wp, sh, av, exc, src)
+  } yield Leaf(market, Some(ch), Some(ch), Some(seg), co, Some(br), ag, month, scenario, fq, wp, sh, av, src)
 
   private val leavesGen: Gen[List[Leaf]] = Gen.choose(1, 60).flatMap(n => Gen.listOfN(n, leafGen))
 
@@ -105,7 +104,6 @@ object CoverageSpec extends SimpleIOSuite with Checkers {
       BigDecimal(0),
       10,
       0,
-      0,
       "manual"
     )
     val b = Leaf(
@@ -121,7 +119,6 @@ object CoverageSpec extends SimpleIOSuite with Checkers {
       100,
       BigDecimal(0),
       50,
-      0,
       0,
       "manual"
     )
