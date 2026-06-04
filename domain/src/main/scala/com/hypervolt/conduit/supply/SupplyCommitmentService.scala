@@ -72,12 +72,65 @@ final class SupplyCommitmentService[F[_]: Async](xa: Transactor[F]) {
   // ----- internals -----
 
   private def policyFor(supplier: UUID): ConnectionIO[TimeFence.Policy] =
-    sql"""SELECT lead_time_days, flex_horizon_days, flex_tolerance_pct FROM supply_commitment_policy
+    sql"""SELECT lead_time_days, flex_horizon_days, flex_tolerance_pct, frozen_tolerance_pct FROM supply_commitment_policy
           WHERE active AND (supplier_id = $supplier OR supplier_id IS NULL)
           ORDER BY (supplier_id IS NOT NULL) DESC LIMIT 1"""
-      .query[(Int, Int, BigDecimal)]
+      .query[(Int, Int, BigDecimal, BigDecimal)]
       .option
-      .map(_.fold(TimeFence.Policy(56, 180, BigDecimal(20))) { case (lt, fh, tol) => TimeFence.Policy(lt, fh, tol) })
+      .map(_.fold(TimeFence.Policy(56, 180, BigDecimal(20), BigDecimal(0))) {
+        case (lt, fh, tol, ftol) => TimeFence.Policy(lt, fh, tol, ftol)
+      })
+
+  // Warn (don't silently reject) when sales reality or an automated trigger diverges from a FROZEN/over-flex firm
+  // PO: the PO can't move, so a divergence means we will over- or under-supply. Records a commitment_warning +
+  // emits supply.commitment.divergence; returns the message if raised. Called from the forecast/order paths.
+  def checkDemand(
+      supplier: UUID,
+      variant: UUID,
+      target: LocalDate,
+      asOf: LocalDate,
+      demand: Int,
+      source: String
+  ): F[Option[String]] =
+    (policyFor(supplier), committed(supplier, variant, target)).tupled
+      .flatMap {
+        case (p, c) =>
+          val hr = TimeFence.headroom(asOf, target, p, c)
+          if (hr.zone != TimeFence.Zone.Free && c > 0 && !hr.admits(c, demand)) {
+            val delta = demand - c
+            val sev   = if (hr.zone == TimeFence.Zone.Frozen) "block" else "warn"
+            val msg =
+              s"$source demand $demand diverges from the ${hr.zone.name} firm PO of $c (delta $delta) for $target"
+            (sql"""INSERT INTO commitment_warning (supplier_id, product_variant_id, target_date, zone, committed_qty, demand_qty, delta, source, severity, message)
+                 VALUES ($supplier, $variant, $target, ${hr.zone.name}, $c, $demand, $delta, $source, $sev, $msg)""".update.run *>
+              OutboxRepo.append(
+                OutboxEvent(
+                  UUID.randomUUID(),
+                  "supply.commitment.divergence",
+                  1,
+                  "supply",
+                  supplier,
+                  s"$supplier:$variant:$target",
+                  None,
+                  None,
+                  None,
+                  Json.obj(
+                    "supplier_id"        -> supplier.toString.asJson,
+                    "product_variant_id" -> variant.toString.asJson,
+                    "target_date"        -> target.toString.asJson,
+                    "zone"               -> hr.zone.name.asJson,
+                    "committed"          -> c.asJson,
+                    "demand"             -> demand.asJson,
+                    "delta"              -> delta.asJson,
+                    "source"             -> source.asJson,
+                    "severity"           -> sev.asJson
+                  ),
+                  Instant.now()
+                )
+              )).as(Some(msg): Option[String])
+          } else (None: Option[String]).pure[ConnectionIO]
+      }
+      .transact(xa)
 
   private def committed(supplier: UUID, variant: UUID, target: LocalDate): ConnectionIO[Int] =
     sql"SELECT qty FROM supply_commitment WHERE supplier_id = $supplier AND product_variant_id = $variant AND target_date = $target"

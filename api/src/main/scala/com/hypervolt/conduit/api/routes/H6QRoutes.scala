@@ -10,6 +10,7 @@ import com.hypervolt.conduit.forecast.ForecastLine
 import com.hypervolt.conduit.forecast.ForecastQueryRepo
 import com.hypervolt.conduit.forecast.ForecastService
 import com.hypervolt.conduit.notification.NotificationRepo
+import com.hypervolt.conduit.supply.WaterfallRepo
 import doobie.implicits._
 import doobie.postgres.implicits._
 import doobie.util.transactor.Transactor
@@ -262,6 +263,25 @@ final class H6QRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
             }
       })
 
+  // The demand→revenue waterfall for a SKU/month: forecast → CM commitment → produced → delivered → ordered →
+  // shipped → revenue, each stage distinct, the shipped→revenue tail provable in the ledger (doc 04 §Ledger).
+  private val waterfall =
+    base.get
+      .in("api" / "v1" / "h6q" / "waterfall")
+      .in(query[String]("variant"))
+      .in(query[String]("period"))
+      .out(jsonBody[Json])
+      .serverLogic(principal => {
+        case (variantStr, periodStr) =>
+          if (!PolicyEngine.hasPermission(principal, Action.View, "pipeline_coverage"))
+            Async[F].pure(Left(err(StatusCode.Forbidden, "forbidden", "requires view:pipeline_coverage")))
+          else
+            (uuid(variantStr), date(normaliseMonth(periodStr))).tupled match {
+              case Left(e)                  => Async[F].pure(Left(e))
+              case Right((variant, period)) => WaterfallRepo.waterfall(variant, period).transact(xa).map(Right(_))
+            }
+      })
+
   // The per-SKU breakdown of a level (the Quarterly-Forecast-Dashboard view: total split by SKU).
   private val coverageBySku =
     base.get
@@ -379,6 +399,7 @@ final class H6QRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
         notifications,
         coverage,
         coverageBySku,
+        waterfall,
         reconcile,
         exportCsv
       )

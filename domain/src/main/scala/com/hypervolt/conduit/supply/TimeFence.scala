@@ -24,8 +24,15 @@ object TimeFence {
   }
 
   // leadTimeDays: within this horizon the PO is firm (frozen). flexHorizonDays: out to here, change is allowed
-  // within flexTolerancePct of the committed quantity. Beyond flexHorizonDays it is free.
-  final case class Policy(leadTimeDays: Int, flexHorizonDays: Int, flexTolerancePct: BigDecimal)
+  // within flexTolerancePct of the committed quantity. Beyond flexHorizonDays it is free. frozenTolerancePct is
+  // the small CONTRACTUAL change a manufacturer still allows inside the frozen window (often < 20%, configurable;
+  // 0 = truly firm).
+  final case class Policy(
+      leadTimeDays: Int,
+      flexHorizonDays: Int,
+      flexTolerancePct: BigDecimal,
+      frozenTolerancePct: BigDecimal = BigDecimal(0)
+  )
 
   def zone(asOf: LocalDate, target: LocalDate, p: Policy): Zone = {
     val daysOut = ChronoUnit.DAYS.between(asOf, target)
@@ -45,8 +52,11 @@ object TimeFence {
 
   def headroom(asOf: LocalDate, target: LocalDate, p: Policy, committed: Int): Headroom =
     zone(asOf, target, p) match {
-      case Zone.Frozen => Headroom(Zone.Frozen, 0, 0) // firm — no change (and no new firm PO inside lead time)
-      case Zone.Flex   =>
+      case Zone.Frozen =>
+        // firm: only the small contractual frozen tolerance (often 0) may move; otherwise no change.
+        val tol = (BigDecimal(committed) * p.frozenTolerancePct / 100).setScale(0, RoundingMode.HALF_UP).toInt
+        Headroom(Zone.Frozen, tol, tol)
+      case Zone.Flex =>
         // tolerance bounds CHANGES to an existing firm commitment; establishing a new plan from zero is allowed.
         if (committed == 0) Headroom(Zone.Flex, Int.MaxValue, 0)
         else {
