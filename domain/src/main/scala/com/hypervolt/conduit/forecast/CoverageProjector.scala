@@ -91,19 +91,35 @@ final class CoverageProjector[F[_]: Async](xa: Transactor[F]) {
         }
     }
 
+  // Resolve manual-vs-hyperview precedence per estimate key (doc 12 §6.3, default manual_overrides_hyperview),
+  // THEN sum to the per-branch coverage leaf. Hyperview rows (no owner) are attributed to a sentinel "model"
+  // agent so the agent axis still totals to the branch axis (the reconciliation invariant survives the model
+  // source). A branch whose variants mix the two sources is flagged forecast_source='mixed'.
   private def forecastLeaves(market: UUID, period: LocalDate, scenario: UUID): ConnectionIO[List[Leaf]] =
-    sql"""SELECT market_id, channel_id, sub_channel_id, segment, company_id, branch_company_id,
-                 forecaster_user_id, SUM(qty)::int AS forecast_qty
-          FROM forecast_entry
-          WHERE market_id = $market AND period_month = $period AND scenario_id = $scenario
-            AND superseded_by IS NULL AND source = 'manual'
-            AND branch_company_id IS NOT NULL AND company_id IS NOT NULL AND forecaster_user_id IS NOT NULL
-          GROUP BY market_id, channel_id, sub_channel_id, segment, company_id, branch_company_id, forecaster_user_id"""
-      .query[(UUID, Option[UUID], Option[UUID], Option[String], UUID, UUID, UUID, Int)]
+    sql"""WITH cur AS (
+            SELECT market_id, channel_id, sub_channel_id, segment, company_id, branch_company_id,
+                   forecaster_user_id, product_variant_id, qty, source
+            FROM forecast_entry
+            WHERE market_id = $market AND period_month = $period AND scenario_id = $scenario
+              AND superseded_by IS NULL AND branch_company_id IS NOT NULL AND company_id IS NOT NULL
+          ),
+          resolved AS (
+            SELECT DISTINCT ON (branch_company_id, product_variant_id)
+                   market_id, channel_id, sub_channel_id, segment, company_id, branch_company_id,
+                   COALESCE(forecaster_user_id, '00000000-0000-0000-0000-000000000000'::uuid) AS agent, qty, source
+            FROM cur
+            ORDER BY branch_company_id, product_variant_id, CASE source WHEN 'manual' THEN 0 ELSE 1 END
+          )
+          SELECT market_id, channel_id, sub_channel_id, segment, company_id, branch_company_id, agent,
+                 SUM(qty)::int AS forecast_qty,
+                 CASE WHEN COUNT(DISTINCT source) > 1 THEN 'mixed' ELSE MIN(source) END AS src
+          FROM resolved
+          GROUP BY market_id, channel_id, sub_channel_id, segment, company_id, branch_company_id, agent"""
+      .query[(UUID, Option[UUID], Option[UUID], Option[String], UUID, UUID, UUID, Int, String)]
       .to[List]
       .map(_.map {
-        case (mkt, ch, sub, seg, co, br, ag, fq) =>
-          Leaf(mkt, ch, sub, seg, co, Some(br), ag, period, scenario, fq, BigDecimal(0), 0, 0, fq, "manual")
+        case (mkt, ch, sub, seg, co, br, ag, fq, src) =>
+          Leaf(mkt, ch, sub, seg, co, Some(br), ag, period, scenario, fq, BigDecimal(0), 0, 0, fq, src)
       })
 
   // Sell-in: units dispatched to the account in the period (doc 12 §4.3).
