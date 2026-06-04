@@ -47,6 +47,10 @@ final class DispatchService[F[_]: Async](xa: Transactor[F]) {
                 .query[UUID]
                 .unique
             _ <- validated.traverse_(v => shipLine(dispatchId, trancheId, v))
+            // Conduit OWNS the serial→customer attribution: stamp every dispatched serial with the buying account
+            // here (no MRPeasy lookup). This is what makes per-customer stock automatic and real-time.
+            _ <- sql"""UPDATE serial_unit SET company_id = (SELECT sold_to_party_id FROM "order" WHERE id = $orderId)
+                    WHERE dispatch_id = $dispatchId""".update.run
             _ <-
               sql"""UPDATE "order" SET dispatched_at = COALESCE(dispatched_at, now()), updated_at = now() WHERE id = $orderId""".update.run
             _ <- OutboxRepo.append(

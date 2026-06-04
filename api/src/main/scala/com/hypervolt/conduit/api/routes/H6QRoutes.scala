@@ -10,6 +10,9 @@ import com.hypervolt.conduit.forecast.ForecastLine
 import com.hypervolt.conduit.forecast.ForecastQueryRepo
 import com.hypervolt.conduit.forecast.ForecastService
 import com.hypervolt.conduit.notification.NotificationRepo
+import com.hypervolt.conduit.supply.AutoPoProposer
+import com.hypervolt.conduit.supply.SerialShelfRepo
+import com.hypervolt.conduit.supply.SupplyCommitmentService
 import com.hypervolt.conduit.supply.WaterfallRepo
 import doobie.implicits._
 import doobie.postgres.implicits._
@@ -39,6 +42,9 @@ object SkipReq { implicit val codec: Codec[SkipReq] = deriveCodec }
 
 final case class SubmitMixReq(cycle: String, period: String, scenario: String, qty: Int)
 object SubmitMixReq { implicit val codec: Codec[SubmitMixReq] = deriveCodec }
+
+final case class AutoPoReq(supplier: String, market: String, period: String, scenario: String, asOf: String)
+object AutoPoReq { implicit val codec: Codec[AutoPoReq] = deriveCodec }
 
 // H6Q REST surface (doc 12 §11). Capture is own-scope create:forecast; the coverage board is
 // view:pipeline_coverage, scope-filtered and layer-projected (volume/commercial/profitability).
@@ -263,6 +269,72 @@ final class H6QRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
             }
       })
 
+  private val supplyCommitments = new SupplyCommitmentService[F](xa)
+  private val autoPo            = new AutoPoProposer[F](xa, supplyCommitments)
+
+  // Auto-PO proposer: diff H6Q demand vs the firm commitment + available stock, propose deltas within the
+  // time-fence headroom (the rest is blocked + raises a divergence warning).
+  private val autoPoPropose =
+    base.post
+      .in("api" / "v1" / "h6q" / "auto-po")
+      .in(jsonBody[AutoPoReq])
+      .out(jsonBody[Json])
+      .serverLogic(principal =>
+        req =>
+          if (!PolicyEngine.hasPermission(principal, Action.View, "pipeline_coverage"))
+            Async[F].pure(Left(err(StatusCode.Forbidden, "forbidden", "requires view:pipeline_coverage")))
+          else
+            (
+              uuid(req.supplier),
+              uuid(req.market),
+              date(normaliseMonth(req.period)),
+              uuid(req.scenario),
+              date(req.asOf)
+            ).tupled match {
+              case Left(e) => Async[F].pure(Left(e))
+              case Right((supplier, market, period, scenario, asOf)) =>
+                autoPo.propose(supplier, market, period, scenario, asOf).map { props =>
+                  Right(
+                    Json.fromValues(
+                      props.map(pp =>
+                        Json.obj(
+                          "product_variant_id" -> pp.variant.toString.asJson,
+                          "demand"             -> pp.demand.asJson,
+                          "committed"          -> pp.committed.asJson,
+                          "available"          -> pp.available.asJson,
+                          "net_need"           -> pp.netNeed.asJson,
+                          "proposed_delta"     -> pp.proposedDelta.asJson,
+                          "blocked_qty"        -> pp.blocked.asJson,
+                          "zone"               -> pp.zone.asJson
+                        )
+                      )
+                    )
+                  )
+                }
+            }
+      )
+
+  // Real-time per-account shelf (shipped/activated/on-shelf), attributed by Conduit at dispatch.
+  private val shelf =
+    base.get
+      .in("api" / "v1" / "h6q" / "shelf")
+      .in(query[Option[String]]("company"))
+      .out(jsonBody[Json])
+      .serverLogic(principal =>
+        companyOpt =>
+          if (!PolicyEngine.hasPermission(principal, Action.View, "pipeline_coverage"))
+            Async[F].pure(Left(err(StatusCode.Forbidden, "forbidden", "requires view:pipeline_coverage")))
+          else
+            companyOpt match {
+              case None => SerialShelfRepo.board(100).transact(xa).map(rows => Right(Json.fromValues(rows)))
+              case Some(compStr) =>
+                uuid(compStr) match {
+                  case Left(e)  => Async[F].pure(Left(e))
+                  case Right(c) => SerialShelfRepo.shelf(c).transact(xa).map(Right(_))
+                }
+            }
+      )
+
   // The demand→revenue waterfall for a SKU/month: forecast → CM commitment → produced → delivered → ordered →
   // shipped → revenue, each stage distinct, the shipped→revenue tail provable in the ledger (doc 04 §Ledger).
   private val waterfall =
@@ -400,6 +472,8 @@ final class H6QRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
         coverage,
         coverageBySku,
         waterfall,
+        autoPoPropose,
+        shelf,
         reconcile,
         exportCsv
       )
