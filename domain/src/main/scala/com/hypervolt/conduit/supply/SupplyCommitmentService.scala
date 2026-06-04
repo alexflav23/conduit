@@ -72,13 +72,13 @@ final class SupplyCommitmentService[F[_]: Async](xa: Transactor[F]) {
   // ----- internals -----
 
   private def policyFor(supplier: UUID): ConnectionIO[TimeFence.Policy] =
-    sql"""SELECT lead_time_days, flex_horizon_days, flex_tolerance_pct, frozen_tolerance_pct FROM supply_commitment_policy
+    sql"""SELECT lead_time_days, flex_horizon_days, flex_tolerance_pct, frozen_tolerance_pct, graded FROM supply_commitment_policy
           WHERE active AND (supplier_id = $supplier OR supplier_id IS NULL)
           ORDER BY (supplier_id IS NOT NULL) DESC LIMIT 1"""
-      .query[(Int, Int, BigDecimal, BigDecimal)]
+      .query[(Int, Int, BigDecimal, BigDecimal, Boolean)]
       .option
       .map(_.fold(TimeFence.Policy(56, 180, BigDecimal(20), BigDecimal(0))) {
-        case (lt, fh, tol, ftol) => TimeFence.Policy(lt, fh, tol, ftol)
+        case (lt, fh, tol, ftol, graded) => TimeFence.Policy(lt, fh, tol, ftol, graded)
       })
 
   // Warn (don't silently reject) when sales reality or an automated trigger diverges from a FROZEN/over-flex firm

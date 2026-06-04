@@ -26,13 +26,26 @@ object TimeFence {
   // leadTimeDays: within this horizon the PO is firm (frozen). flexHorizonDays: out to here, change is allowed
   // within flexTolerancePct of the committed quantity. Beyond flexHorizonDays it is free. frozenTolerancePct is
   // the small CONTRACTUAL change a manufacturer still allows inside the frozen window (often < 20%, configurable;
-  // 0 = truly firm).
+  // 0 = truly firm). `graded` smooths the flex band so the tolerance rises CONTINUOUSLY from frozenTolerancePct
+  // at the lead-time edge to flexTolerancePct at the horizon — no cliff at the boundary, the right shape for
+  // continuous/real-time forecasting (a week just inside the flex band behaves almost like a frozen one).
   final case class Policy(
       leadTimeDays: Int,
       flexHorizonDays: Int,
       flexTolerancePct: BigDecimal,
-      frozenTolerancePct: BigDecimal = BigDecimal(0)
+      frozenTolerancePct: BigDecimal = BigDecimal(0),
+      graded: Boolean = false
   )
+
+  // The effective change tolerance at a given horizon — flat per zone, or graded across the flex band.
+  def tolerancePct(daysOut: Long, p: Policy): BigDecimal =
+    if (daysOut <= p.leadTimeDays) p.frozenTolerancePct
+    else if (!p.graded) p.flexTolerancePct
+    else {
+      val span = (p.flexHorizonDays - p.leadTimeDays).max(1)
+      val frac = BigDecimal((daysOut - p.leadTimeDays).min(span.toLong)) / BigDecimal(span)
+      (p.frozenTolerancePct + (p.flexTolerancePct - p.frozenTolerancePct) * frac).setScale(4, RoundingMode.HALF_UP)
+    }
 
   def zone(asOf: LocalDate, target: LocalDate, p: Policy): Zone = {
     val daysOut = ChronoUnit.DAYS.between(asOf, target)
@@ -50,21 +63,23 @@ object TimeFence {
     }
   }
 
-  def headroom(asOf: LocalDate, target: LocalDate, p: Policy, committed: Int): Headroom =
+  def headroom(asOf: LocalDate, target: LocalDate, p: Policy, committed: Int): Headroom = {
+    val daysOut = ChronoUnit.DAYS.between(asOf, target)
     zone(asOf, target, p) match {
       case Zone.Frozen =>
         // firm: only the small contractual frozen tolerance (often 0) may move; otherwise no change.
-        val tol = (BigDecimal(committed) * p.frozenTolerancePct / 100).setScale(0, RoundingMode.HALF_UP).toInt
+        val tol = (BigDecimal(committed) * tolerancePct(daysOut, p) / 100).setScale(0, RoundingMode.HALF_UP).toInt
         Headroom(Zone.Frozen, tol, tol)
       case Zone.Flex =>
         // tolerance bounds CHANGES to an existing firm commitment; establishing a new plan from zero is allowed.
         if (committed == 0) Headroom(Zone.Flex, Int.MaxValue, 0)
         else {
-          val tol = (BigDecimal(committed) * p.flexTolerancePct / 100).setScale(0, RoundingMode.HALF_UP).toInt
+          val tol = (BigDecimal(committed) * tolerancePct(daysOut, p) / 100).setScale(0, RoundingMode.HALF_UP).toInt
           Headroom(Zone.Flex, tol, tol)
         }
       case Zone.Free => Headroom(Zone.Free, Int.MaxValue, Int.MaxValue)
     }
+  }
 
   // Admissibility of moving a week's committed firm quantity to a new demand (the gate check).
   def admits(asOf: LocalDate, target: LocalDate, p: Policy, committed: Int, newDemand: Int): Boolean =

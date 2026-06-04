@@ -31,6 +31,25 @@ object TimeFenceSpec extends SimpleIOSuite {
     expect(hr.admits(0, 500))
   }
 
+  pureTest("graded fence: the tolerance rises continuously across the flex band — no cliff at the lead-time edge") {
+    val g = TimeFence.Policy(
+      leadTimeDays = 56,
+      flexHorizonDays = 180,
+      flexTolerancePct = BigDecimal(20),
+      frozenTolerancePct = BigDecimal(0),
+      graded = true
+    )
+    // just past the frozen edge → ~0 (continuous with the frozen window, not a jump to 20%)
+    val nearLead = TimeFence.tolerancePct(57, g)
+    // midpoint of the flex band → ~half of flex tolerance
+    val mid = TimeFence.tolerancePct((56 + 180) / 2, g)
+    // at the horizon → full flex tolerance
+    val atHorizon = TimeFence.tolerancePct(180, g)
+    expect(nearLead < BigDecimal(1)) and
+      expect(mid > BigDecimal(9) && mid < BigDecimal(11)) and
+      expect(atHorizon == BigDecimal("20.0000"))
+  }
+
   pureTest("beyond the horizon the window is FREE — demand can move freely") {
     val target = asOf.plusDays(220)
     expect(TimeFence.zone(asOf, target, policy) == TimeFence.Zone.Free) and
