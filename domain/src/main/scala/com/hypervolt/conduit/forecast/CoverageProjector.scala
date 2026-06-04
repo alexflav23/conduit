@@ -5,6 +5,8 @@ import cats.syntax.all._
 import com.hypervolt.conduit.event.OutboxEvent
 import com.hypervolt.conduit.event.OutboxRepo
 import com.hypervolt.conduit.notification.NotificationRepo
+import com.hypervolt.conduit.supply.AutoPoProposer
+import com.hypervolt.conduit.supply.SupplyCommitmentService
 import doobie._
 import doobie.implicits._
 import doobie.postgres.implicits._
@@ -13,6 +15,7 @@ import io.circe.Json
 import io.circe.syntax._
 import java.time.Instant
 import java.time.LocalDate
+import java.time.ZoneOffset
 import java.util.UUID
 
 // Rebuilds the materialised pipeline_coverage projection for one (market, period, scenario) slice from the
@@ -25,11 +28,17 @@ import java.util.UUID
 // and stays 0 for now — the rollup math already carries it.
 final class CoverageProjector[F[_]: Async](xa: Transactor[F]) {
 
+  private val proposer = new AutoPoProposer[F](xa, new SupplyCommitmentService[F](xa))
+
   // Recompute the slice AND propagate the shift: a recompute means forward visibility moved, so we emit
   // forecast.coverage.updated (for the Pulsar consumer / external systems) and fan it out to subscribers — the
   // exec, account owners, and external partners like our contract manufacturer — all in ONE transaction with
-  // the projection write (doc 12 §2.6, doc 10 §B). "H6Q updated" therefore reaches whoever needs to know.
+  // the projection write (doc 12 §2.6, doc 10 §B). After the slice commits, the auto-PO proposals for every
+  // contract manufacturer are refreshed, so the supply plan is NEVER out of sync with forward demand.
   def recompute(market: UUID, period: LocalDate, scenario: UUID): F[Int] =
+    recomputeTx(market, period, scenario).transact(xa).flatTap(_ => refreshProposals(market, period, scenario))
+
+  private def recomputeTx(market: UUID, period: LocalDate, scenario: UUID): ConnectionIO[Int] =
     (for {
       prior  <- marketForecast(market, period, scenario)
       leaves <- readLeaves(market, period, scenario)
@@ -48,7 +57,19 @@ final class CoverageProjector[F[_]: Async](xa: Transactor[F]) {
       coverage    = marketRow.flatMap(_.coveragePct)
       _ <- OutboxRepo.append(coverageUpdatedEvent(market, period, scenario, prior, newForecast, coverage))
       _ <- NotificationRepo.fanoutCoverageUpdated(market, period, scenario, prior, newForecast, coverage)
-    } yield rows.size).transact(xa)
+    } yield rows.size)
+
+  // Refresh the auto-PO proposals for every contract manufacturer against the just-updated demand. asOf = now,
+  // so the time-fence headroom is evaluated live. No CM flagged → a no-op.
+  private def refreshProposals(market: UUID, period: LocalDate, scenario: UUID): F[Unit] =
+    contractManufacturers
+      .transact(xa)
+      .flatMap(
+        _.traverse_(sup => proposer.propose(sup, market, period, scenario, LocalDate.now(ZoneOffset.UTC)).void)
+      )
+
+  private def contractManufacturers: ConnectionIO[List[UUID]] =
+    sql"SELECT id FROM supplier WHERE is_contract_manufacturer".query[UUID].to[List]
 
   private def marketForecast(market: UUID, period: LocalDate, scenario: UUID): ConnectionIO[Int] =
     sql"""SELECT COALESCE(forecast_qty, 0) FROM pipeline_coverage

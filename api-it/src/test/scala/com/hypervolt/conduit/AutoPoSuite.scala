@@ -2,6 +2,7 @@ package com.hypervolt.conduit
 
 import cats.effect.IO
 import cats.effect.Resource
+import com.hypervolt.conduit.forecast.ForecastService
 import com.hypervolt.conduit.inventory.DispatchLineInput
 import com.hypervolt.conduit.inventory.DispatchService
 import com.hypervolt.conduit.inventory.InventoryRepo
@@ -107,6 +108,41 @@ object AutoPoSuite extends IOSuite {
         pp.zone == "free"
       )
     }
+  }
+
+  test("every H6Q recompute auto-refreshes PO proposals for contract manufacturers — never out of sync") { xa =>
+    val fc     = new ForecastService[IO](xa)
+    val market = UUID.randomUUID(); val channel = UUID.randomUUID()
+    val period = LocalDate.of(2099, 1, 1) // far future → free window regardless of the machine clock
+    for {
+      vlx <-
+        sql"INSERT INTO supplier (name, billing_currency, is_contract_manufacturer) VALUES ('Volex','USD',true) RETURNING id"
+          .query[UUID]
+          .unique
+          .transact(xa)
+      agent <-
+        sql"INSERT INTO app_user (keycloak_id, name) VALUES (${s"a-${UUID.randomUUID()}"}, 'A') RETURNING id"
+          .query[UUID]
+          .unique
+          .transact(xa)
+      acct <-
+        sql"""INSERT INTO party (display_name, party_type, is_organization, roles, channel_id, market_id, segment, account_manager_user_id, status)
+                     VALUES ('A','installer',true,'{forecastable}',$channel,$market,'retail',$agent,'active') RETURNING id"""
+          .query[UUID]
+          .unique
+          .transact(xa)
+      v   <- variant(xa)
+      p50 <- scenarioP50(xa)
+      _   <- sql"UPDATE forecast_cycle SET status='closed' WHERE cadence='sim2' AND status='open'".update.run.transact(xa)
+      cyc <- fc.openCycle(LocalDate.of(2026, 6, 1), "sim2").map(_._1)
+      // submitting a forecast triggers the recompute, which auto-refreshes the proposals for Volex
+      _ <- fc.submit(agent, acct, cyc, List(com.hypervolt.conduit.forecast.ForecastLine(v, period, p50, 100)), None)
+      prop <-
+        sql"SELECT demand_qty, proposed_delta, blocked_qty, zone FROM po_proposal WHERE supplier_id=$vlx AND product_variant_id=$v AND target_date=$period"
+          .query[(Int, Int, Int, String)]
+          .unique
+          .transact(xa)
+    } yield expect(prop == ((100, 100, 0, "free"))) // demand 100, fully proposed in the free window, nothing blocked
   }
 
   test("real-time per-account shelf: dispatch attributes serials to the customer; activation consumes on-shelf") { xa =>
