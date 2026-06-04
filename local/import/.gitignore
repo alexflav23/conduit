@@ -1,0 +1,3 @@
+# Your real H6Q + stock data lives here but must NOT be committed. Keep only the .example templates.
+*.csv
+!*.csv.example

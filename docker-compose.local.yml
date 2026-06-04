@@ -1,0 +1,57 @@
+# Self-contained LOCAL stack to drive Conduit end to end: Postgres + TigerBeetle + the API.
+# Usage: `sbt api/stage` first (the runner does it), then `docker compose -f docker-compose.local.yml up --build`.
+# The desk (Vite) runs on the host (`cd conduit-desk && yarn start`) and proxies /api -> localhost:8080.
+services:
+  conduit-postgres:
+    image: postgres:16
+    container_name: conduit-local-postgres
+    environment:
+      POSTGRES_USER: conduit
+      POSTGRES_PASSWORD: conduit
+      POSTGRES_DB: conduit
+    ports:
+      - "5532:5432"
+    volumes:
+      - conduit_local_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U conduit"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  conduit-tigerbeetle:
+    image: ghcr.io/tigerbeetle/tigerbeetle:0.16.46
+    container_name: conduit-local-tigerbeetle
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    ports:
+      - "3033:3000"
+    volumes:
+      - conduit_local_tb:/data
+      - ./docker/tigerbeetle-entrypoint.sh:/entrypoint.sh:ro
+    security_opt:
+      - "seccomp=unconfined"
+
+  conduit-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: conduit-local-api
+    depends_on:
+      conduit-postgres:
+        condition: service_healthy
+    environment:
+      HYPERVOLT_ENV: local
+      CONDUIT_DB_HOST: conduit-postgres   # in-network host
+      CONDUIT_DB_PORT: "5432"             # in-network port (not the 5532 host mapping)
+      CONDUIT_DB_USER: conduit
+      CONDUIT_DB_PASSWORD: conduit
+      CONDUIT_DB_DATABASE: conduit
+    ports:
+      - "8080:8080"   # API (the desk proxies /api here)
+      - "9990:9990"   # health/admin -> GET /health
+      - "9464:9464"   # Prometheus metrics
+    # Flyway runs on boot; the API serves once /health returns OK.
+
+volumes:
+  conduit_local_pg:
+  conduit_local_tb:

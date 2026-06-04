@@ -1,0 +1,4 @@
+serial_no,sku,account,status
+HV310-9001,HV-310,Acme Electrical,activated
+HV310-9002,HV-310,Acme Electrical,dispatched
+HV310-9003,HV-310,Northern Wholesale,dispatched
