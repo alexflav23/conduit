@@ -36,6 +36,9 @@ object SubmitForecastReq { implicit val codec: Codec[SubmitForecastReq] = derive
 final case class SkipReq(cycle: String, reason: String)
 object SkipReq { implicit val codec: Codec[SkipReq] = deriveCodec }
 
+final case class SubmitMixReq(cycle: String, period: String, scenario: String, qty: Int)
+object SubmitMixReq { implicit val codec: Codec[SubmitMixReq] = deriveCodec }
+
 // H6Q REST surface (doc 12 §11). Capture is own-scope create:forecast; the coverage board is
 // view:pipeline_coverage, scope-filtered and layer-projected (volume/commercial/profitability).
 final class H6QRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
@@ -115,6 +118,42 @@ final class H6QRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
                     Json.obj(
                       "company_id" -> account.toString.asJson,
                       "versioned"  -> changed.asJson,
+                      "status"     -> "submitted".asJson
+                    )
+                  )
+              }
+          }
+      })
+
+  // Capture an aggregate unit count; the SKU mix splits it into a per-SKU forecast (doc 12 §1.2).
+  private val submitMix =
+    base.post
+      .in("api" / "v1" / "h6q" / "my-forecasts" / path[String]("company_id") / "submit-mix")
+      .in(jsonBody[SubmitMixReq])
+      .out(jsonBody[Json])
+      .serverLogic(principal => {
+        case (companyStr, req) =>
+          (uuid(companyStr), uuid(req.cycle), date(normaliseMonth(req.period)), uuid(req.scenario)).tupled match {
+            case Left(e) => Async[F].pure(Left(e))
+            case Right((account, cycle, period, scenario)) =>
+              service.submitMix(principal.userId, account, cycle, period, scenario, req.qty, Some("desk")).map {
+                case Left("not_owner") =>
+                  Left(err(StatusCode.Forbidden, "forbidden", "you do not own this account this cycle"))
+                case Left("cycle_closed") => Left(err(StatusCode.Conflict, "cycle_closed", "the cycle is closed"))
+                case Left("no_sku_mix") =>
+                  Left(
+                    err(
+                      StatusCode.UnprocessableEntity,
+                      "no_sku_mix",
+                      "no SKU mix configured for this account's channel/market"
+                    )
+                  )
+                case Left(other) => Left(err(StatusCode.UnprocessableEntity, "invalid", other))
+                case Right(n) =>
+                  Right(
+                    Json.obj(
+                      "company_id" -> account.toString.asJson,
+                      "sku_lines"  -> n.asJson,
                       "status"     -> "submitted".asJson
                     )
                   )
@@ -333,6 +372,7 @@ final class H6QRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
         cycles,
         myForecasts,
         submit,
+        submitMix,
         skip,
         outstanding,
         accuracy,

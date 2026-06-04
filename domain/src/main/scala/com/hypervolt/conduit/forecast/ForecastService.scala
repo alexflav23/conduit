@@ -101,6 +101,31 @@ final class ForecastService[F[_]: Async](xa: Transactor[F]) {
         }
     }
 
+  // Capture an aggregate unit count and split it into a per-SKU forecast via the applicable SKU mix (doc 12 §1.2,
+  // the spreadsheet's "Overall Product Sales Mix"). The agent thinks in units; H6Q still records per SKU. The
+  // split conserves the total exactly (largest-remainder). Returns the number of SKU lines versioned.
+  def submitMix(
+      owner: UUID,
+      account: UUID,
+      cycleId: UUID,
+      period: LocalDate,
+      scenario: UUID,
+      totalQty: Int,
+      device: Option[String]
+  ): F[Either[String, Int]] =
+    ForecastRepo.accountDims(account).transact(xa).flatMap {
+      case None => "unknown_account".asLeft[Int].pure[F]
+      case Some(dims) =>
+        SkuMixRepo.resolve(dims.channelId, dims.marketId).transact(xa).flatMap { mix =>
+          if (mix.isEmpty) "no_sku_mix".asLeft[Int].pure[F]
+          else {
+            val lines =
+              SkuMix.allocate(totalQty, mix.toVector).map { case (v, q) => ForecastLine(v, period, scenario, q) }.toList
+            submit(owner, account, cycleId, lines, device)
+          }
+        }
+    }
+
   def skip(owner: UUID, account: UUID, cycleId: UUID, reason: String): F[Either[String, Unit]] =
     ForecastRepo
       .markSkipped(cycleId, owner, account, reason)
