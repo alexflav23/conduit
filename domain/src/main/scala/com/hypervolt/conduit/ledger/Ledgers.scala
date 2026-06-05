@@ -23,12 +23,14 @@ object LedgerAccountCode {
   val FxClearing: Int    = 8  // cross-currency bridge
   val Revenue: Int       = 9
   val OpeningEquity: Int = 10 // OPENING_BALANCE_EQUITY contra — migration opening balances post against it (doc 18 §2)
+  val IcMargin: Int      = 11 // intragroup margin on an intercompany sell leg — eliminated on consolidation (doc 13 §7)
 }
 
 object LedgerTransferCode {
-  val Generic: Int    = 1
-  val Commission: Int = 10
-  val Opening: Int    = 20 // migration opening-balance transfer (doc 18 §2)
+  val Generic: Int      = 1
+  val Commission: Int   = 10
+  val Opening: Int      = 20 // migration opening-balance transfer (doc 18 §2)
+  val Intercompany: Int = 30 // intercompany movement leg (doc 13 §3.3)
 }
 
 // TigerBeetle transfer flags (two-phase + linking).

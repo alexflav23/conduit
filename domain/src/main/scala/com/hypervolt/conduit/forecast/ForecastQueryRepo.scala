@@ -252,11 +252,11 @@ object ForecastQueryRepo {
       .map(_.map {
         case (sku, fam, month, fc, sh, act) =>
           Json.obj(
-            "sku"      -> sku.asJson,
-            "family"   -> fam.asJson,
-            "month"    -> month.asJson,
-            "forecast" -> fc.asJson,
-            "shipped"  -> sh.asJson,
+            "sku"       -> sku.asJson,
+            "family"    -> fam.asJson,
+            "month"     -> month.asJson,
+            "forecast"  -> fc.asJson,
+            "shipped"   -> sh.asJson,
             "activated" -> act.asJson
           )
       })
