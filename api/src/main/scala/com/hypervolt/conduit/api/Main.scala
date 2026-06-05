@@ -11,6 +11,7 @@ import com.hypervolt.conduit.api.routes.CommerceRoutes
 import com.hypervolt.conduit.api.routes.DealDeskRoutes
 import com.hypervolt.conduit.api.routes.H6QRoutes
 import com.hypervolt.conduit.api.routes.HealthRoutes
+import com.hypervolt.conduit.api.routes.IntercompanyRoutes
 import com.hypervolt.conduit.api.routes.PricingRoutes
 import com.hypervolt.conduit.config.AppConfig
 import com.hypervolt.conduit.config.EnvironmentConfig
@@ -54,10 +55,13 @@ object Main extends IOApp.Simple {
         val commerceRoutes = new CommerceRoutes[IO](xa, auth).routes
         val dealDeskRoutes = new DealDeskRoutes[IO](xa, auth).routes
         val h6qRoutes      = new H6QRoutes[IO](xa, auth).routes
+        val icRoutes       = new IntercompanyRoutes[IO](xa, auth).routes
         val app =
           Router(
             "/" -> (HealthRoutes
-              .routes[IO] <+> accessRoutes <+> pricingRoutes <+> commerceRoutes <+> dealDeskRoutes <+> h6qRoutes)
+              .routes[
+                IO
+              ] <+> accessRoutes <+> pricingRoutes <+> commerceRoutes <+> dealDeskRoutes <+> h6qRoutes <+> icRoutes)
           ).orNotFound
         val host      = Ipv4Address.fromString(cfg.http.host).getOrElse(ipv4"0.0.0.0")
         val apiPort   = Port.fromInt(cfg.http.port).getOrElse(port"8080")

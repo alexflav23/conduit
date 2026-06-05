@@ -41,7 +41,21 @@ object FieldLayerMap {
     ("pipeline_coverage", "margin")       -> DataLayer.Profitability,
     // treasury
     ("fx_hedge", "contracted_rate") -> DataLayer.Treasury,
-    ("fx_hedge", "notional")        -> DataLayer.Treasury
+    ("fx_hedge", "notional")        -> DataLayer.Treasury,
+    // intercompany / transfer pricing (doc 13 §9) — price/cost/policy detail is inter_entity-walled; the
+    // physical movement (qty, stock transfer) is volume, so a fulfilment_agent sees the move, not the price
+    ("transfer_price_policy", "method")            -> DataLayer.InterEntity,
+    ("transfer_price_policy", "markup_pct")        -> DataLayer.InterEntity,
+    ("transfer_price_policy", "resale_margin_pct") -> DataLayer.InterEntity,
+    ("transfer_price_policy", "fixed_price")       -> DataLayer.InterEntity,
+    ("intercompany_link", "transfer_price_total")  -> DataLayer.InterEntity,
+    ("intercompany_link", "fx_rate")               -> DataLayer.InterEntity,
+    ("intercompany_link", "fx_basis")              -> DataLayer.InterEntity,
+    ("intercompany_link", "qty")                   -> DataLayer.Volume,
+    ("intercompany_link", "stock_transfer_id")     -> DataLayer.Volume,
+    ("tp_document", "transfer_unit_price")         -> DataLayer.InterEntity,
+    ("tp_document", "lot_landed_unit_cost")        -> DataLayer.InterEntity,
+    ("tp_document", "markup_or_margin_pct")        -> DataLayer.InterEntity
   )
 
   def layerOf(objectType: String, field: String): Option[DataLayer] = seed.get((objectType, field))
