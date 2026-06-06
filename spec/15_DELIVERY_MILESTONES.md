@@ -39,7 +39,7 @@ Xero invoice + revenue-recognition consumers. Pushed to `github/main`.
 | P3 | **M11** H6Q forecasting (matrix/waterfall/supply/shelf/desk/local) | ✅ | 02§K, 04§H6Q, **12**, 08 | ✓ + e2e |
 | P3 | **M12** Intercompany + transfer pricing + tax/customs(stub) + hedges | ✅ | 02§A/§I, **13**, **16** | ✓ |
 | P3 | **M13** ERP/GL + P&L + Xero + documents | ◐ | 04§Ledger, **16**, **17** | ✓ (see below) |
-| P3 | **M13b** Period close + reconciliation + Auditability Center | ⬜ | 14§5–6, **20** | — |
+| P3 | **M13b** Period close + reconciliation + Auditability Center | ◐ | 14§5–6, **20** | ✓ (core) |
 | P3 | **M14** Companion app + desk + Horizons + reporting + HubSpot | ◐ | 08, **20**, **21** | desk (no companion) |
 | X | **NFR / Security / Ops-DR** (cross-cutting, P1 launch-blocker) | ⬜ | **19** | — |
 
@@ -50,6 +50,13 @@ Xero invoice + revenue-recognition consumers. Pushed to `github/main`.
 - ✅ **GL/AR trial balance off the ledger** (`GlProjectionService`, ties out Σdr==Σcr). *Route pending TB-in-API or a `gl_entry` Postgres projection.*
 - ◐ **Document generation** (doc 17) — core done: gapless/immutable numbering (`document_number_series/number`, void consumes a number, no reuse/gap), the `invoice` as a rendered projection of truth (totals read off `order_invoice` + conservation guard), template fallback resolution, deterministic `DocumentRenderer` port (same model → same sha), WORM `document` row + `document.issued`. *Pending: real PDF/A engine + object-store, credit-note/proforma/commercial-invoice/statement types, the event consumer + `/documents` REST + per-locale CJK templates.*
 - ⬜ **Real tax/customs engine** (doc 16 — currently a deterministic stub behind the `TaxQuote` contract, M12).
+
+**M13b sub-status** (◐ core done):
+- ✅ **Period close + lock** (`PeriodCloseService`) — open→closed→lock; lock gated on no unsigned reconciliation exceptions / no pending close tasks; segregation of duties (closer ≠ locker); posting into a locked period barred.
+- ✅ **Reconciliation engine** (`ReconciliationService`) — AR↔invoices + TB↔GL tie-outs off the ledger, expected/actual/variance/status, sign-off; an unsigned exception blocks the lock.
+- ✅ **Control runner** (`ControlRunner`) — re-performable `evidence_query` → pass/fail + `control_run`; seeded CTRL-DOC-GAPLESS / CTRL-RECON-EXCEPTIONS / CTRL-INV-CONSERVATION.
+- ✅ **Auditability lineage** (`LineageService`) — figure → order_invoice → ledger transfer ids → events → issued PDF.
+- ⬜ Auditability **Center UI** (desk) + the remaining reconciliations (GL↔Xero, inventory↔counts) + REST + evidence export.
 
 > Every backing doc exists (deep-dives 09/11/12/13 + launch-blockers 16–21). No "unwritten spec" blockers —
 > only implementation. Open: companion-app Flutter-vs-React (M14); a **Finance desk tab** (P&L / cash waterfall /
