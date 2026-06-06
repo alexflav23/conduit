@@ -12,34 +12,47 @@ and Playwright/e2e for UI).
 
 ## 1. Current state (snapshot)
 
-Implemented and verified end-to-end: **M0–M5**, with **64 automated tests green** (35 unit/property + 27
-integration against real Postgres + TigerBeetle via testcontainers + 2 Playwright e2e). Backend conforms to
-the Athena house stack (Scala 2.13 / http4s / tapir / doobie / Pulsar+avro4s / TigerBeetle / Keycloak / Nix /
-Consul). A thin React+StyleX desk slice (quote → ADLP → order) is e2e-tested. Pushed to `github/main`.
+Implemented and verified end-to-end: **Phases 1 & 2 complete (M0–M10 incl. M9b), plus M11 + M12, and M13 ~70%.**
+All milestone suites are green (weaver unit/property + integration against real Postgres + TigerBeetle via
+testcontainers + Playwright e2e for the desk). Backend conforms to the Athena house stack (Scala 2.13 /
+http4s / tapir / doobie / Pulsar+avro4s / TigerBeetle / Keycloak / Nix / Consul). The React+StyleX desk covers
+order / deal-desk / H6Q (demand matrix + flow + supply + shelf); a `consumer` process runs the outbox relay +
+Xero invoice + revenue-recognition consumers. Pushed to `github/main`.
+
+> **Last updated through M13-PnL + GL projection.** Update this register as each milestone lands.
 
 | | Milestone | Status | Backing docs | Tests |
 |---|---|---|---|---|
 | — | **M0** Scaffold + dev env | ✅ | `CLAUDE.md`, 01 | compile + boot + /health |
-| P1 | **M1** Foundations (Money/period/outbox/Avro/TigerBeetle) | ✅ | 01, 02§L, 03, 04§Ledger, 14 | 26 |
-| P1 | **M2** Access control (RBAC/scope/data-layer) | ✅ | 02§B, 05 | 17 |
-| P1 | **M3** Catalogue + ADLP pricing + `/pricing/quote` | ✅ | 02§D/§E, 04§Pricing/§ADLP | 8 |
-| P1 | **M4** CRM(parties) + Order capture | ◐ | 02§C/§F, 04§Orders/§Credit, **11** | 5 + 2 e2e |
-| P2 | **M5** Commission engine | ◐ | 02§J, 04§Commission | 6 |
-| P2 | **M6** Inventory + ATP/allocation + dispatch + carriers | ⬜ | 02§F/§G, 04§ATP | — |
-| P2 | **M7** Batch / landed cost / serial genealogy | ⬜ | 02§G, 04§Ledger/§FX | — |
-| P2 | **M8** Activation ingest + warranty provision | ⬜ | 02§G, 04§Serial/§Warranty | — |
-| P2 | **M9** Purchasing/receiving + supply + stock ops | ⬜ | 02§H, 04§Stock ops | — |
-| P2 | **M9b** Returns / RMA | ⬜ | **09** | — |
-| P2 | **M10** Deal Desk + rebates + migration/cutover | ⬜ | 04§ADLP, **18** | — |
-| P3 | **M11** H6Q forecasting | ⬜ | 02§K, 04§H6Q, **12**, 08 | — |
-| P3 | **M12** Intercompany + transfer pricing + tax/customs + hedges | ⬜ | 02§A/§I, **13**, **16** | — |
-| P3 | **M13** ERP/GL + P&L + Xero + documents | ⬜ | 04§Ledger, **16**, **17** | — |
+| P1 | **M1** Foundations (Money/period/outbox/Avro/TigerBeetle) | ✅ | 01, 02§L, 03, 04§Ledger, 14 | ✓ |
+| P1 | **M2** Access control (RBAC/scope/data-layer) | ✅ | 02§B, 05 | ✓ |
+| P1 | **M3** Catalogue + ADLP pricing + `/pricing/quote` | ✅ | 02§D/§E, 04§Pricing/§ADLP | ✓ |
+| P1 | **M4** CRM(parties) + Order capture | ✅ | 02§C/§F, 04§Orders/§Credit, **11** | ✓ + e2e |
+| P2 | **M5** Commission engine | ✅ | 02§J, 04§Commission | ✓ |
+| P2 | **M6** Inventory + ATP/allocation + dispatch + carriers | ✅ | 02§F/§G, 04§ATP | ✓ |
+| P2 | **M7** Batch / landed cost / serial genealogy | ✅ | 02§G, 04§Ledger/§FX | ✓ |
+| P2 | **M8** Activation ingest + warranty provision | ✅ | 02§G, 04§Serial/§Warranty | ✓ |
+| P2 | **M9** Purchasing/receiving + supply + stock ops | ✅ | 02§H, 04§Stock ops | ✓ |
+| P2 | **M9b** Returns / RMA | ✅ | **09** | ✓ |
+| P2 | **M10** Deal Desk + rebates + migration/cutover | ✅ | 04§ADLP, **18** | ✓ |
+| P3 | **M11** H6Q forecasting (matrix/waterfall/supply/shelf/desk/local) | ✅ | 02§K, 04§H6Q, **12**, 08 | ✓ + e2e |
+| P3 | **M12** Intercompany + transfer pricing + tax/customs(stub) + hedges | ✅ | 02§A/§I, **13**, **16** | ✓ |
+| P3 | **M13** ERP/GL + P&L + Xero + documents | ◐ | 04§Ledger, **16**, **17** | ✓ (see below) |
 | P3 | **M13b** Period close + reconciliation + Auditability Center | ⬜ | 14§5–6, **20** | — |
-| P3 | **M14** Companion app + desk + Horizons + reporting + HubSpot | ◐ | 08, **20**, **21** | desk slice |
+| P3 | **M14** Companion app + desk + Horizons + reporting + HubSpot | ◐ | 08, **20**, **21** | desk (no companion) |
 | X | **NFR / Security / Ops-DR** (cross-cutting, P1 launch-blocker) | ⬜ | **19** | — |
 
-> Every backing doc now exists (the deep-dives 09/11/12/13 and launch-blockers 16–21 were written in this
-> planning pass). There are no longer any "unwritten spec" blockers — only implementation.
+**M13 sub-status** (◐ ~70%):
+- ✅ Xero feed — swappable `AccountingConsumer`, ported from Athena (OAuth2 + PUT /Invoices, idempotent, local no-op); `order.invoiced` consumer.
+- ✅ Invoice on **dispatch** (ASC 606) + per-contact **credit terms → due date → cash waterfall**.
+- ✅ **Revenue + COGS recognition at dispatch** (consumer) + **P&L read-model** (`/finance/pnl`) — proved on the ledger.
+- ✅ **GL/AR trial balance off the ledger** (`GlProjectionService`, ties out Σdr==Σcr). *Route pending TB-in-API or a `gl_entry` Postgres projection.*
+- ⬜ **Document generation** (doc 17 — invoice/credit-note PDFs, per-locale templates, gapless numbering).
+- ⬜ **Real tax/customs engine** (doc 16 — currently a deterministic stub behind the `TaxQuote` contract, M12).
+
+> Every backing doc exists (deep-dives 09/11/12/13 + launch-blockers 16–21). No "unwritten spec" blockers —
+> only implementation. Open: companion-app Flutter-vs-React (M14); a **Finance desk tab** (P&L / cash waterfall /
+> credit-terms / GL) is API-ready but not yet built.
 
 ---
 
