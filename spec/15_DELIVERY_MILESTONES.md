@@ -19,7 +19,8 @@ http4s / tapir / doobie / Pulsar+avro4s / TigerBeetle / Keycloak / Nix / Consul)
 order / deal-desk / H6Q (demand matrix + flow + supply + shelf); a `consumer` process runs the outbox relay +
 Xero invoice + revenue-recognition consumers. Pushed to `github/main`.
 
-> **Last updated through M13-PnL + GL projection.** Update this register as each milestone lands.
+> **Last updated through M13: Xero + dispatch-invoice + credit terms + recognition/P&L + GL + document-gen core.**
+> Update this register as each milestone lands.
 
 | | Milestone | Status | Backing docs | Tests |
 |---|---|---|---|---|
@@ -47,7 +48,7 @@ Xero invoice + revenue-recognition consumers. Pushed to `github/main`.
 - ✅ Invoice on **dispatch** (ASC 606) + per-contact **credit terms → due date → cash waterfall**.
 - ✅ **Revenue + COGS recognition at dispatch** (consumer) + **P&L read-model** (`/finance/pnl`) — proved on the ledger.
 - ✅ **GL/AR trial balance off the ledger** (`GlProjectionService`, ties out Σdr==Σcr). *Route pending TB-in-API or a `gl_entry` Postgres projection.*
-- ⬜ **Document generation** (doc 17 — invoice/credit-note PDFs, per-locale templates, gapless numbering).
+- ◐ **Document generation** (doc 17) — core done: gapless/immutable numbering (`document_number_series/number`, void consumes a number, no reuse/gap), the `invoice` as a rendered projection of truth (totals read off `order_invoice` + conservation guard), template fallback resolution, deterministic `DocumentRenderer` port (same model → same sha), WORM `document` row + `document.issued`. *Pending: real PDF/A engine + object-store, credit-note/proforma/commercial-invoice/statement types, the event consumer + `/documents` REST + per-locale CJK templates.*
 - ⬜ **Real tax/customs engine** (doc 16 — currently a deterministic stub behind the `TaxQuote` contract, M12).
 
 > Every backing doc exists (deep-dives 09/11/12/13 + launch-blockers 16–21). No "unwritten spec" blockers —
