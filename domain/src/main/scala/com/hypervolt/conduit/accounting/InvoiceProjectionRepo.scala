@@ -11,7 +11,7 @@ import java.time.LocalDate
 // consumer can be idempotent on it. Also stamps the external id back onto order_invoice.
 object InvoiceProjectionRepo {
 
-  private final case class Head(orderId: java.util.UUID, billTo: String, currency: String)
+  private final case class Head(orderId: java.util.UUID, billTo: String, currency: String, dueDate: Option[LocalDate])
 
   def load(invoiceNo: String): ConnectionIO[Option[InvoiceRequest]] =
     head(invoiceNo).flatMap {
@@ -24,7 +24,7 @@ object InvoiceProjectionRepo {
               invoiceNo = invoiceNo,
               contactName = h.billTo,
               currency = h.currency,
-              dueDate = LocalDate.now(),
+              dueDate = h.dueDate.getOrElse(LocalDate.now()), // the contractual due date set at dispatch
               lines = ls
             )
           )
@@ -32,7 +32,7 @@ object InvoiceProjectionRepo {
     }
 
   private def head(invoiceNo: String): ConnectionIO[Option[Head]] =
-    sql"""SELECT o.id, COALESCE(p.legal_name, p.display_name), o.txn_currency
+    sql"""SELECT o.id, COALESCE(p.legal_name, p.display_name), o.txn_currency, i.due_date
           FROM order_invoice i JOIN "order" o ON o.id = i.order_id JOIN party p ON p.id = o.bill_to_party_id
           WHERE i.invoice_no = $invoiceNo"""
       .query[Head]

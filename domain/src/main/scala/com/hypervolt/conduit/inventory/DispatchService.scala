@@ -53,6 +53,23 @@ final class DispatchService[F[_]: Async](xa: Transactor[F]) {
                     WHERE dispatch_id = $dispatchId""".update.run
             _ <-
               sql"""UPDATE "order" SET dispatched_at = COALESCE(dispatched_at, now()), updated_at = now() WHERE id = $orderId""".update.run
+            // ASC 606: control transfers at dispatch, so the invoice is raised here (not on delivery). The due
+            // date is the bill-to contact's contractual terms (billing_profile.payment_terms_days → credit_profile
+            // → default 30) off today — this is what the cash waterfall buckets on.
+            invoiceNo <- sql"SELECT 'INV-' || nextval('invoice_no_seq')".query[String].unique
+            _ <-
+              sql"""INSERT INTO order_invoice (order_id, tranche_id, invoice_no, total_ex_vat, vat_total, total_inc_vat, due_date)
+                     SELECT o.id, $trancheId, $invoiceNo, o.subtotal_ex_vat, o.vat_total, o.total_inc_vat,
+                            (current_date + (COALESCE(
+                               (SELECT bp.payment_terms_days FROM billing_profile bp
+                                  WHERE bp.party_id = o.bill_to_party_id AND bp.status = 'active' ORDER BY bp.id LIMIT 1),
+                               (SELECT cp.terms_days FROM credit_profile cp
+                                  WHERE cp.party_id = o.bill_to_party_id ORDER BY cp.id LIMIT 1),
+                               30) || ' days')::interval)::date
+                     FROM "order" o WHERE o.id = $orderId""".update.run
+            _ <- trancheId.fold(Sync0)(t =>
+              sql"UPDATE delivery_tranche SET status = 'invoiced' WHERE id = $t".update.run.void
+            )
             _ <- OutboxRepo.append(
               event(
                 orderId,
@@ -60,10 +77,19 @@ final class DispatchService[F[_]: Async](xa: Transactor[F]) {
                 Json.obj("dispatch_no" -> dispatchNo.asJson, "tranche_id" -> trancheId.map(_.toString).asJson)
               )
             )
+            _ <- OutboxRepo.append(
+              event(
+                orderId,
+                "order.invoiced",
+                Json.obj("invoice_no" -> invoiceNo.asJson, "tranche_id" -> trancheId.map(_.toString).asJson)
+              )
+            )
           } yield dispatchId.asRight[String]
       }
       .transact(xa)
 
+  // Delivery confirms arrival (the invoice was already raised at dispatch, ASC 606). Marks the tranche delivered
+  // and emits dispatch.delivered (consumed downstream by P&L / proof-of-delivery).
   def deliver(dispatchId: UUID): F[Either[String, String]] =
     sql"SELECT order_id, tranche_id FROM dispatch WHERE id = $dispatchId"
       .query[(UUID, Option[UUID])]
@@ -76,13 +102,6 @@ final class DispatchService[F[_]: Async](xa: Transactor[F]) {
             _ <- tranche.fold(Sync0)(t =>
               sql"UPDATE delivery_tranche SET status = 'delivered' WHERE id = $t".update.run.void
             )
-            invoiceNo <- sql"SELECT 'INV-' || nextval('invoice_no_seq')".query[String].unique
-            _ <-
-              sql"""INSERT INTO order_invoice (order_id, tranche_id, invoice_no, total_ex_vat, vat_total, total_inc_vat)
-                     SELECT $orderId, $tranche, $invoiceNo, subtotal_ex_vat, vat_total, total_inc_vat FROM "order" WHERE id = $orderId""".update.run
-            _ <- tranche.fold(Sync0)(t =>
-              sql"UPDATE delivery_tranche SET status = 'invoiced' WHERE id = $t".update.run.void
-            )
             _ <- OutboxRepo.append(
               event(
                 orderId,
@@ -90,14 +109,7 @@ final class DispatchService[F[_]: Async](xa: Transactor[F]) {
                 Json.obj("dispatch_id" -> dispatchId.toString.asJson, "tranche_id" -> tranche.map(_.toString).asJson)
               )
             )
-            _ <- OutboxRepo.append(
-              event(
-                orderId,
-                "order.invoiced",
-                Json.obj("invoice_no" -> invoiceNo.asJson, "tranche_id" -> tranche.map(_.toString).asJson)
-              )
-            )
-          } yield invoiceNo.asRight[String]
+          } yield "delivered".asRight[String]
       }
       .transact(xa)
 

@@ -140,7 +140,9 @@ object InventoryIntegrationSuite extends IOSuite {
           .unique
           .transact(xa)
     } yield expect(a1.allocated == 250) and expect(a2.allocated == 250) and
-      expect(d1.isRight) and expect(t1status == "invoiced") and expect(t2status == "allocated") and
+      // invoice is raised at DISPATCH (ASC 606), so the tranche reaches 'invoiced' then 'delivered' on deliver;
+      // exactly one invoice exists, and the undispatched tranche is still 'allocated'.
+      expect(d1.isRight) and expect(t1status == "delivered") and expect(t2status == "allocated") and
       expect(invoices == 1L) and expect(delivered == 1L)
   }
 }
