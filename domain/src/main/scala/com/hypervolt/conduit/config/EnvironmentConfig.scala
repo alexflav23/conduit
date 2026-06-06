@@ -12,6 +12,8 @@ final case class HttpConfig(host: String, port: Int)
 
 final case class PulsarConfig(serviceUrl: String)
 
+final case class TigerBeetleConfig(cluster: Long, addresses: String)
+
 // Xero accounting consumer (doc 13/07 M13). client-credentials OAuth2. `enabled` is false when the client id is
 // missing/placeholder → the consumer wires a local no-op so dev/CI never call Xero.
 final case class XeroConfig(
@@ -32,6 +34,7 @@ final case class AppConfig(
     http: HttpConfig,
     adminPort: Int,
     pulsar: PulsarConfig,
+    tigerbeetle: TigerBeetleConfig,
     xero: XeroConfig
 )
 
@@ -46,6 +49,7 @@ object EnvironmentConfig {
     val http   = hv.getConfig("http")
     val admin  = hv.getConfig("admin")
     val pulsar = hv.getConfig("pulsar")
+    val tb     = hv.getConfig("tigerbeetle")
     val xero   = hv.getConfig("xero")
     AppConfig(
       env = hv.getString("env"),
@@ -59,6 +63,7 @@ object EnvironmentConfig {
       http = HttpConfig(http.getString("host"), http.getInt("port")),
       adminPort = admin.getInt("port"),
       pulsar = PulsarConfig(pulsar.getString("service_url")),
+      tigerbeetle = TigerBeetleConfig(tb.getLong("cluster"), tb.getString("addresses")),
       xero = XeroConfig(
         clientId = xero.getString("client_id"),
         clientSecret = xero.getString("client_secret"),

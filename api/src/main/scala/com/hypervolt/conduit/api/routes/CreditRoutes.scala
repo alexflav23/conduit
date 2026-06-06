@@ -8,12 +8,14 @@ import com.hypervolt.conduit.api.auth.AuthService
 import com.hypervolt.conduit.api.auth.Secured
 import com.hypervolt.conduit.credit.CashWaterfallRepo
 import com.hypervolt.conduit.credit.CreditTermsService
+import com.hypervolt.conduit.revenue.RevenueQueryRepo
 import doobie.implicits._
 import doobie.util.transactor.Transactor
 import io.circe.Codec
 import io.circe.Json
 import io.circe.generic.semiauto.deriveCodec
 import io.circe.syntax._
+import java.time.LocalDate
 import java.util.UUID
 import org.http4s.HttpRoutes
 import scala.util.Try
@@ -36,6 +38,9 @@ final class CreditRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
   private def err(s: StatusCode, c: String, m: String): (StatusCode, ApiError) = (s, ApiError(c, m))
   private def uuid(s: String): Either[(StatusCode, ApiError), UUID] =
     Try(UUID.fromString(s)).toEither.leftMap(_ => err(StatusCode.BadRequest, "bad_request", s"invalid id: $s"))
+  private def month(s: String): Either[(StatusCode, ApiError), LocalDate] =
+    Try(LocalDate.parse(if (s.length == 7) s + "-01" else s)).toEither
+      .leftMap(_ => err(StatusCode.BadRequest, "bad_request", s"invalid period: $s"))
 
   private val getTerms =
     base.get
@@ -99,6 +104,25 @@ final class CreditRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
           else CashWaterfallRepo.waterfall(ccy).transact(xa).map(rows => Right(Json.fromValues(rows)))
       )
 
+  // ASC-606 P&L for a market/month: matched revenue + COGS recognised on dispatch, off the immutable ledger
+  // (the revenue_recognition rows are written atomically with the TigerBeetle post, so this is proof not assertion).
+  private val pnl =
+    base.get
+      .in("api" / "v1" / "finance" / "pnl")
+      .in(query[String]("market"))
+      .in(query[String]("period"))
+      .out(jsonBody[Json])
+      .serverLogic(principal => {
+        case (marketStr, periodStr) =>
+          if (!PolicyEngine.hasPermission(principal, Action.View, "credit_profile"))
+            Async[F].pure(Left(err(StatusCode.Forbidden, "forbidden", "requires view:credit_profile")))
+          else
+            (uuid(marketStr), month(periodStr)).tupled match {
+              case Left(e)                 => Async[F].pure(Left(e))
+              case Right((market, period)) => RevenueQueryRepo.totals(market, period).transact(xa).map(Right(_))
+            }
+      })
+
   val routes: HttpRoutes[F] =
-    Http4sServerInterpreter[F]().toRoutes(List(getTerms, setTerms, cashWaterfall))
+    Http4sServerInterpreter[F]().toRoutes(List(getTerms, setTerms, cashWaterfall, pnl))
 }

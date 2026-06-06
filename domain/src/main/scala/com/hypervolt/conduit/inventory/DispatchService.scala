@@ -74,7 +74,11 @@ final class DispatchService[F[_]: Async](xa: Transactor[F]) {
               event(
                 orderId,
                 "dispatch.created",
-                Json.obj("dispatch_no" -> dispatchNo.asJson, "tranche_id" -> trancheId.map(_.toString).asJson)
+                Json.obj(
+                  "dispatch_id" -> dispatchId.toString.asJson, // ASC 606: recognise revenue + COGS at dispatch
+                  "dispatch_no" -> dispatchNo.asJson,
+                  "tranche_id"  -> trancheId.map(_.toString).asJson
+                )
               )
             )
             _ <- OutboxRepo.append(
