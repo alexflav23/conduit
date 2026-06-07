@@ -59,8 +59,9 @@ Xero invoice + revenue-recognition consumers. Pushed to `github/main`.
 - ⬜ Auditability **Center UI** (desk) + the remaining reconciliations (GL↔Xero, inventory↔counts) + REST + evidence export.
 
 > Every backing doc exists (deep-dives 09/11/12/13 + launch-blockers 16–21). No "unwritten spec" blockers —
-> only implementation. Open: companion-app Flutter-vs-React (M14); a **Finance desk tab** (P&L / cash waterfall /
-> credit-terms / GL) is API-ready but not yet built.
+> only implementation. Open: companion-app Flutter-vs-React (M14). **Finance desk tab built** (P&L + cash
+> waterfall + credit-terms admin; Playwright + headless-Chrome verified); the Auditability Center UI (GL /
+> close board / reconciliation / lineage) is still API-ready-but-unbuilt.
 
 ---
 

@@ -103,6 +103,9 @@ BEGIN
     INSERT INTO revenue_recognition (dispatch_id, order_id, invoice_no, currency, revenue_ex_vat, vat, cogs, gross_margin, ar_transfer_id, vat_transfer_id, cogs_transfer_id, recognized_at)
       VALUES (dsp, ord, 'INV-FLOW', 'GBP', 25000, 5000, 12000, 13000,
               123456789012345678901234567890, 223456789012345678901234567890, 323456789012345678901234567890, '2026-09-15');
+    -- an open invoice with a contractual due date so the Finance cash waterfall has a bucket to show
+    INSERT INTO order_invoice (order_id, invoice_no, total_ex_vat, vat_total, total_inc_vat, due_date, status)
+      VALUES (ord, 'INV-FLOW', 25000, 5000, 30000, '2026-10-10', 'open');
   END IF;
 END $$;
 

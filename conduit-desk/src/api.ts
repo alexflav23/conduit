@@ -145,3 +145,27 @@ export async function placeOrder(token: string, lines: QuoteLine[]) {
     lines,
   });
 }
+
+// ----- M13 finance read-models (P&L / cash waterfall / credit terms) -----
+
+export function getPnl(token: string, market: string, period: string) {
+  return call(`/api/v1/finance/pnl?market=${market}&period=${period}`, token, 'GET');
+}
+
+export function getCashWaterfall(token: string, currency?: string) {
+  const q = currency ? `?currency=${currency}` : '';
+  return call(`/api/v1/finance/cash-waterfall${q}`, token, 'GET');
+}
+
+export function getCreditTerms(token: string, partyId: string) {
+  return call(`/api/v1/parties/${partyId}/credit-terms`, token, 'GET');
+}
+
+export function setCreditTerms(token: string, partyId: string, paymentTermsDays: number, creditLimit?: number) {
+  return call(`/api/v1/parties/${partyId}/credit-terms`, token, 'PUT', {
+    payment_terms_days: paymentTermsDays,
+    credit_limit: creditLimit,
+  });
+}
+
+export const FINANCE_MARKET = DEMO_MARKET;
