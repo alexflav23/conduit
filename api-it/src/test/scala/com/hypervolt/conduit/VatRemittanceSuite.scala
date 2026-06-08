@@ -8,6 +8,7 @@ import com.hypervolt.conduit.batch.NewBatch
 import com.hypervolt.conduit.inventory.DispatchLineInput
 import com.hypervolt.conduit.inventory.DispatchService
 import com.hypervolt.conduit.inventory.InventoryRepo
+import com.hypervolt.conduit.close.ControlRunner
 import com.hypervolt.conduit.ledger.TigerBeetleLedger
 import com.hypervolt.conduit.revenue.RevenueRecognitionService
 import com.hypervolt.conduit.tax.VatExposureRepo
@@ -100,10 +101,11 @@ object VatRemittanceSuite extends IOSuite {
             .transact(xa)
         before <- VatExposureRepo.exposure(Some(e), None).transact(xa)
         // remit £50 of the £200 GB VAT
-        _      <- remit.remit(e, "GB", period, BigDecimal("50.00"), "GBP", Some("HMRC-REF"), "test").map(_.toOption.get)
-        after  <- VatExposureRepo.exposure(Some(e), None).transact(xa)
-        recon  <- remit.reconcile(e)
-        vatBal <- ledger.balance(rev.vatAcc(e))
+        _       <- remit.remit(e, "GB", period, BigDecimal("50.00"), "GBP", Some("HMRC-REF"), "test").map(_.toOption.get)
+        after   <- VatExposureRepo.exposure(Some(e), None).transact(xa)
+        recon   <- remit.reconcile(e)
+        vatBal  <- ledger.balance(rev.vatAcc(e))
+        control <- new ControlRunner[IO](xa).run("CTRL-VAT-NO-OVER-REMIT", None).map(_.toOption.get)
       } yield {
         val gbBefore =
           before.find(_.hcursor.get[String]("jurisdiction").toOption.contains("GB")).getOrElse(io.circe.Json.Null)
@@ -117,7 +119,8 @@ object VatRemittanceSuite extends IOSuite {
           expect(recon.hcursor.get[Boolean]("matched").toOption.contains(true)) and
           expect(recon.hcursor.get[BigDecimal]("projected_outstanding").toOption.contains(BigDecimal("150.00"))) and
           expect(recon.hcursor.get[BigDecimal]("ledger_vat_balance").toOption.contains(BigDecimal("150.00"))) and
-          expect(vatBal.creditsPosted - vatBal.debitsPosted == BigInt(15000)) // £150 net on the ledger
+          expect(vatBal.creditsPosted - vatBal.debitsPosted == BigInt(15000)) and // £150 net on the ledger
+          expect(control.result == "pass")                                        // remitted £50 ≤ accrued £200 — not over-remitted
       }
   }
 }
