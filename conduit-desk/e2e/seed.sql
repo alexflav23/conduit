@@ -162,3 +162,36 @@ BEGIN
              ('tb_vs_gl',        per, 30000, 30000, 'GBP', 0, 'matched');
   END IF;
 END $$;
+
+-- M13 Documents desk: a finalised invoice document for INV-FLOW so the Documents tab lists it, plus finance
+-- void/refund rights (edit + approve on order) so the desk void action returns 202 in e2e.
+DO $$
+DECLARE ent uuid; ord uuid; inv uuid; tmpl uuid; tmplv int;
+BEGIN
+  SELECT id INTO ord FROM "order" WHERE order_no = 'ORD-FLOW';
+  SELECT id INTO inv FROM order_invoice WHERE invoice_no = 'INV-FLOW' ORDER BY issued_at DESC LIMIT 1;
+  SELECT id, version INTO tmpl, tmplv FROM document_template
+    WHERE document_type = 'invoice' AND status = 'active'
+    ORDER BY (jurisdiction IS NOT NULL) DESC, version DESC LIMIT 1;
+  IF NOT EXISTS (SELECT 1 FROM entity WHERE name = 'HV UK Demo') THEN
+    INSERT INTO entity (name, jurisdiction, functional_currency, entity_type) VALUES ('HV UK Demo','GB','GBP','operating');
+  END IF;
+  SELECT id INTO ent FROM entity WHERE name = 'HV UK Demo' LIMIT 1;
+  IF inv IS NOT NULL AND tmpl IS NOT NULL
+     AND NOT EXISTS (SELECT 1 FROM document WHERE order_invoice_id = inv AND document_type = 'invoice') THEN
+    INSERT INTO document (document_type, entity_id, formatted_number, order_invoice_id, order_id, locale, jurisdiction,
+                          template_id, template_version, currency, total_amount, render_model, status, storage_uri,
+                          content_sha256, issued_at)
+      VALUES ('invoice', ent, 'HV-UK-INV-2026-000001', inv, ord, 'en', 'GB', tmpl, tmplv, 'GBP', 30000,
+              '{}'::jsonb, 'finalised', 'mem://documents/seed-inv-flow.pdf', 'seedsha', now());
+  END IF;
+END $$;
+
+INSERT INTO permission (role_id, object_type, action, section, viewable_layers, editable_layers, data_breadth)
+SELECT r.id, 'order', 'edit', NULL, '{}', '{}', 'all' FROM role r
+WHERE r.name = 'finance'
+  AND NOT EXISTS (SELECT 1 FROM permission p WHERE p.role_id = r.id AND p.object_type='order' AND p.action='edit' AND p.section IS NULL);
+INSERT INTO permission (role_id, object_type, action, section, viewable_layers, editable_layers, data_breadth)
+SELECT r.id, 'order', 'approve', NULL, '{}', '{}', 'all' FROM role r
+WHERE r.name = 'finance'
+  AND NOT EXISTS (SELECT 1 FROM permission p WHERE p.role_id = r.id AND p.object_type='order' AND p.action='approve' AND p.section IS NULL);

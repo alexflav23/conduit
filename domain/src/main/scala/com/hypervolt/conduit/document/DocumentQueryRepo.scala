@@ -14,33 +14,22 @@ object DocumentQueryRepo {
 
   private val cols =
     fr"""d.id, d.document_type, d.formatted_number, d.order_id, d.order_invoice_id, d.currency, d.total_amount,
-         d.status, d.content_sha256, d.issued_at"""
+         d.status, d.content_sha256, d.issued_at, d.voided_at, d.corrects_document_id"""
 
-  private def toJson(
-      r: (
-          UUID,
-          String,
-          Option[String],
-          Option[UUID],
-          Option[UUID],
-          Option[String],
-          Option[BigDecimal],
-          String,
-          Option[String],
-          Option[java.time.Instant]
-      )
-  ): Json =
+  private def toJson(r: Row): Json =
     Json.obj(
-      "id"               -> r._1.toString.asJson,
-      "document_type"    -> r._2.asJson,
-      "formatted_number" -> r._3.asJson,
-      "order_id"         -> r._4.map(_.toString).asJson,
-      "order_invoice_id" -> r._5.map(_.toString).asJson,
-      "currency"         -> r._6.asJson,
-      "total_amount"     -> r._7.asJson,
-      "status"           -> r._8.asJson,
-      "content_sha256"   -> r._9.asJson,
-      "issued_at"        -> r._10.map(_.toString).asJson
+      "id"                   -> r._1.toString.asJson,
+      "document_type"        -> r._2.asJson,
+      "formatted_number"     -> r._3.asJson,
+      "order_id"             -> r._4.map(_.toString).asJson,
+      "order_invoice_id"     -> r._5.map(_.toString).asJson,
+      "currency"             -> r._6.asJson,
+      "total_amount"         -> r._7.asJson,
+      "status"               -> r._8.asJson,
+      "content_sha256"       -> r._9.asJson,
+      "issued_at"            -> r._10.map(_.toString).asJson,
+      "voided_at"            -> r._11.map(_.toString).asJson,
+      "corrects_document_id" -> r._12.map(_.toString).asJson
     )
 
   private type Row =
@@ -54,7 +43,9 @@ object DocumentQueryRepo {
         Option[BigDecimal],
         String,
         Option[String],
-        Option[java.time.Instant]
+        Option[java.time.Instant],
+        Option[java.time.Instant],
+        Option[UUID]
     )
 
   def listForOrder(orderId: UUID): ConnectionIO[List[Json]] =

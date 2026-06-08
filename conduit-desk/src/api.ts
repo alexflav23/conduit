@@ -193,3 +193,22 @@ export function runControl(token: string, code: string) {
 export function getLineage(token: string, invoiceNo: string) {
   return call(`/api/v1/finance/lineage?invoice_no=${invoiceNo}`, token, 'GET');
 }
+
+// ----- M13 documents + invoice invalidation (void / credit note / refund) -----
+
+export function getDocuments(token: string, params: { invoiceNo?: string; orderId?: string }) {
+  const q = params.invoiceNo
+    ? `invoice_no=${encodeURIComponent(params.invoiceNo)}`
+    : `order_id=${encodeURIComponent(params.orderId ?? '')}`;
+  return call(`/api/v1/documents?${q}`, token, 'GET');
+}
+
+// Direct link to the PDF bytes (served from the WORM store). Bearer auth is applied by the browser fetch when
+// rendered as a link with the token in the path is NOT used — finance opens it via the authenticated client.
+export function documentPdfUrl(id: string): string {
+  return `/api/v1/documents/${id}/pdf`;
+}
+
+export function voidInvoice(token: string, invoiceNo: string, kind: string, reason: string) {
+  return call(`/api/v1/invoices/${encodeURIComponent(invoiceNo)}/void`, token, 'POST', { kind, reason });
+}
