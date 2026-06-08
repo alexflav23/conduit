@@ -43,7 +43,7 @@ Xero invoice + revenue-recognition consumers. Pushed to `github/main`.
 | P3 | **M14** Companion app + desk + Horizons + reporting + HubSpot | ◐ | 08, **20**, **21** | desk (no companion) |
 | X | **NFR / Security / Ops-DR** (cross-cutting, P1 launch-blocker) | ⬜ | **19** | — |
 
-**M13 sub-status** (◐ ~95%):
+**M13 sub-status** (◐ ~97% — invalidation + the Order Collection Ledger complete; tail = extra doc types, CJK fonts, real tax engine):
 - ✅ Xero feed — swappable `AccountingConsumer`, ported from Athena (OAuth2 + PUT /Invoices, idempotent, local no-op); `order.invoiced` consumer.
 - ✅ Invoice on **dispatch** (ASC 606) + per-contact **credit terms → due date → cash waterfall**.
 - ✅ **Revenue + COGS recognition at dispatch** (consumer) + **P&L read-model** (`/finance/pnl`) — proved on the ledger.
