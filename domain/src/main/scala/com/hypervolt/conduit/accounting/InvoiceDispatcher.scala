@@ -25,6 +25,19 @@ final class InvoiceDispatcher[F[_]: Async](
   def handle(eventId: UUID, invoiceNo: String): F[Boolean] =
     idem.process(eventId)(push(invoiceNo))
 
+  // invoice.voided → void the invoice in the external system, so the ERP stops counting/dunning it (doc 13 §void).
+  // Idempotent per event_id; uses the stamped external id when present, else the Conduit invoice_no.
+  def handleVoid(eventId: UUID, invoiceNo: String, reason: String): F[Boolean] =
+    idem.process(eventId)(voidExternal(invoiceNo, reason))
+
+  private def voidExternal(invoiceNo: String, reason: String): F[Unit] =
+    InvoiceProjectionRepo.externalId(invoiceNo).transact(xa).flatMap { ext =>
+      consumer.voidInvoice(ext.getOrElse(invoiceNo), invoiceNo, reason).flatMap {
+        case Right(_)  => logger.info(s"invoice $invoiceNo voided in the accounting system")
+        case Left(msg) => Async[F].raiseError(new RuntimeException(s"accounting void failed for $invoiceNo: $msg"))
+      }
+    }
+
   private def push(invoiceNo: String): F[Unit] =
     InvoiceProjectionRepo.load(invoiceNo).transact(xa).flatMap {
       case None =>

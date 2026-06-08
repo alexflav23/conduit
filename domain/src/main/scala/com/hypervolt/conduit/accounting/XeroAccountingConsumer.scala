@@ -52,6 +52,10 @@ object XeroAccountingConsumer {
   private implicit val resDec: Decoder[XInvoiceResult]     = deriveDecoder
   private implicit val ressDec: Decoder[XInvoicesResponse] = deriveDecoder
 
+  // Status-only update to void an invoice (Xero: POST /Invoices with the InvoiceID + Status VOIDED).
+  private final case class XVoid(InvoiceID: String, Status: String)
+  private implicit val voidEnc: Encoder[XVoid] = deriveEncoder
+
   // Build the consumer. If Xero isn't configured (no client id), wire a local no-op so dev/CI never call out.
   def build[F[_]: Async](client: Client[F], cfg: XeroConfig): F[AccountingConsumer[F]] = {
     val logger = Slf4jLogger.getLogger[F]
@@ -60,6 +64,8 @@ object XeroAccountingConsumer {
         new AccountingConsumer[F] {
           def createInvoice(req: InvoiceRequest): F[Either[String, String]] =
             logger.info(s"[xero no-op] would create invoice ${req.invoiceNo}").as(Right(s"NOOP-${req.invoiceNo}"))
+          def voidInvoice(externalRef: String, invoiceNo: String, reason: String): F[Either[String, Unit]] =
+            logger.info(s"[xero no-op] would void invoice $invoiceNo ($reason)").as(Right(()))
         }
       }
     else
@@ -115,6 +121,21 @@ object XeroAccountingConsumer {
           .expect[XInvoicesResponse](request)(jsonOf[F, XInvoicesResponse])
           .map(_.Invoices.headOption.map(_.InvoiceID).toRight(s"Xero returned no invoice for ${req.invoiceNo}"))
           .handleError(t => Left(s"Xero invoice push failed for ${req.invoiceNo}: ${t.getMessage}"))
+      }
+
+    def voidInvoice(externalRef: String, invoiceNo: String, reason: String): F[Either[String, Unit]] =
+      freshToken.flatMap { token =>
+        val body = XVoid(InvoiceID = externalRef, Status = "VOIDED")
+        val baseReq = Request[F](method = Method.POST, uri = apiUri / "Invoices")
+          .withEntity(body.asJson)
+          .putHeaders(Authorization(Credentials.Token(AuthScheme.Bearer, token)), Accept(MediaType.application.json))
+        val request = cfg.tenantId.fold(baseReq)(t =>
+          baseReq.putHeaders(Header.Raw(org.typelevel.ci.CIString("Xero-tenant-id"), t))
+        )
+        client
+          .expect[XInvoicesResponse](request)(jsonOf[F, XInvoicesResponse])
+          .as(Right(()): Either[String, Unit])
+          .handleError(t => Left(s"Xero void failed for $invoiceNo: ${t.getMessage}"))
       }
   }
 }

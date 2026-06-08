@@ -27,4 +27,10 @@ final case class InvoiceRequest(
 trait AccountingConsumer[F[_]] {
   // Create (idempotently) the invoice in the external system; Right(externalInvoiceId) on success.
   def createInvoice(req: InvoiceRequest): F[Either[String, String]]
+
+  // Invalidate a previously-created invoice in the external system (doc 13 §void). `externalRef` is the id the
+  // external system returned at create time (falls back to the Conduit invoice_no). Idempotent: voiding an
+  // already-void invoice is a success. The canonical accounting record is the credit note Conduit mints itself;
+  // this keeps the ERP's own ledger in step so it stops dunning/counting the invoice.
+  def voidInvoice(externalRef: String, invoiceNo: String, reason: String): F[Either[String, Unit]]
 }

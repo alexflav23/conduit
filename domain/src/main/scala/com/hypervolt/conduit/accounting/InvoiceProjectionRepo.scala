@@ -49,4 +49,11 @@ object InvoiceProjectionRepo {
 
   def setExternalId(invoiceNo: String, externalId: String): ConnectionIO[Int] =
     sql"UPDATE order_invoice SET xero_invoice_id = $externalId WHERE invoice_no = $invoiceNo".update.run
+
+  // The external (Xero) invoice id stamped at create time, if any — the handle to void it downstream.
+  def externalId(invoiceNo: String): ConnectionIO[Option[String]] =
+    sql"SELECT xero_invoice_id FROM order_invoice WHERE invoice_no = $invoiceNo"
+      .query[Option[String]]
+      .option
+      .map(_.flatten)
 }

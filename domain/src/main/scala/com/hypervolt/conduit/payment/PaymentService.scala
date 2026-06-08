@@ -135,6 +135,46 @@ final class PaymentService[F[_]: Async](xa: Transactor[F], ledger: TigerBeetleLe
         ledger.createAccounts(accounts) *> ledger.postTransfers(transfers).as(().asRight[String])
     }
 
+  // Refund (doc 13 §void): money goes back to the customer — the reverse of a settlement. DR AR:<bill_to> /
+  // CR cash. Recorded as a negative payment so AR-aging/DSO reflect it; idempotent on the refund ref. Often paired
+  // with an invoice void (kind=refund), but standalone partial refunds are supported too.
+  def refund(
+      invoiceNo: String,
+      amount: BigDecimal,
+      method: String,
+      externalRef: String
+  ): F[Either[String, PaymentResult]] = {
+    val pid = paymentId(Some(s"refund:$externalRef"))
+    existing(pid).transact(xa).flatMap {
+      case Some(r)             => r.asRight[String].pure[F] // idempotent: this refund already applied
+      case None if amount <= 0 => "refund amount must be > 0".asLeft[PaymentResult].pure[F]
+      case None =>
+        head(invoiceNo).transact(xa).flatMap {
+          case None => s"unknown invoice $invoiceNo".asLeft[PaymentResult].pure[F]
+          case Some(h) =>
+            Currency.fromCode(h.currency) match {
+              case None => s"unknown currency ${h.currency}".asLeft[PaymentResult].pure[F]
+              case Some(ccy) =>
+                val entity   = h.entity.getOrElse(zero)
+                val kind     = accountKind(method)
+                val ledgerId = Ledgers.forCurrency(ccy)
+                val cashAcc  = cashAccount(kind, entity)
+                val arAcc    = ar(h.billTo)
+                val tId      = TbIds.transferId(pid, 0)
+                val accounts = List(
+                  LedgerAccount(cashAcc, ledgerId, cashCode(kind)),
+                  LedgerAccount(arAcc, ledgerId, LedgerAccountCode.Ar)
+                )
+                // reverse of settlement: DR AR / CR cash
+                val transfer = LedgerTransfer(tId, arAcc, cashAcc, minor(amount), ledgerId, LedgerTransferCode.Reversal)
+                ledger.createAccounts(accounts) *>
+                  ledger.postTransfers(List(transfer)) *>
+                  recordRefund(pid, invoiceNo, h, amount, kind, externalRef, tId).transact(xa)
+            }
+        }
+    }
+  }
+
   // ----- persistence -----
 
   private def existing(pid: UUID): ConnectionIO[Option[PaymentResult]] =
@@ -180,6 +220,35 @@ final class PaymentService[F[_]: Async](xa: Transactor[F], ledger: TigerBeetleLe
                  WHERE id = ${h.invoiceId}""".update.run
       _ <- OutboxRepo.append(event(pid, h, amount, newStatus, method))
     } yield PaymentResult(pid, invoiceNo, amount, newStatus, tId).asRight[String]
+
+  // A refund is a NEGATIVE payment: it lowers the allocated total so AR-aging/DSO reflect the money returned.
+  // The status recomputes from allocations, but never clobbers a 'void' invoice.
+  private def recordRefund(
+      pid: UUID,
+      invoiceNo: String,
+      h: InvHead,
+      amount: BigDecimal,
+      kind: String,
+      externalRef: String,
+      tId: BigInt
+  ): ConnectionIO[Either[String, PaymentResult]] =
+    for {
+      _ <-
+        sql"""INSERT INTO payment (id, entity_id, bill_to_party_id, currency, amount, method, account_kind, external_ref, tb_transfer_id, status)
+                 VALUES ($pid, ${h.entity}, ${h.billTo}, ${h.currency}, ${-amount}, 'refund', $kind, ${s"refund:$externalRef"}, ${tId.toString}::numeric, 'refunded')""".update.run
+      _ <-
+        sql"INSERT INTO payment_allocation (payment_id, order_invoice_id, amount) VALUES ($pid, ${h.invoiceId}, ${-amount})".update.run
+      allocated <-
+        sql"SELECT COALESCE(SUM(amount),0) FROM payment_allocation WHERE order_invoice_id = ${h.invoiceId}"
+          .query[BigDecimal]
+          .unique
+      newStatus = if (allocated >= h.total) "paid" else if (allocated <= 0) "open" else "part_paid"
+      _ <- sql"""UPDATE order_invoice
+                 SET status = CASE WHEN status = 'void' THEN 'void' ELSE $newStatus END,
+                     paid_at = CASE WHEN $newStatus = 'paid' THEN paid_at ELSE NULL END
+                 WHERE id = ${h.invoiceId}""".update.run
+      _ <- OutboxRepo.append(event(pid, h, -amount, newStatus, "refund"))
+    } yield PaymentResult(pid, invoiceNo, -amount, newStatus, tId).asRight[String]
 
   private def event(pid: UUID, h: InvHead, amount: BigDecimal, status: String, method: String): OutboxEvent =
     OutboxEvent(

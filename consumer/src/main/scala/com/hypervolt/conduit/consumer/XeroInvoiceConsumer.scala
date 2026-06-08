@@ -50,11 +50,18 @@ final class XeroInvoiceConsumer[F[_]: Async](client: PulsarClient, dispatcher: I
     }
 
   private def handle(env: EventEnvelope): F[Unit] =
-    XeroInvoiceConsumer.extractInvoiceNo(env) match {
-      case None if env.event_type == "order.invoiced" =>
-        logger.warn(s"order.invoiced ${env.event_id} had no invoice_no — skipping")
-      case None        => Async[F].unit // not an invoice event
-      case Some(invNo) => dispatcher.handle(UUID.fromString(env.event_id), invNo).void
+    env.event_type match {
+      case "order.invoiced" =>
+        XeroInvoiceConsumer.extractInvoiceNo(env) match {
+          case None        => logger.warn(s"order.invoiced ${env.event_id} had no invoice_no — skipping")
+          case Some(invNo) => dispatcher.handle(UUID.fromString(env.event_id), invNo).void
+        }
+      case "invoice.voided" =>
+        XeroInvoiceConsumer.extractVoid(env) match {
+          case None                  => logger.warn(s"invoice.voided ${env.event_id} had no invoice_no — skipping")
+          case Some((invNo, reason)) => dispatcher.handleVoid(UUID.fromString(env.event_id), invNo, reason).void
+        }
+      case _ => Async[F].unit // not an invoice event
     }
 }
 
@@ -66,4 +73,16 @@ object XeroInvoiceConsumer {
       parse(new String(env.payload, StandardCharsets.UTF_8)).toOption
         .flatMap(_.hcursor.get[String]("invoice_no").toOption)
         .filter(_.nonEmpty)
+
+  // Pure: invoice.voided → (invoice_no, reason) so the ERP invoice is voided downstream.
+  def extractVoid(env: EventEnvelope): Option[(String, String)] =
+    if (env.event_type != "invoice.voided") None
+    else
+      parse(new String(env.payload, StandardCharsets.UTF_8)).toOption.flatMap { j =>
+        val c = j.hcursor
+        c.get[String]("invoice_no")
+          .toOption
+          .filter(_.nonEmpty)
+          .map(no => (no, c.get[String]("reason").toOption.getOrElse("")))
+      }
 }

@@ -23,7 +23,12 @@ object InvoiceDispatcherSuite extends IOSuite {
 
   // A fake ERP that records what it was asked to create and returns a deterministic external id.
   private def fakeConsumer(seen: Ref[IO, List[InvoiceRequest]]): AccountingConsumer[IO] =
-    (req: InvoiceRequest) => seen.update(req :: _).as(Right(s"XERO-${req.invoiceNo}"))
+    new AccountingConsumer[IO] {
+      def createInvoice(req: InvoiceRequest): IO[Either[String, String]] =
+        seen.update(req :: _).as(Right(s"XERO-${req.invoiceNo}"))
+      def voidInvoice(externalRef: String, invoiceNo: String, reason: String): IO[Either[String, Unit]] =
+        IO.pure(Right(()))
+    }
 
   private def setup(xa: HikariTransactor[IO], invoiceNo: String): IO[Unit] =
     (for {
