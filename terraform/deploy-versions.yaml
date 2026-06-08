@@ -1,0 +1,10 @@
+# Pinned package versions per environment (mirrors athena/terraform/deploy-versions.yaml).
+# Empty string = use the floating version default for the environment (staging).
+# The CI publish stage writes the built 8-char git short SHA here on a protected branch.
+staging:
+  conduit: ""
+  conduit-consumer: ""
+
+prod:
+  conduit: &conduit-prod ""
+  conduit-consumer: *conduit-prod
