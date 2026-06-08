@@ -49,3 +49,23 @@ test('Tax: maker-checker — tax_specialist proposes a rate (draft), cannot acti
   await page.getByTestId('tax-activate').first().click();
   await expect(page.getByTestId('tax-propose-status')).toContainText('activated');
 });
+
+test('Tax: the seller-of-record entity map lists the active GB entity; VAT exposure board + remittance request work', async ({ page }) => {
+  await page.goto('/');
+  await page.getByTestId('token').fill('dev:tax-e2e');
+  await page.getByTestId('tab-tax').click();
+
+  // the entity map: GB → the active operating entity (seeded)
+  await page.getByTestId('tax-se-load').click();
+  await expect(page.getByTestId('tax-se-row').first()).toContainText('GB');
+
+  // the VAT exposure board renders (per entity × jurisdiction × period)
+  await page.getByTestId('tax-exposure-load').click();
+  await expect(page.getByTestId('tax-exposure-table')).toBeVisible();
+
+  // requesting a remittance is accepted (the consumer performs the ledger depletion off the API)
+  await page.getByTestId('tax-rm-amount').fill('50.00');
+  await page.getByTestId('tax-rm-ref').fill('HMRC-Q2');
+  await page.getByTestId('tax-rm-submit').click();
+  await expect(page.getByTestId('tax-rm-status')).toContainText('requested');
+});

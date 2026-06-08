@@ -42,10 +42,23 @@ final class VatRemittanceService[F[_]: Async](xa: Transactor[F], ledger: TigerBe
       reference: Option[String],
       actor: String
   ): F[Either[String, UUID]] =
+    remitWithId(UUID.randomUUID(), entity, jurisdiction, periodKey, amount, currency, reference, actor)
+
+  // Idempotent on the remittance id: the consumer derives it from the request event id, so an at-least-once
+  // redelivery is a no-op (ON CONFLICT DO NOTHING + deterministic TB transfer id).
+  def remitWithId(
+      id: UUID,
+      entity: UUID,
+      jurisdiction: String,
+      periodKey: String,
+      amount: BigDecimal,
+      currency: String,
+      reference: Option[String],
+      actor: String
+  ): F[Either[String, UUID]] =
     Currency.fromCode(currency) match {
       case None => s"unknown currency $currency".asLeft[UUID].pure[F]
       case Some(ccy) =>
-        val id       = UUID.randomUUID()
         val ledgerId = Ledgers.forCurrency(ccy)
         val accounts = List(
           LedgerAccount(vatAcc(entity), ledgerId, LedgerAccountCode.Vat),
@@ -80,7 +93,8 @@ final class VatRemittanceService[F[_]: Async](xa: Transactor[F], ledger: TigerBe
   ): ConnectionIO[Int] =
     sql"""INSERT INTO vat_remittance (id, entity_id, jurisdiction, period_key, amount, currency, reference, tb_transfer_id, actor)
           VALUES ($id, $entity, $jurisdiction, $periodKey, $amount, $currency, $reference,
-             ${TbIds.transferId(id, 0).bigInteger.toString}::numeric, $actor)""".update.run.flatMap(n =>
+             ${TbIds.transferId(id, 0).bigInteger.toString}::numeric, $actor)
+          ON CONFLICT (id) DO NOTHING""".update.run.flatMap(n =>
       OutboxRepo
         .append(
           OutboxEvent(

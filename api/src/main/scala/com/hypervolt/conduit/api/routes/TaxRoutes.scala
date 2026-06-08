@@ -6,6 +6,8 @@ import com.hypervolt.conduit.access._
 import com.hypervolt.conduit.api.auth.ApiError
 import com.hypervolt.conduit.api.auth.AuthService
 import com.hypervolt.conduit.api.auth.Secured
+import com.hypervolt.conduit.event.OutboxEvent
+import com.hypervolt.conduit.event.OutboxRepo
 import com.hypervolt.conduit.orgconfig.SellingEntityRepo
 import com.hypervolt.conduit.orgconfig.SellingEntityService
 import com.hypervolt.conduit.tax.NewRate
@@ -67,6 +69,16 @@ object NewNexusReq { implicit val codec: Codec[NewNexusReq] = deriveCodec }
 
 final case class NewSellingEntityReq(jurisdiction: String, entity_id: String, effective_from: String)
 object NewSellingEntityReq { implicit val codec: Codec[NewSellingEntityReq] = deriveCodec }
+
+final case class NewRemittanceReq(
+    entity_id: String,
+    jurisdiction: String,
+    period_key: String,
+    amount: BigDecimal,
+    currency: String,
+    reference: Option[String]
+)
+object NewRemittanceReq { implicit val codec: Codec[NewRemittanceReq] = deriveCodec }
 
 // The tax & customs REST surface (doc 16 §10). The determination engine (POST /tax/quote) plus the config admin:
 // regimes/rates (maker-checker — tax_specialist proposes, CFO approves), routing, registrations, nexus, and the
@@ -172,6 +184,52 @@ final class TaxRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
     ) {
       case (e, j) => VatExposureRepo.exposure(e.flatMap(x => Try(UUID.fromString(x)).toOption), j)
     }
+
+  // Request a VAT remittance. The API can't touch TigerBeetle, so it emits tax.vat.remit_requested; the consumer
+  // (which owns the ledger) performs DR VAT / CR BANK and depletes the exposure. Returns 202 (accepted).
+  private val remittanceRequest =
+    base.post
+      .in("api" / "v1" / "tax" / "vat" / "remittances")
+      .in(jsonBody[NewRemittanceReq])
+      .out(jsonBody[Json])
+      .serverLogic(principal =>
+        req =>
+          if (!PolicyEngine.hasPermission(principal, Action.Create, "tax_quote"))
+            Async[F].pure(Left(err(StatusCode.Forbidden, "forbidden", "requires create:tax_quote")))
+          else
+            uuid(req.entity_id) match {
+              case Left(e) => Async[F].pure(Left(e))
+              case Right(e) =>
+                val eventId = UUID.randomUUID()
+                OutboxRepo
+                  .append(
+                    OutboxEvent(
+                      eventId,
+                      "tax.vat.remit_requested",
+                      1,
+                      "tax",
+                      e,
+                      s"$e:${req.jurisdiction}",
+                      None,
+                      None,
+                      None,
+                      Json.obj(
+                        "entity_id"    -> e.toString.asJson,
+                        "jurisdiction" -> req.jurisdiction.asJson,
+                        "period_key"   -> req.period_key.asJson,
+                        "amount"       -> req.amount.asJson,
+                        "currency"     -> req.currency.asJson,
+                        "reference"    -> req.reference.asJson,
+                        "actor"        -> principal.userId.toString.asJson
+                      ),
+                      java.time.Instant.now(),
+                      s"user:${principal.userId}"
+                    )
+                  )
+                  .transact(xa)
+                  .as(Right(Json.obj("status" -> "requested".asJson, "request_id" -> eventId.toString.asJson)))
+            }
+      )
 
   private val rateCreate =
     base.post
@@ -326,6 +384,7 @@ final class TaxRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
         registrationsList,
         nexusList,
         vatExposure,
+        remittanceRequest,
         rateCreate,
         rateActivate,
         registrationCreate,

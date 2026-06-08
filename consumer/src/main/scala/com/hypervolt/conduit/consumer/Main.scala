@@ -76,6 +76,8 @@ object Main extends IOApp.Simple {
             new PaymentService[IO](xa, ledger)
           )
           val voidConsumer = new InvoiceVoidConsumer[IO](pulsar, voidProcessor)
+          val vatRemitConsumer =
+            new VatRemittanceConsumer[IO](pulsar, new com.hypervolt.conduit.tax.VatRemittanceService[IO](xa, ledger))
           PulsarEventPublisher.create[IO](pulsar).flatMap { publisher =>
             val relay     = new OutboxRelay[IO](xa, publisher)
             val relayLoop = (relay.runOnce() *> IO.sleep(1.second)).foreverM
@@ -88,7 +90,8 @@ object Main extends IOApp.Simple {
                 revConsumer.runForever,
                 stripeLoop,
                 docConsumer.runForever,
-                voidConsumer.runForever
+                voidConsumer.runForever,
+                vatRemitConsumer.runForever
               ).parSequence_
           }
         }

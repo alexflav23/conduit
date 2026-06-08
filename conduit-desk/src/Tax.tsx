@@ -3,6 +3,7 @@ import * as stylex from '@stylexjs/stylex';
 import { colors } from './styles/tokens.stylex';
 import {
   taxQuote, getTaxRates, proposeTaxRate, activateTaxRate, getTaxRouting, getTaxNexus, TAX_DEMO_ENTITY,
+  getSellingEntities, proposeSellingEntity, activateSellingEntity, getVatExposure, requestVatRemittance,
   type TaxQuoteInput,
 } from './api';
 
@@ -43,6 +44,12 @@ export function Tax({ token }: { token: string }) {
   const [routing, setRouting] = useState<any[]>([]);
   const [pr, setPr] = useState({ jurisdiction: 'FR', tax_type: 'VAT', region: '', postcode_prefix: '', level: 'national', name: 'France VAT', rate_pct: '20.0', effective_from: '2026-01-01' });
   const [proposeStatus, setProposeStatus] = useState<string | null>(null);
+  const [sellingEntities, setSellingEntities] = useState<any[]>([]);
+  const [se, setSe] = useState({ jurisdiction: 'DE', entity_id: TAX_DEMO_ENTITY, effective_from: '2026-01-01' });
+  const [seStatus, setSeStatus] = useState<string | null>(null);
+  const [exposure, setExposure] = useState<any[]>([]);
+  const [rm, setRm] = useState({ jurisdiction: 'GB', period_key: '2026-06', amount: '50.00', currency: 'GBP', reference: '' });
+  const [rmStatus, setRmStatus] = useState<string | null>(null);
 
   const set = (k: keyof TaxQuoteInput) => (e: any) => setQ({ ...q, [k]: e.target.value });
 
@@ -66,6 +73,26 @@ export function Tax({ token }: { token: string }) {
     const r = await activateTaxRate(token, id);
     setProposeStatus(r.status === 200 ? 'activated' : `activate failed (${r.status}: ${r.json?.message ?? ''})`);
     await loadRates();
+  };
+
+  const loadSelling = async () => setSellingEntities(await getSellingEntities(token).then((r) => (Array.isArray(r.json) ? r.json : [])));
+  const proposeSe = async () => {
+    const r = await proposeSellingEntity(token, se.jurisdiction, se.entity_id, se.effective_from);
+    setSeStatus(r.status === 200 ? `proposed ${r.json.id?.slice(0, 8)}` : `failed (${r.status})`);
+    if (r.status === 200) await loadSelling();
+  };
+  const activateSe = async (id: string) => {
+    const r = await activateSellingEntity(token, id);
+    setSeStatus(r.status === 200 ? 'activated' : `activate failed (${r.status}: ${r.json?.message ?? ''})`);
+    await loadSelling();
+  };
+  const loadExposure = async () => setExposure(await getVatExposure(token, TAX_DEMO_ENTITY).then((r) => (Array.isArray(r.json) ? r.json : [])));
+  const remit = async () => {
+    const r = await requestVatRemittance(token, {
+      entity_id: TAX_DEMO_ENTITY, jurisdiction: rm.jurisdiction, period_key: rm.period_key,
+      amount: Number(rm.amount), currency: rm.currency, reference: rm.reference || undefined,
+    });
+    setRmStatus(r.status === 200 ? `remittance ${r.json.status}` : `failed (${r.status})`);
   };
 
   return (
@@ -211,6 +238,78 @@ export function Tax({ token }: { token: string }) {
             </tbody>
           </table>
         )}
+      </div>
+
+      {/* ---- seller-of-record: which entity books a jurisdiction (config, effective-dated, maker-checker) ---- */}
+      <div {...stylex.props(styles.card)}>
+        <div {...stylex.props(styles.section)}>Operating entities — which Hypervolt entity books a jurisdiction (re-point by config)</div>
+        <div {...stylex.props(styles.row)}>
+          <button {...stylex.props(styles.button)} data-testid="tax-se-load" onClick={loadSelling}>Load entity map</button>
+        </div>
+        <table {...stylex.props(styles.table)} data-testid="tax-se-table">
+          <thead><tr>
+            <th {...stylex.props(styles.th)}>Jurisdiction</th><th {...stylex.props(styles.th)}>Entity</th><th {...stylex.props(styles.th)}>Currency</th>
+            <th {...stylex.props(styles.th)}>From</th><th {...stylex.props(styles.th)}>To</th><th {...stylex.props(styles.th)}>Status</th><th {...stylex.props(styles.th)} />
+          </tr></thead>
+          <tbody>
+            {sellingEntities.map((s, i) => (
+              <tr key={i} data-testid="tax-se-row">
+                <td {...stylex.props(styles.td)}>{s.jurisdiction}</td>
+                <td {...stylex.props(styles.td)}>{s.entity_name}</td>
+                <td {...stylex.props(styles.td)}>{s.functional_currency}</td>
+                <td {...stylex.props(styles.td)}>{s.effective_from}</td>
+                <td {...stylex.props(styles.td)}>{s.effective_to ?? '—'}</td>
+                <td {...stylex.props(styles.td)}>{s.status === 'draft' ? <span {...stylex.props(styles.badge, styles.draft)}>draft</span> : s.status}</td>
+                <td {...stylex.props(styles.td)}>{s.status === 'draft' && <button {...stylex.props(styles.ghost)} data-testid="tax-se-activate" onClick={() => activateSe(s.id)}>Activate (CFO)</button>}</td>
+              </tr>
+            ))}
+            {sellingEntities.length === 0 && <tr><td {...stylex.props(styles.td)} colSpan={7} style={{ color: colors.muted }}>Load the entity map.</td></tr>}
+          </tbody>
+        </table>
+        <div {...stylex.props(styles.row)} style={{ marginTop: '0.6rem' }}>
+          <input {...stylex.props(styles.input)} data-testid="tax-se-juris" value={se.jurisdiction} onChange={(e) => setSe({ ...se, jurisdiction: e.target.value })} placeholder="juris" style={{ width: '60px' }} />
+          <input {...stylex.props(styles.input)} data-testid="tax-se-entity" value={se.entity_id} onChange={(e) => setSe({ ...se, entity_id: e.target.value })} placeholder="entity id" style={{ width: '300px' }} />
+          <input {...stylex.props(styles.input)} data-testid="tax-se-from" value={se.effective_from} onChange={(e) => setSe({ ...se, effective_from: e.target.value })} placeholder="from" style={{ width: '110px' }} />
+          <button {...stylex.props(styles.button)} data-testid="tax-se-propose" onClick={proposeSe}>Propose map (admin)</button>
+          {seStatus && <span {...stylex.props(styles.label)} data-testid="tax-se-status">{seStatus}</span>}
+        </div>
+      </div>
+
+      {/* ---- VAT exposure per jurisdiction + remittance (depletes the ledger) ---- */}
+      <div {...stylex.props(styles.card)}>
+        <div {...stylex.props(styles.section)}>VAT exposure — accrued − reversed − remitted = outstanding, per entity × jurisdiction × period</div>
+        <div {...stylex.props(styles.row)}>
+          <button {...stylex.props(styles.button)} data-testid="tax-exposure-load" onClick={loadExposure}>Load exposure</button>
+        </div>
+        <table {...stylex.props(styles.table)} data-testid="tax-exposure-table">
+          <thead><tr>
+            <th {...stylex.props(styles.th)}>Jurisdiction</th><th {...stylex.props(styles.th)}>Period</th>
+            <th {...stylex.props(styles.th, styles.num)}>Accrued</th><th {...stylex.props(styles.th, styles.num)}>Reversed</th>
+            <th {...stylex.props(styles.th, styles.num)}>Remitted</th><th {...stylex.props(styles.th, styles.num)}>Outstanding</th>
+          </tr></thead>
+          <tbody>
+            {exposure.map((x, i) => (
+              <tr key={i} data-testid="tax-exposure-row">
+                <td {...stylex.props(styles.td)}>{x.jurisdiction}</td>
+                <td {...stylex.props(styles.td)}>{x.period}</td>
+                <td {...stylex.props(styles.td, styles.num)}>{x.accrued}</td>
+                <td {...stylex.props(styles.td, styles.num)}>{x.reversed}</td>
+                <td {...stylex.props(styles.td, styles.num)}>{x.remitted}</td>
+                <td {...stylex.props(styles.td, styles.num)} style={{ fontWeight: 700 }}>{x.outstanding}</td>
+              </tr>
+            ))}
+            {exposure.length === 0 && <tr><td {...stylex.props(styles.td)} colSpan={6} style={{ color: colors.muted }}>No VAT exposure for this entity yet.</td></tr>}
+          </tbody>
+        </table>
+        <div {...stylex.props(styles.section)} style={{ marginTop: '1rem' }}>Remit VAT (depletes the VAT ledger; performed off the API by the consumer)</div>
+        <div {...stylex.props(styles.row)}>
+          <input {...stylex.props(styles.input)} data-testid="tax-rm-juris" value={rm.jurisdiction} onChange={(e) => setRm({ ...rm, jurisdiction: e.target.value })} placeholder="juris" style={{ width: '60px' }} />
+          <input {...stylex.props(styles.input)} data-testid="tax-rm-period" value={rm.period_key} onChange={(e) => setRm({ ...rm, period_key: e.target.value })} placeholder="period" style={{ width: '90px' }} />
+          <input {...stylex.props(styles.input)} data-testid="tax-rm-amount" value={rm.amount} onChange={(e) => setRm({ ...rm, amount: e.target.value })} placeholder="amount" style={{ width: '80px' }} />
+          <input {...stylex.props(styles.input)} data-testid="tax-rm-ref" value={rm.reference} onChange={(e) => setRm({ ...rm, reference: e.target.value })} placeholder="reference" style={{ width: '120px' }} />
+          <button {...stylex.props(styles.button)} data-testid="tax-rm-submit" onClick={remit}>Remit</button>
+          {rmStatus && <span {...stylex.props(styles.label)} data-testid="tax-rm-status">{rmStatus}</span>}
+        </div>
       </div>
     </div>
   );

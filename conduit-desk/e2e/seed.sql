@@ -222,3 +222,14 @@ INSERT INTO role_assignment (user_id, role_id)
 INSERT INTO nexus_profile (entity_id, jurisdiction, region, threshold_amount, status)
   VALUES ('33333333-3333-3333-3333-333333333333', 'US', 'CA', 100000.0000, 'monitoring')
   ON CONFLICT (entity_id, jurisdiction, region) DO NOTHING;
+
+-- M13-VAT: an admin user (proposes the entity map) + GB → the tax demo entity as the active seller of record.
+INSERT INTO app_user (keycloak_id, name) VALUES ('admin-e2e', 'E2E Admin') ON CONFLICT (keycloak_id) DO NOTHING;
+INSERT INTO role_assignment (user_id, role_id)
+  SELECT u.id, r.id FROM app_user u, role r
+  WHERE u.keycloak_id = 'admin-e2e' AND r.name = 'admin'
+  AND NOT EXISTS (SELECT 1 FROM role_assignment ra WHERE ra.user_id = u.id AND ra.role_id = r.id);
+
+INSERT INTO selling_entity (jurisdiction, entity_id, status)
+  SELECT 'GB', '33333333-3333-3333-3333-333333333333', 'active'
+  WHERE NOT EXISTS (SELECT 1 FROM selling_entity WHERE jurisdiction = 'GB');

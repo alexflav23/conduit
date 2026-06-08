@@ -271,3 +271,26 @@ export function getTaxNexus(token: string, entityId?: string) {
   const q = entityId ? `?entity_id=${encodeURIComponent(entityId)}` : '';
   return call(`/api/v1/tax/nexus${q}`, token, 'GET');
 }
+
+// ----- M13-VAT: seller-of-record entity map + per-jurisdiction VAT exposure / remittance -----
+
+export function getSellingEntities(token: string) {
+  return call('/api/v1/tax/selling-entities', token, 'GET');
+}
+export function proposeSellingEntity(token: string, jurisdiction: string, entityId: string, effectiveFrom: string) {
+  return call('/api/v1/tax/selling-entities', token, 'POST', { jurisdiction, entity_id: entityId, effective_from: effectiveFrom });
+}
+export function activateSellingEntity(token: string, id: string) {
+  return call(`/api/v1/tax/selling-entities/${id}/activate`, token, 'POST');
+}
+
+export function getVatExposure(token: string, entityId?: string) {
+  const q = entityId ? `?entity_id=${encodeURIComponent(entityId)}` : '';
+  return call(`/api/v1/tax/vat/exposure${q}`, token, 'GET');
+}
+export function requestVatRemittance(
+  token: string,
+  body: { entity_id: string; jurisdiction: string; period_key: string; amount: number; currency: string; reference?: string },
+) {
+  return call('/api/v1/tax/vat/remittances', token, 'POST', body);
+}
