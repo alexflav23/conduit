@@ -544,6 +544,175 @@ final class DocumentService[F[_]: Async](
     }
   }
 
+  // Customer statement (doc 17): a point-in-time projection of a party's open invoices for an entity. Idempotent
+  // per (party, period) — re-running the same period returns the same numbered statement.
+  def generateStatement(entityId: UUID, partyId: UUID, periodKey: String): F[Either[String, DocumentResult]] = {
+    val id = UUID.nameUUIDFromBytes(s"document:statement:$partyId:$periodKey".getBytes(StandardCharsets.UTF_8))
+    existing(id).transact(xa).flatMap {
+      case Some(r) => r.asRight[String].pure[F]
+      case None =>
+        (statementHead(entityId, partyId), openInvoices(entityId, partyId)).tupled.transact(xa).flatMap {
+          case (None, _) => "unknown entity/party".asLeft[DocumentResult].pure[F]
+          case (Some(h), rows) =>
+            templateFor("statement", h._4, "en").transact(xa).flatMap {
+              case None => "no active statement template".asLeft[DocumentResult].pure[F]
+              case Some(t) =>
+                val outstanding = rows.map(_._4).sum
+                val model = Json.obj(
+                  "title"         -> "STATEMENT OF ACCOUNT".asJson,
+                  "supplier_name" -> h._1.asJson,
+                  "payer_name"    -> h._2.asJson,
+                  "payer_label"   -> "Account".asJson,
+                  "locale"        -> "en".asJson,
+                  "jurisdiction"  -> h._4.asJson,
+                  "currency"      -> h._3.asJson,
+                  "meta"          -> Json.arr(Json.arr("As of".asJson, periodKey.asJson)),
+                  "columns"       -> Json.arr("Invoice".asJson, "Issued".asJson, "Due".asJson, "Outstanding".asJson),
+                  "rows" -> rows
+                    .map(r =>
+                      Json
+                        .arr(r._1.asJson, r._2.toString.asJson, r._3.map(_.toString).getOrElse("").asJson, r._4.asJson)
+                    )
+                    .asJson,
+                  "total" -> outstanding.asJson
+                )
+                renderer
+                  .render(t.body, model)
+                  .flatMap(rd =>
+                    storage
+                      .put(s"documents/$id.pdf", rd.bytes, "application/pdf")
+                      .flatMap(uri =>
+                        finaliseDoc(
+                          id,
+                          "statement",
+                          entityId,
+                          h._4,
+                          "en",
+                          None,
+                          None,
+                          None,
+                          Some(partyId),
+                          Some(h._3),
+                          Some(outstanding),
+                          t,
+                          model,
+                          rd,
+                          uri
+                        ).transact(xa)
+                      )
+                  )
+            }
+        }
+    }
+  }
+
+  private def statementHead(entityId: UUID, partyId: UUID): ConnectionIO[Option[(String, String, String, String)]] =
+    sql"""SELECT e.name, COALESCE(p.legal_name, p.display_name), e.functional_currency, e.jurisdiction
+          FROM entity e, party p WHERE e.id = $entityId AND p.id = $partyId"""
+      .query[(String, String, String, String)]
+      .option
+
+  private def openInvoices(
+      entityId: UUID,
+      partyId: UUID
+  ): ConnectionIO[List[(String, java.time.LocalDate, Option[java.time.LocalDate], BigDecimal)]] =
+    sql"""SELECT i.invoice_no, i.issued_at::date, i.due_date,
+                 i.total_inc_vat - COALESCE((SELECT SUM(a.amount) FROM payment_allocation a WHERE a.order_invoice_id = i.id), 0)
+          FROM order_invoice i JOIN "order" o ON o.id = i.order_id
+          WHERE o.bill_to_party_id = $partyId AND o.entity_id = $entityId AND i.status IN ('open','part_paid')
+          ORDER BY i.issued_at"""
+      .query[(String, java.time.LocalDate, Option[java.time.LocalDate], BigDecimal)]
+      .to[List]
+
+  // Commercial invoice (doc 17): the customs document for a shipment — HS codes, country of origin, incoterms,
+  // customs value per line. Tied to a dispatch. Idempotent on a deterministic id.
+  def generateCommercialInvoice(dispatchId: UUID): F[Either[String, DocumentResult]] = {
+    val id = UUID.nameUUIDFromBytes(s"document:commercial_invoice:$dispatchId".getBytes(StandardCharsets.UTF_8))
+    existing(id).transact(xa).flatMap {
+      case Some(r) => r.asRight[String].pure[F]
+      case None =>
+        (commercialHead(dispatchId), commercialRows(dispatchId)).tupled.transact(xa).flatMap {
+          case (None, _) => "unknown dispatch".asLeft[DocumentResult].pure[F]
+          case (Some(h), rows) =>
+            templateFor("commercial_invoice", h.jurisdiction, h.locale).transact(xa).flatMap {
+              case None => "no active commercial_invoice template".asLeft[DocumentResult].pure[F]
+              case Some(t) =>
+                val total = rows.map(_._5).sum
+                val model = Json.obj(
+                  "title"         -> "COMMERCIAL INVOICE".asJson,
+                  "supplier_name" -> h.supplierName.asJson,
+                  "payer_name"    -> h.shipTo.asJson,
+                  "payer_label"   -> "Ship to".asJson,
+                  "locale"        -> h.locale.asJson,
+                  "jurisdiction"  -> h.jurisdiction.asJson,
+                  "currency"      -> h.currency.asJson,
+                  "meta" -> Json.arr(
+                    Json.arr("Incoterms".asJson, h.incoterms.asJson),
+                    Json.arr("Country of export".asJson, h.jurisdiction.asJson),
+                    Json.arr("Dispatch".asJson, h.dispatchNo.asJson)
+                  ),
+                  "columns" -> Json
+                    .arr("Description".asJson, "HS code".asJson, "Origin".asJson, "Qty".asJson, "Value".asJson),
+                  "rows" -> rows
+                    .map(r => Json.arr(r._1.asJson, r._2.asJson, r._3.asJson, r._4.asJson, r._5.asJson))
+                    .asJson,
+                  "total" -> total.asJson,
+                  "notes" -> Json.arr("For customs purposes only. Goods of the stated origin.".asJson)
+                )
+                renderer
+                  .render(t.body, model)
+                  .flatMap(rd =>
+                    storage
+                      .put(s"documents/$id.pdf", rd.bytes, "application/pdf")
+                      .flatMap(uri =>
+                        finaliseDoc(
+                          id,
+                          "commercial_invoice",
+                          h.entityId,
+                          h.jurisdiction,
+                          h.locale,
+                          Some(h.orderId),
+                          None,
+                          Some(dispatchId),
+                          None,
+                          Some(h.currency),
+                          Some(total),
+                          t,
+                          model,
+                          rd,
+                          uri
+                        ).transact(xa)
+                      )
+                  )
+            }
+        }
+    }
+  }
+
+  private def commercialHead(dispatchId: UUID): ConnectionIO[Option[CommercialHead]] =
+    sql"""SELECT o.id, o.entity_id, e.jurisdiction, e.name, COALESCE(p.legal_name, p.display_name),
+                 COALESCE(bp.invoice_locale, 'en'), d.dispatch_no, o.order_no, o.txn_currency, COALESCE(o.incoterms, 'DAP')
+          FROM dispatch d
+            JOIN "order" o ON o.id = d.order_id
+            JOIN entity e ON e.id = o.entity_id
+            JOIN party p ON p.id = o.bill_to_party_id
+            LEFT JOIN billing_profile bp ON bp.party_id = o.bill_to_party_id
+          WHERE d.id = $dispatchId"""
+      .query[CommercialHead]
+      .option
+
+  // Per dispatch line: description, HS code, origin, qty, customs value (qty × unit ex-VAT).
+  private def commercialRows(dispatchId: UUID): ConnectionIO[List[(String, String, String, Int, BigDecimal)]] =
+    sql"""SELECT COALESCE(f.name, v.sku), COALESCE(v.hs_code, ''), COALESCE(v.country_of_origin, ''),
+                 dl.qty, (dl.qty * ol.unit_price_ex_vat)
+          FROM dispatch_line dl
+            JOIN order_line ol ON ol.id = dl.order_line_id
+            JOIN product_variant v ON v.id = ol.product_variant_id
+            LEFT JOIN product_family f ON f.id = v.family_id
+          WHERE dl.dispatch_id = $dispatchId ORDER BY dl.id"""
+      .query[(String, String, String, Int, BigDecimal)]
+      .to[List]
+
   private def orderHead(orderId: UUID): ConnectionIO[Option[InvHead]] =
     sql"""SELECT o.id, o.entity_id, e.jurisdiction, o.bill_to_party_id, COALESCE(p.legal_name, p.display_name),
                  e.name, o.txn_currency, o.subtotal_ex_vat, o.vat_total, o.total_inc_vat, COALESCE(bp.invoice_locale, 'en')
@@ -651,4 +820,16 @@ private final case class DispatchDocHead(
     locale: String,
     dispatchNo: String,
     orderNo: String
+)
+private final case class CommercialHead(
+    orderId: UUID,
+    entityId: UUID,
+    jurisdiction: String,
+    supplierName: String,
+    shipTo: String,
+    locale: String,
+    dispatchNo: String,
+    orderNo: String,
+    currency: String,
+    incoterms: String
 )

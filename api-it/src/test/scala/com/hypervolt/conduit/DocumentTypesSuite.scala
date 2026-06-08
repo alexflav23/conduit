@@ -37,6 +37,8 @@ object DocumentTypesSuite extends IOSuite {
         sql"INSERT INTO document_number_series (entity_id, document_type, jurisdiction, series_code, format) VALUES ($e,'proforma','GB','HV-UK-PF','{series}-{yyyy}-{seq:06d}')".update.run
       _ <-
         sql"INSERT INTO document_number_series (entity_id, document_type, jurisdiction, series_code, format) VALUES ($e,'packing_list','GB','HV-UK-PL','{series}-{yyyy}-{seq:06d}')".update.run
+      _ <-
+        sql"INSERT INTO document_number_series (entity_id, document_type, jurisdiction, series_code, format) VALUES ($e,'commercial_invoice','GB','HV-UK-CI','{series}-{yyyy}-{seq:06d}')".update.run
       fam <-
         sql"INSERT INTO product_family (code, name) VALUES (${s"f-${UUID.randomUUID()}"},'Home 3') RETURNING id"
           .query[UUID]
@@ -122,5 +124,76 @@ object DocumentTypesSuite extends IOSuite {
       expect(pl1.documentId == pl2.documentId) and
       expect(plRow == (("packing_list", None, true))) and // VOLUME-only: no money, tied to dispatch
       expect(new String(plPdf.take(5), "US-ASCII") == "%PDF-")
+  }
+
+  test("commercial invoice carries HS codes/origin/incoterms + customs value, idempotent") { xa =>
+    for {
+      storage <- DocumentStorage.inMemory[IO]
+      docs = new DocumentService[IO](xa, new FopDocumentRenderer[IO], storage)
+      s <- dispatched(xa)
+      (ord, dsp) = s
+      // set the customs facts on the shipped product + order
+      _   <- sql"""UPDATE product_variant SET hs_code='8504.40.90', country_of_origin='CN'
+              WHERE id IN (SELECT product_variant_id FROM order_line WHERE order_id = $ord)""".update.run.transact(xa)
+      _   <- sql"""UPDATE "order" SET incoterms='DAP' WHERE id = $ord""".update.run.transact(xa)
+      ci1 <- docs.generateCommercialInvoice(dsp).map(_.toOption.get)
+      ci2 <- docs.generateCommercialInvoice(dsp).map(_.toOption.get) // idempotent
+      row <-
+        sql"SELECT document_type, total_amount, dispatch_id IS NOT NULL FROM document WHERE id = ${ci1.documentId}"
+          .query[(String, Option[BigDecimal], Boolean)]
+          .unique
+          .transact(xa)
+      pdf <- storage.get(s"mem://documents/${ci1.documentId}.pdf")
+    } yield expect(ci1.formattedNumber.startsWith("HV-UK-CI-")) and
+      expect(ci1.documentId == ci2.documentId) and
+      expect(
+        row == (("commercial_invoice", Some(BigDecimal("1000.0000")), true))
+      ) and // 2 × £500 customs value, tied to dispatch
+      expect(new String(pdf.take(5), "US-ASCII") == "%PDF-")
+  }
+
+  test("statement projects a party's open invoices with total outstanding, idempotent per period") { xa =>
+    for {
+      ids <- (for {
+          e <-
+            sql"INSERT INTO entity (name, jurisdiction, functional_currency, entity_type) VALUES ('HV UK','GB','GBP','operating') RETURNING id"
+              .query[UUID]
+              .unique
+          _ <-
+            sql"INSERT INTO document_number_series (entity_id, document_type, jurisdiction, series_code, format) VALUES ($e,'statement','GB','HV-UK-ST','{series}-{yyyy}-{seq:06d}')".update.run
+          billTo <-
+            sql"INSERT INTO party (display_name, legal_name, party_type, is_organization) VALUES ('Stmt Cust','Statement Customer Ltd','wholesaler',true) RETURNING id"
+              .query[UUID]
+              .unique
+          o1 <-
+            sql"""INSERT INTO "order" (order_no, type, entity_id, sold_to_party_id, bill_to_party_id, status, txn_currency, payment_method, total_inc_vat)
+                       VALUES (${s"O-${UUID.randomUUID()}"},'trade',$e,$billTo,$billTo,'placed','GBP','invoice',1200) RETURNING id"""
+              .query[UUID]
+              .unique
+          _ <-
+            sql"INSERT INTO order_invoice (order_id, invoice_no, total_ex_vat, vat_total, total_inc_vat, status, due_date) VALUES ($o1, ${s"INV-A-${UUID.randomUUID()}"}, 1000, 200, 1200, 'open', current_date + 30)".update.run
+          o2 <-
+            sql"""INSERT INTO "order" (order_no, type, entity_id, sold_to_party_id, bill_to_party_id, status, txn_currency, payment_method, total_inc_vat)
+                       VALUES (${s"O-${UUID.randomUUID()}"},'trade',$e,$billTo,$billTo,'placed','GBP','invoice',600) RETURNING id"""
+              .query[UUID]
+              .unique
+          _ <-
+            sql"INSERT INTO order_invoice (order_id, invoice_no, total_ex_vat, vat_total, total_inc_vat, status, due_date) VALUES ($o2, ${s"INV-B-${UUID.randomUUID()}"}, 500, 100, 600, 'open', current_date + 60)".update.run
+        } yield (e, billTo)).transact(xa)
+      (e, billTo) = ids
+      storage <- DocumentStorage.inMemory[IO]
+      docs = new DocumentService[IO](xa, new FopDocumentRenderer[IO], storage)
+      st1 <- docs.generateStatement(e, billTo, "2026-06").map(_.toOption.get)
+      st2 <- docs.generateStatement(e, billTo, "2026-06").map(_.toOption.get) // idempotent per period
+      row <-
+        sql"SELECT document_type, total_amount FROM document WHERE id = ${st1.documentId}"
+          .query[(String, Option[BigDecimal])]
+          .unique
+          .transact(xa)
+      pdf <- storage.get(s"mem://documents/${st1.documentId}.pdf")
+    } yield expect(st1.formattedNumber.startsWith("HV-UK-ST-")) and
+      expect(st1.documentId == st2.documentId) and
+      expect(row == (("statement", Some(BigDecimal("1800.0000"))))) and // £1200 + £600 outstanding
+      expect(new String(pdf.take(5), "US-ASCII") == "%PDF-")
   }
 }
