@@ -18,7 +18,6 @@ import doobie.postgres.implicits._
 import doobie.util.transactor.Transactor
 import io.circe.Json
 import io.circe.syntax._
-import java.nio.charset.StandardCharsets
 import java.time.Instant
 import java.util.UUID
 import scala.math.BigDecimal.RoundingMode
@@ -56,14 +55,15 @@ final class InvoiceReversalService[F[_]: Async](xa: Transactor[F], ledger: Tiger
   private val kinds = Set("mistake", "cancellation", "refund", "correction")
 
   private def minor(a: BigDecimal): BigInt = (a.setScale(2, RoundingMode.HALF_UP) * 100).toBigInt
-  private def reversalId(orderInvoiceId: UUID): UUID =
-    UUID.nameUUIDFromBytes(s"invoice-void:$orderInvoiceId".getBytes(StandardCharsets.UTF_8))
+  // The reversal id IS the cycle correlation id (and the invoice.voided event id) — one deterministic thread.
+  private def reversalId(orderInvoiceId: UUID): UUID = CollectionCycle.correlationId(orderInvoiceId)
 
   def reverse(
       orderInvoiceId: UUID,
       kind: String,
       reason: String,
-      actor: String
+      actor: String,
+      causedBy: Option[UUID] = None
   ): F[Either[String, InvoiceReversalResult]] = {
     val rid = reversalId(orderInvoiceId)
     if (!kinds.contains(kind)) s"invalid void kind '$kind'".asLeft[InvoiceReversalResult].pure[F]
@@ -122,7 +122,7 @@ final class InvoiceReversalService[F[_]: Async](xa: Transactor[F], ledger: Tiger
                   ).filter(_.amount > 0)
                   ledger.createAccounts(accounts) *>
                     ledger.postTransfers(transfers) *>
-                    record(rid, orderInvoiceId, h, kind, reason, actor).transact(xa)
+                    record(rid, orderInvoiceId, h, kind, reason, actor, causedBy).transact(xa)
               }
           }
       }
@@ -159,7 +159,8 @@ final class InvoiceReversalService[F[_]: Async](xa: Transactor[F], ledger: Tiger
       h: ReversalHead,
       kind: String,
       reason: String,
-      actor: String
+      actor: String,
+      causedBy: Option[UUID]
   ): ConnectionIO[Either[String, InvoiceReversalResult]] =
     for {
       _ <- sql"""INSERT INTO invoice_reversal
@@ -172,10 +173,18 @@ final class InvoiceReversalService[F[_]: Async](xa: Transactor[F], ledger: Tiger
                  ${TbIds.transferId(rid, 2).toString}::numeric, $actor)""".update.run
       _ <- sql"""UPDATE order_invoice SET status = 'void', voided_at = now(), void_reason = $reason, void_kind = $kind
               WHERE id = $orderInvoiceId""".update.run
-      _ <- OutboxRepo.append(event(rid, orderInvoiceId, h, kind, reason))
+      _ <- OutboxRepo.append(event(rid, orderInvoiceId, h, kind, reason, causedBy))
     } yield InvoiceReversalResult(rid, h.invoiceNo, kind, h.revenueExVat + h.vat, "void").asRight[String]
 
-  private def event(rid: UUID, orderInvoiceId: UUID, h: ReversalHead, kind: String, reason: String): OutboxEvent =
+  // correlation = rid (the cycle thread, which is also this event's id); causation = the void request that triggered it.
+  private def event(
+      rid: UUID,
+      orderInvoiceId: UUID,
+      h: ReversalHead,
+      kind: String,
+      reason: String,
+      causedBy: Option[UUID]
+  ): OutboxEvent =
     OutboxEvent(
       rid,
       "invoice.voided",
@@ -184,8 +193,8 @@ final class InvoiceReversalService[F[_]: Async](xa: Transactor[F], ledger: Tiger
       h.orderId,
       h.orderId.toString,
       None,
-      None,
-      None,
+      Some(rid),
+      causedBy,
       Json.obj(
         "reversal_id"      -> rid.toString.asJson,
         "order_invoice_id" -> orderInvoiceId.toString.asJson,

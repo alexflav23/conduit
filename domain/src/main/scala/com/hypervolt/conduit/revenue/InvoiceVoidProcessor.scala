@@ -24,19 +24,25 @@ final class InvoiceVoidProcessor[F[_]: Async](
       invoiceNo: String,
       kind: String,
       reason: String,
-      actor: String
-  ): F[Either[String, Unit]] =
-    reversal.reverse(orderInvoiceId, kind, reason, actor).flatMap {
+      actor: String,
+      causedBy: Option[UUID] = None
+  ): F[Either[String, Unit]] = {
+    // One correlation threads the whole cycle (= the reversal/invoice.voided id); causation links each step to it.
+    val corr = CollectionCycle.correlationId(orderInvoiceId)
+    reversal.reverse(orderInvoiceId, kind, reason, actor, causedBy).flatMap {
       case Left(m) => m.asLeft[Unit].pure[F]
       case Right(_) =>
         if (kind != "refund") ().asRight[String].pure[F]
         else
           settledCash(orderInvoiceId).transact(xa).flatMap {
             case Some((net, method)) if net > 0 =>
-              payments.refund(invoiceNo, net, method, s"void:$orderInvoiceId").map(_.map(_ => ()))
+              payments
+                .refund(invoiceNo, net, method, s"void:$orderInvoiceId", Some(corr), Some(corr))
+                .map(_.map(_ => ()))
             case _ => ().asRight[String].pure[F] // nothing was paid — recognition reversal is enough
           }
     }
+  }
 
   // Net cash applied to the invoice + the method it came in on (to return it the same way). None if never paid.
   private def settledCash(orderInvoiceId: UUID): ConnectionIO[Option[(BigDecimal, String)]] =

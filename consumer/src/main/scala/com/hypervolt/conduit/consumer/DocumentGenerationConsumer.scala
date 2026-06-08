@@ -67,7 +67,10 @@ final class DocumentGenerationConsumer[F[_]: Async](client: PulsarClient, servic
           case None =>
             logger.warn(s"invoice.voided ${env.event_id} had no order_invoice_id — skipping credit note")
           case Some((invId, reason)) =>
-            service.invalidateInvoice(invId, reason).flatMap {
+            // carry the cycle correlation from invoice.voided onto the credit-note document.issued, caused by it
+            val correlation = env.correlation_id.flatMap(s => scala.util.Try(UUID.fromString(s)).toOption)
+            val causation   = scala.util.Try(UUID.fromString(env.event_id)).toOption
+            service.invalidateInvoice(invId, reason, correlation, causation).flatMap {
               case Right(Some(r)) => logger.info(s"minted credit note ${r.formattedNumber} for voided invoice $invId")
               case Right(None)    => logger.info(s"no invoice document to invalidate for $invId")
               case Left(m)        => Async[F].raiseError(new RuntimeException(s"credit note failed for $invId: $m"))

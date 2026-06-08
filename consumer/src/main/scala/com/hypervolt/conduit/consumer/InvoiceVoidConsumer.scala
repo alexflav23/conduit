@@ -51,9 +51,11 @@ final class InvoiceVoidConsumer[F[_]: Async](client: PulsarClient, processor: In
 
   private def handle(env: EventEnvelope): F[Unit] =
     InvoiceVoidConsumer.voidRequested(env) match {
-      case None => Async[F].unit // not a void request
+      case None                                          => Async[F].unit // not a void request
       case Some((invId, invoiceNo, kind, reason, actor)) =>
-        processor.process(invId, invoiceNo, kind, reason, actor).flatMap {
+        // the void request is the cause of the reversal — thread its event id for the causal chain
+        val causedBy = scala.util.Try(UUID.fromString(env.event_id)).toOption
+        processor.process(invId, invoiceNo, kind, reason, actor, causedBy).flatMap {
           case Right(_) => logger.info(s"voided invoice $invoiceNo ($kind)")
           case Left(m)  => Async[F].raiseError(new RuntimeException(s"void failed for $invoiceNo: $m"))
         }

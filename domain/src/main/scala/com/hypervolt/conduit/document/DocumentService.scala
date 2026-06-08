@@ -260,7 +260,12 @@ final class DocumentService[F[_]: Async](
   // On invoice.voided: stamp the original invoice document with a WORM-safe void marker (bytes untouched) and mint
   // a credit_note document that `corrects_document_id` it. Idempotent on a deterministic credit-note id. Returns
   // None when there is no original invoice document to invalidate (nothing to correct).
-  def invalidateInvoice(orderInvoiceId: UUID, reason: String): F[Either[String, Option[DocumentResult]]] = {
+  def invalidateInvoice(
+      orderInvoiceId: UUID,
+      reason: String,
+      correlationId: Option[UUID] = None,
+      causationId: Option[UUID] = None
+  ): F[Either[String, Option[DocumentResult]]] = {
     val cnId = UUID.nameUUIDFromBytes(s"document:credit_note:$orderInvoiceId".getBytes(StandardCharsets.UTF_8))
     existing(cnId).transact(xa).flatMap {
       case Some(r) => Option(r).asRight[String].pure[F] // idempotent: credit note already minted
@@ -277,7 +282,10 @@ final class DocumentService[F[_]: Async](
                   .flatMap(rendered =>
                     storage
                       .put(s"documents/$cnId.pdf", rendered.bytes, "application/pdf")
-                      .flatMap(uri => persistCreditNote(cnId, orig, t, model, rendered, uri, reason).transact(xa))
+                      .flatMap(uri =>
+                        persistCreditNote(cnId, orig, t, model, rendered, uri, reason, correlationId, causationId)
+                          .transact(xa)
+                      )
                   )
             }
         }
@@ -351,7 +359,9 @@ final class DocumentService[F[_]: Async](
       model: Json,
       rendered: RenderedDoc,
       storageUri: String,
-      reason: String
+      reason: String,
+      correlationId: Option[UUID],
+      causationId: Option[UUID]
   ): ConnectionIO[Either[String, Option[DocumentResult]]] =
     DocumentNumberAllocator.allocate(orig.entityId, "credit_note", orig.jurisdiction, LocalDate.now().getYear).flatMap {
       case None => "no active number series for credit_note".asLeft[Option[DocumentResult]].pure[ConnectionIO]
@@ -369,7 +379,9 @@ final class DocumentService[F[_]: Async](
                         ${orig.orderId}, ${orig.billTo}, ${orig.locale}, ${orig.jurisdiction}, ${t.id}, ${t.version},
                         ${orig.currency}, ${orig.total}, $model, ${orig.id}, 'finalised', $storageUri, ${rendered.contentSha256}, now())""".update.run
           _ <- DocumentNumberAllocator.markIssued(num.numberId, cnId)
-          _ <- OutboxRepo.append(creditIssuedEvent(cnId, num.formatted, orig, rendered, storageUri))
+          _ <- OutboxRepo.append(
+            creditIssuedEvent(cnId, num.formatted, orig, rendered, storageUri, correlationId, causationId)
+          )
         } yield Option(DocumentResult(cnId, num.formatted, rendered.contentSha256, orig.total, "finalised"))
           .asRight[String]
     }
@@ -379,7 +391,9 @@ final class DocumentService[F[_]: Async](
       number: String,
       orig: OrigDoc,
       rendered: RenderedDoc,
-      storageUri: String
+      storageUri: String,
+      correlationId: Option[UUID],
+      causationId: Option[UUID]
   ): OutboxEvent =
     OutboxEvent(
       UUID.randomUUID(),
@@ -389,8 +403,8 @@ final class DocumentService[F[_]: Async](
       id,
       id.toString,
       None,
-      None,
-      None,
+      correlationId,
+      causationId,
       Json.obj(
         "document_id"      -> id.toString.asJson,
         "document_type"    -> "credit_note".asJson,

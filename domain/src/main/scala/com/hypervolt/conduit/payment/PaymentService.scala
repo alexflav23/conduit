@@ -142,7 +142,9 @@ final class PaymentService[F[_]: Async](xa: Transactor[F], ledger: TigerBeetleLe
       invoiceNo: String,
       amount: BigDecimal,
       method: String,
-      externalRef: String
+      externalRef: String,
+      correlationId: Option[UUID] = None,
+      causationId: Option[UUID] = None
   ): F[Either[String, PaymentResult]] = {
     val pid = paymentId(Some(s"refund:$externalRef"))
     existing(pid).transact(xa).flatMap {
@@ -169,7 +171,8 @@ final class PaymentService[F[_]: Async](xa: Transactor[F], ledger: TigerBeetleLe
                 val transfer = LedgerTransfer(tId, arAcc, cashAcc, minor(amount), ledgerId, LedgerTransferCode.Reversal)
                 ledger.createAccounts(accounts) *>
                   ledger.postTransfers(List(transfer)) *>
-                  recordRefund(pid, invoiceNo, h, amount, kind, externalRef, tId).transact(xa)
+                  recordRefund(pid, invoiceNo, h, amount, kind, externalRef, tId, correlationId, causationId)
+                    .transact(xa)
             }
         }
     }
@@ -230,7 +233,9 @@ final class PaymentService[F[_]: Async](xa: Transactor[F], ledger: TigerBeetleLe
       amount: BigDecimal,
       kind: String,
       externalRef: String,
-      tId: BigInt
+      tId: BigInt,
+      correlationId: Option[UUID],
+      causationId: Option[UUID]
   ): ConnectionIO[Either[String, PaymentResult]] =
     for {
       _ <-
@@ -247,10 +252,18 @@ final class PaymentService[F[_]: Async](xa: Transactor[F], ledger: TigerBeetleLe
                  SET status = CASE WHEN status = 'void' THEN 'void' ELSE $newStatus END,
                      paid_at = CASE WHEN $newStatus = 'paid' THEN paid_at ELSE NULL END
                  WHERE id = ${h.invoiceId}""".update.run
-      _ <- OutboxRepo.append(event(pid, h, -amount, newStatus, "refund"))
+      _ <- OutboxRepo.append(event(pid, h, -amount, newStatus, "refund", correlationId, causationId))
     } yield PaymentResult(pid, invoiceNo, -amount, newStatus, tId).asRight[String]
 
-  private def event(pid: UUID, h: InvHead, amount: BigDecimal, status: String, method: String): OutboxEvent =
+  private def event(
+      pid: UUID,
+      h: InvHead,
+      amount: BigDecimal,
+      status: String,
+      method: String,
+      correlationId: Option[UUID] = None,
+      causationId: Option[UUID] = None
+  ): OutboxEvent =
     OutboxEvent(
       pid,
       "payment.received",
@@ -259,8 +272,8 @@ final class PaymentService[F[_]: Async](xa: Transactor[F], ledger: TigerBeetleLe
       h.orderId,
       h.orderId.toString,
       None,
-      None,
-      None,
+      correlationId,
+      causationId,
       Json.obj(
         "payment_id"       -> pid.toString.asJson,
         "order_invoice_id" -> h.invoiceId.toString.asJson,

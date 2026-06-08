@@ -80,8 +80,8 @@ final class InvoiceVoidRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[
       orderId,
       orderId.toString,
       None,
-      None,
-      None,
+      Some(com.hypervolt.conduit.revenue.CollectionCycle.correlationId(invId)), // the cycle thread
+      None,                                                                     // root of the cycle
       Json.obj(
         "order_invoice_id" -> invId.toString.asJson,
         "invoice_no"       -> invoiceNo.asJson,
