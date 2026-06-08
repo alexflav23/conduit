@@ -38,6 +38,7 @@ lazy val Versions = new {
   val avro4s         = "4.1.2"
   val squants        = "1.6.0"
   val fop            = "2.9"
+  val stripe         = "29.5.0-beta.1"
 
   val testContainers    = "0.41.0"
   val consulContainer   = "1.18.3"
@@ -139,6 +140,9 @@ lazy val domain = (project in file("domain"))
       // doc 17 §4.4 — legal-document PDF engine. Apache FOP (XSL-FO → PDF/A), NOT PDFBox: template-driven
       // layout, embeddable CJK+Thai fonts, deterministic output (fixed creation date) for sha re-performability.
       "org.apache.xmlgraphics"       % "fop"                          % Versions.fop,
+      // doc 13 §payments — Stripe (ported from Athena) is one source feeding the ledger settlement; webhook
+      // signature verification uses Stripe's own SDK. Swappable: the ledger settlement is the system of record.
+      "com.stripe"                   % "stripe-java"                  % Versions.stripe,
 
       "org.typelevel"               %% "squants"                      % Versions.squants,
       // Test-only: ToolBox-based "does not type-check" assertions (cross-currency safety).

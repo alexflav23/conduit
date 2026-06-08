@@ -28,6 +28,12 @@ final case class XeroConfig(
     clientId.nonEmpty && !clientId.startsWith("your-") && clientId != "default" && clientId != "changeme"
 }
 
+// Stripe webhook (doc 13 §payments). An empty secret disables signature verification (dev/CI) — the inbound
+// row is still recorded and the consumer settles it, so the path is exercisable without a live Stripe account.
+final case class StripeConfig(webhookSecret: String) {
+  def verifies: Boolean = webhookSecret.nonEmpty
+}
+
 final case class AppConfig(
     env: String,
     db: DbConfig,
@@ -35,7 +41,8 @@ final case class AppConfig(
     adminPort: Int,
     pulsar: PulsarConfig,
     tigerbeetle: TigerBeetleConfig,
-    xero: XeroConfig
+    xero: XeroConfig,
+    stripe: StripeConfig
 )
 
 object EnvironmentConfig {
@@ -51,6 +58,7 @@ object EnvironmentConfig {
     val pulsar = hv.getConfig("pulsar")
     val tb     = hv.getConfig("tigerbeetle")
     val xero   = hv.getConfig("xero")
+    val stripe = hv.getConfig("stripe")
     AppConfig(
       env = hv.getString("env"),
       db = DbConfig(
@@ -71,7 +79,8 @@ object EnvironmentConfig {
         apiUrl = xero.getString("api_url"),
         tenantId = Option(xero.getString("tenant_id")).map(_.trim).filter(_.nonEmpty),
         scope = xero.getString("scope")
-      )
+      ),
+      stripe = StripeConfig(webhookSecret = stripe.getString("webhook_secret"))
     )
   }
 }

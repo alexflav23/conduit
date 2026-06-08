@@ -14,6 +14,9 @@ import com.hypervolt.conduit.event.OutboxRelay
 import com.hypervolt.conduit.event.PulsarEventPublisher
 import com.hypervolt.conduit.ledger.TigerBeetleClient
 import com.hypervolt.conduit.ledger.TigerBeetleLedger
+import com.hypervolt.conduit.payment.PaymentService
+import com.hypervolt.conduit.payment.StripeInboundProcessor
+import com.hypervolt.conduit.payment.StripePaymentHandler
 import com.hypervolt.conduit.pulsar.PulsarUtils
 import com.hypervolt.conduit.revenue.RevenueRecognitionService
 import com.tigerbeetle.{Client => TbClient}
@@ -45,15 +48,18 @@ object Main extends IOApp.Simple {
     resources.use {
       case (cfg, xa, pulsar, http, tb) =>
         XeroAccountingConsumer.build[IO](http, cfg.xero).flatMap { (accounting: AccountingConsumer[IO]) =>
-          val ledger       = TigerBeetleLedger.fromClient[IO](tb)
-          val dispatcher   = new InvoiceDispatcher[IO](xa, accounting)
-          val xeroConsumer = new XeroInvoiceConsumer[IO](pulsar, dispatcher)
-          val revConsumer  = new RevenueRecognitionConsumer[IO](pulsar, new RevenueRecognitionService[IO](xa, ledger))
+          val ledger          = TigerBeetleLedger.fromClient[IO](tb)
+          val dispatcher      = new InvoiceDispatcher[IO](xa, accounting)
+          val xeroConsumer    = new XeroInvoiceConsumer[IO](pulsar, dispatcher)
+          val revConsumer     = new RevenueRecognitionConsumer[IO](pulsar, new RevenueRecognitionService[IO](xa, ledger))
+          val stripeHandler   = new StripePaymentHandler[IO](new PaymentService[IO](xa, ledger))
+          val stripeProcessor = new StripeInboundProcessor[IO](xa, stripeHandler)
+          val stripeLoop      = (stripeProcessor.runOnce() *> IO.sleep(2.second)).foreverM
           PulsarEventPublisher.create[IO](pulsar).flatMap { publisher =>
             val relay     = new OutboxRelay[IO](xa, publisher)
             val relayLoop = (relay.runOnce() *> IO.sleep(1.second)).foreverM
-            logger.info("Consumer running: outbox relay + Xero invoice + revenue recognition consumers") *>
-              List(relayLoop, xeroConsumer.runForever, revConsumer.runForever).parSequence_
+            logger.info("Consumer running: outbox relay + Xero invoice + revenue recognition + Stripe settlement") *>
+              List(relayLoop, xeroConsumer.runForever, revConsumer.runForever, stripeLoop).parSequence_
           }
         }
     }
