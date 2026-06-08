@@ -4,7 +4,7 @@ import cats.effect.IO
 import cats.effect.Resource
 import cats.syntax.all._
 import com.hypervolt.conduit.intercompany.IntercompanyService
-import com.hypervolt.conduit.intercompany.StubTaxEngine
+import com.hypervolt.conduit.tax.IntercompanyImportTaxEngine
 import com.hypervolt.conduit.ledger.TbIds
 import com.hypervolt.conduit.ledger.TigerBeetleLedger
 import com.tigerbeetle.Client
@@ -63,7 +63,7 @@ object IntercompanySuite extends IOSuite {
   test("cross-currency movement posts linked legs through FX_CLEARING; INV relieved at landed cost; IC nets to zero") {
     case (xa, client) =>
       val ledger = TigerBeetleLedger.fromClient[IO](client)
-      val svc    = new IntercompanyService[IO](xa, ledger, StubTaxEngine)
+      val svc    = new IntercompanyService[IO](xa, ledger, IntercompanyImportTaxEngine)
       for {
         sg <- entity(xa, "SG", "USD")
         uk <- entity(xa, "GB", "GBP")
@@ -96,7 +96,7 @@ object IntercompanySuite extends IOSuite {
   test("transfer price is batch-specific and the tp_document reproduces it exactly") {
     case (xa, client) =>
       val ledger = TigerBeetleLedger.fromClient[IO](client)
-      val svc    = new IntercompanyService[IO](xa, ledger, StubTaxEngine)
+      val svc    = new IntercompanyService[IO](xa, ledger, IntercompanyImportTaxEngine)
       for {
         a  <- entity(xa, "GB", "GBP")
         b  <- entity(xa, "GB", "GBP") // same currency + jurisdiction → domestic, no FX, no import tax
@@ -127,7 +127,7 @@ object IntercompanySuite extends IOSuite {
   test("a designated hedge sets the hop FX to the contracted rate and draws down its notional") {
     case (xa, client) =>
       val ledger = TigerBeetleLedger.fromClient[IO](client)
-      val svc    = new IntercompanyService[IO](xa, ledger, StubTaxEngine)
+      val svc    = new IntercompanyService[IO](xa, ledger, IntercompanyImportTaxEngine)
       for {
         sg <- entity(xa, "SG", "USD")
         uk <- entity(xa, "GB", "GBP")
@@ -149,7 +149,7 @@ object IntercompanySuite extends IOSuite {
   test("a movement cannot post into a locked accounting period") {
     case (xa, client) =>
       val ledger = TigerBeetleLedger.fromClient[IO](client)
-      val svc    = new IntercompanyService[IO](xa, ledger, StubTaxEngine)
+      val svc    = new IntercompanyService[IO](xa, ledger, IntercompanyImportTaxEngine)
       for {
         a <- entity(xa, "GB", "GBP")
         b <- entity(xa, "GB", "GBP")
