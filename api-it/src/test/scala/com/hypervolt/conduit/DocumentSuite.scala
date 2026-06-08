@@ -3,8 +3,8 @@ package com.hypervolt.conduit
 import cats.effect.IO
 import cats.effect.Resource
 import com.hypervolt.conduit.document.DocumentNumberAllocator
-import com.hypervolt.conduit.document.DocumentRenderer
 import com.hypervolt.conduit.document.DocumentService
+import com.hypervolt.conduit.document.FopDocumentRenderer
 import doobie.implicits._
 import doobie.postgres.implicits._
 import doobie.hikari.HikariTransactor
@@ -84,7 +84,7 @@ object DocumentSuite extends IOSuite {
   test(
     "invoice is a projection of typed truth: total read off order_invoice, gapless number, deterministic, idempotent"
   ) { xa =>
-    val svc = new DocumentService[IO](xa, DocumentRenderer.deterministic[IO])
+    val svc = new DocumentService[IO](xa, new FopDocumentRenderer[IO]) // real Apache FOP PDF engine
     for {
       e   <- entityWithSeries(xa)
       inv <- invoice(xa, e)

@@ -1,0 +1,13 @@
+<configuration>
+  <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+    <encoder>
+      <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
+    </encoder>
+  </appender>
+  <!-- Apache FOP is very chatty at DEBUG during rendering; keep CI logs readable. -->
+  <logger name="org.apache.fop" level="WARN"/>
+  <logger name="org.apache.xmlgraphics" level="WARN"/>
+  <root level="INFO">
+    <appender-ref ref="STDOUT"/>
+  </root>
+</configuration>

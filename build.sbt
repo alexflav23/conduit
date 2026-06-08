@@ -37,6 +37,7 @@ lazy val Versions = new {
   val avro           = "1.12.0"
   val avro4s         = "4.1.2"
   val squants        = "1.6.0"
+  val fop            = "2.9"
 
   val testContainers    = "0.41.0"
   val consulContainer   = "1.18.3"
@@ -135,6 +136,9 @@ lazy val domain = (project in file("domain"))
       "com.sksamuel.avro4s"         %% "avro4s-core"                  % Versions.avro4s,
       "org.apache.avro"              % "avro"                         % Versions.avro,
       "org.xerial.snappy"            % "snappy-java"                  % "1.1.10.7", // avro4s binary encode path
+      // doc 17 §4.4 — legal-document PDF engine. Apache FOP (XSL-FO → PDF/A), NOT PDFBox: template-driven
+      // layout, embeddable CJK+Thai fonts, deterministic output (fixed creation date) for sha re-performability.
+      "org.apache.xmlgraphics"       % "fop"                          % Versions.fop,
 
       "org.typelevel"               %% "squants"                      % Versions.squants,
       // Test-only: ToolBox-based "does not type-check" assertions (cross-currency safety).

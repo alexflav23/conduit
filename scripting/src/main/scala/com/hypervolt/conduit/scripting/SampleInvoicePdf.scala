@@ -1,0 +1,53 @@
+package com.hypervolt.conduit.scripting
+
+import cats.effect.IO
+import cats.effect.IOApp
+import com.hypervolt.conduit.document.FopDocumentRenderer
+import io.circe.Json
+import io.circe.syntax._
+import java.nio.file.Files
+import java.nio.file.Paths
+
+// Renders a sample GB/en invoice through the real Apache FOP engine and writes it to target/sample-invoice.pdf,
+// so the rendered legal artefact can be eyeballed (the on-screen verification step). Same model the integration
+// test uses; the printed sha must match across runs (re-performability).
+object SampleInvoicePdf extends IOApp.Simple {
+
+  private val model: Json =
+    Json.obj(
+      "supplier_name" -> "Hypervolt UK Ltd".asJson,
+      "payer_name"    -> "Doc Customer Ltd".asJson,
+      "locale"        -> "en".asJson,
+      "jurisdiction"  -> "GB".asJson,
+      "currency"      -> "GBP".asJson,
+      "lines" -> Json.arr(
+        Json.obj(
+          "description" -> "Home 3 Charger".asJson,
+          "sku"         -> "HOME3-V3".asJson,
+          "qty"         -> 2.asJson,
+          "unit_price"  -> "500.00".asJson,
+          "vat"         -> "200.00".asJson,
+          "line_total"  -> "1000.00".asJson
+        ),
+        Json.obj(
+          "description" -> "Tethered Cable 5m".asJson,
+          "sku"         -> "CABLE-5M".asJson,
+          "qty"         -> 2.asJson,
+          "unit_price"  -> "0.00".asJson,
+          "vat"         -> "0.00".asJson,
+          "line_total"  -> "0.00".asJson
+        )
+      ),
+      "subtotal" -> "1000.00".asJson,
+      "vat"      -> "200.00".asJson,
+      "total"    -> "1200.00".asJson
+    )
+
+  def run: IO[Unit] =
+    new FopDocumentRenderer[IO]
+      .render("GB/en invoice template v1", model)
+      .flatMap(d =>
+        IO.blocking(Files.write(Paths.get("target/sample-invoice.pdf"), d.bytes)) *>
+          IO.println(s"wrote target/sample-invoice.pdf  pages=${d.pageCount}  sha256=${d.contentSha256}")
+      )
+}
