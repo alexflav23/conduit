@@ -424,4 +424,231 @@ final class DocumentService[F[_]: Async](
       Instant.now(),
       "service:documents"
     )
+
+  // ===== additional document types (doc 17 §5): proforma + packing list =====
+
+  // A generic template lookup for any document type (the invoice/credit lookups are special-cased above).
+  private def templateFor(docType: String, jurisdiction: String, locale: String): ConnectionIO[Option[TemplateRow]] =
+    sql"""SELECT id, version, body, required_fields FROM document_template
+          WHERE document_type = $docType AND status = 'active'
+            AND (jurisdiction = $jurisdiction OR jurisdiction IS NULL)
+            AND (locale = $locale OR locale IS NULL)
+          ORDER BY (jurisdiction IS NOT NULL) DESC, (locale IS NOT NULL) DESC, version DESC LIMIT 1"""
+      .query[(UUID, Int, String, List[String])]
+      .option
+      .map(_.map { case (id, v, b, rf) => TemplateRow(id, v, b, rf) })
+
+  // Proforma invoice (doc 17): a pre-payment projection of the order — no AR, no number reuse with the tax invoice.
+  // Idempotent on a deterministic id. The order totals are READ, never recomputed.
+  def generateProforma(orderId: UUID): F[Either[String, DocumentResult]] = {
+    val id = UUID.nameUUIDFromBytes(s"document:proforma:$orderId".getBytes(StandardCharsets.UTF_8))
+    existing(id).transact(xa).flatMap {
+      case Some(r) => r.asRight[String].pure[F]
+      case None =>
+        (orderHead(orderId), lines(orderId), Option.empty[Unit].pure[ConnectionIO]).tupled.transact(xa).flatMap {
+          case (None, _, _) => "unknown order".asLeft[DocumentResult].pure[F]
+          case (Some(h), ls, _) =>
+            templateFor("proforma", h.jurisdiction, h.locale).transact(xa).flatMap {
+              case None => "no active proforma template".asLeft[DocumentResult].pure[F]
+              case Some(t) =>
+                val model = buildModel(h, ls).deepMerge(
+                  Json.obj(
+                    "title" -> "PROFORMA INVOICE".asJson,
+                    "notes" -> Json.arr("Proforma — not a VAT invoice. Payable in advance of dispatch.".asJson)
+                  )
+                )
+                renderer
+                  .render(t.body, model)
+                  .flatMap(rd =>
+                    storage
+                      .put(s"documents/$id.pdf", rd.bytes, "application/pdf")
+                      .flatMap(uri =>
+                        finaliseDoc(
+                          id,
+                          "proforma",
+                          h.entityId,
+                          h.jurisdiction,
+                          h.locale,
+                          Some(h.orderId),
+                          None,
+                          None,
+                          Some(h.billTo),
+                          Some(h.currency),
+                          Some(h.total),
+                          t,
+                          model,
+                          rd,
+                          uri
+                        ).transact(xa)
+                      )
+                  )
+            }
+        }
+    }
+  }
+
+  // Packing list (doc 17 §9): a VOLUME-only shipment document — packed contents + serials, no money. Tied to a
+  // dispatch. Idempotent on a deterministic id.
+  def generatePackingList(dispatchId: UUID): F[Either[String, DocumentResult]] = {
+    val id = UUID.nameUUIDFromBytes(s"document:packing_list:$dispatchId".getBytes(StandardCharsets.UTF_8))
+    existing(id).transact(xa).flatMap {
+      case Some(r) => r.asRight[String].pure[F]
+      case None =>
+        (dispatchHead(dispatchId), dispatchRows(dispatchId)).tupled.transact(xa).flatMap {
+          case (None, _) => "unknown dispatch".asLeft[DocumentResult].pure[F]
+          case (Some(h), rows) =>
+            templateFor("packing_list", h.jurisdiction, h.locale).transact(xa).flatMap {
+              case None => "no active packing_list template".asLeft[DocumentResult].pure[F]
+              case Some(t) =>
+                val model = Json.obj(
+                  "title"         -> "PACKING LIST".asJson,
+                  "supplier_name" -> h.supplierName.asJson,
+                  "payer_name"    -> h.shipTo.asJson,
+                  "payer_label"   -> "Ship to".asJson,
+                  "locale"        -> h.locale.asJson,
+                  "jurisdiction"  -> h.jurisdiction.asJson,
+                  "meta" -> Json
+                    .arr(Json.arr("Dispatch".asJson, h.dispatchNo.asJson), Json.arr("Order".asJson, h.orderNo.asJson)),
+                  "columns" -> Json.arr("Description".asJson, "SKU".asJson, "Qty".asJson, "Serials".asJson),
+                  "rows" -> rows
+                    .map(r => Json.arr(r._1.asJson, r._2.asJson, r._3.asJson, r._4.asJson))
+                    .asJson
+                )
+                renderer
+                  .render(t.body, model)
+                  .flatMap(rd =>
+                    storage
+                      .put(s"documents/$id.pdf", rd.bytes, "application/pdf")
+                      .flatMap(uri =>
+                        finaliseDoc(
+                          id,
+                          "packing_list",
+                          h.entityId,
+                          h.jurisdiction,
+                          h.locale,
+                          Some(h.orderId),
+                          None,
+                          Some(dispatchId),
+                          None,
+                          None,
+                          None,
+                          t,
+                          model,
+                          rd,
+                          uri
+                        ).transact(xa)
+                      )
+                  )
+            }
+        }
+    }
+  }
+
+  private def orderHead(orderId: UUID): ConnectionIO[Option[InvHead]] =
+    sql"""SELECT o.id, o.entity_id, e.jurisdiction, o.bill_to_party_id, COALESCE(p.legal_name, p.display_name),
+                 e.name, o.txn_currency, o.subtotal_ex_vat, o.vat_total, o.total_inc_vat, COALESCE(bp.invoice_locale, 'en')
+          FROM "order" o
+            JOIN entity e ON e.id = o.entity_id
+            JOIN party p ON p.id = o.bill_to_party_id
+            LEFT JOIN billing_profile bp ON bp.party_id = o.bill_to_party_id
+          WHERE o.id = $orderId"""
+      .query[InvHead]
+      .option
+
+  private def dispatchHead(dispatchId: UUID): ConnectionIO[Option[DispatchDocHead]] =
+    sql"""SELECT o.id, o.entity_id, e.jurisdiction, e.name, COALESCE(p.legal_name, p.display_name),
+                 COALESCE(bp.invoice_locale, 'en'), d.dispatch_no, o.order_no
+          FROM dispatch d
+            JOIN "order" o ON o.id = d.order_id
+            JOIN entity e ON e.id = o.entity_id
+            JOIN party p ON p.id = o.bill_to_party_id
+            LEFT JOIN billing_profile bp ON bp.party_id = o.bill_to_party_id
+          WHERE d.id = $dispatchId"""
+      .query[DispatchDocHead]
+      .option
+
+  // Per dispatch line: description, sku, qty, and the serials shipped (volume-only — never priced).
+  private def dispatchRows(dispatchId: UUID): ConnectionIO[List[(String, String, Int, String)]] =
+    sql"""SELECT COALESCE(f.name, v.sku), v.sku, dl.qty,
+                 COALESCE((SELECT string_agg(s.serial_no, ', ' ORDER BY s.serial_no) FROM serial_unit s
+                           WHERE s.dispatch_id = $dispatchId AND s.product_variant_id = ol.product_variant_id), '')
+          FROM dispatch_line dl
+            JOIN order_line ol ON ol.id = dl.order_line_id
+            JOIN product_variant v ON v.id = ol.product_variant_id
+            LEFT JOIN product_family f ON f.id = v.family_id
+          WHERE dl.dispatch_id = $dispatchId ORDER BY dl.id"""
+      .query[(String, String, Int, String)]
+      .to[List]
+
+  // One finalise path for the non-invoice types: gapless number, WORM document row, document.issued — all-or-none.
+  private def finaliseDoc(
+      id: UUID,
+      docType: String,
+      entityId: UUID,
+      jurisdiction: String,
+      locale: String,
+      orderId: Option[UUID],
+      orderInvoiceId: Option[UUID],
+      dispatchId: Option[UUID],
+      billTo: Option[UUID],
+      currency: Option[String],
+      total: Option[BigDecimal],
+      t: TemplateRow,
+      model: Json,
+      rendered: RenderedDoc,
+      storageUri: String
+  ): ConnectionIO[Either[String, DocumentResult]] =
+    DocumentNumberAllocator.allocate(entityId, docType, jurisdiction, LocalDate.now().getYear).flatMap {
+      case None => s"no active number series for $docType".asLeft[DocumentResult].pure[ConnectionIO]
+      case Some(num) =>
+        for {
+          _ <- sql"""INSERT INTO document
+                       (id, document_type, entity_id, document_number_id, formatted_number, order_invoice_id,
+                        order_id, dispatch_id, bill_to_party_id, locale, jurisdiction, template_id, template_version,
+                        currency, total_amount, render_model, status, storage_uri, content_sha256, issued_at)
+                     VALUES ($id, $docType, $entityId, ${num.numberId}, ${num.formatted}, $orderInvoiceId,
+                        $orderId, $dispatchId, $billTo, $locale, $jurisdiction, ${t.id}, ${t.version},
+                        $currency, $total, $model, 'finalised', $storageUri, ${rendered.contentSha256}, now())""".update.run
+          _ <- DocumentNumberAllocator.markIssued(num.numberId, id)
+          _ <- OutboxRepo.append(
+            OutboxEvent(
+              UUID.randomUUID(),
+              "document.issued",
+              1,
+              "document",
+              id,
+              id.toString,
+              None,
+              None,
+              None,
+              Json.obj(
+                "document_id"      -> id.toString.asJson,
+                "document_type"    -> docType.asJson,
+                "formatted_number" -> num.formatted.asJson,
+                "order_id"         -> orderId.map(_.toString).asJson,
+                "dispatch_id"      -> dispatchId.map(_.toString).asJson,
+                "total_amount"     -> total.asJson,
+                "storage_uri"      -> storageUri.asJson,
+                "content_sha256"   -> rendered.contentSha256.asJson,
+                "locale"           -> locale.asJson,
+                "jurisdiction"     -> jurisdiction.asJson
+              ),
+              Instant.now(),
+              "service:documents"
+            )
+          )
+        } yield DocumentResult(id, num.formatted, rendered.contentSha256, total.getOrElse(BigDecimal(0)), "finalised")
+          .asRight[String]
+    }
 }
+
+private final case class DispatchDocHead(
+    orderId: UUID,
+    entityId: UUID,
+    jurisdiction: String,
+    supplierName: String,
+    shipTo: String,
+    locale: String,
+    dispatchNo: String,
+    orderNo: String
+)

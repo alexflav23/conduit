@@ -56,6 +56,22 @@ object SampleInvoicePdf extends IOApp.Simple {
       "total"           -> "1200.00".asJson
     )
 
+  // A volume-only packing list: a generic columns/rows table, ship-to + dispatch meta, no money.
+  private val packingModel: Json =
+    Json.obj(
+      "title"         -> "PACKING LIST".asJson,
+      "supplier_name" -> "Hypervolt UK Ltd".asJson,
+      "payer_name"    -> "Doc Customer Ltd".asJson,
+      "payer_label"   -> "Ship to".asJson,
+      "locale"        -> "en".asJson,
+      "meta"          -> Json.arr(Json.arr("Dispatch".asJson, "DSP-FLOW".asJson), Json.arr("Order".asJson, "ORD-FLOW".asJson)),
+      "columns"       -> Json.arr("Description".asJson, "SKU".asJson, "Qty".asJson, "Serials".asJson),
+      "rows" -> Json.arr(
+        Json.arr("Home 3 Charger".asJson, "HOME3-V3".asJson, "2".asJson, "SER-0001, SER-0002".asJson),
+        Json.arr("Tethered Cable 5m".asJson, "CABLE-5M".asJson, "2".asJson, "".asJson)
+      )
+    )
+
   def run: IO[Unit] = {
     val renderer = new FopDocumentRenderer[IO]
     renderer
@@ -69,6 +85,12 @@ object SampleInvoicePdf extends IOApp.Simple {
         .flatMap(d =>
           IO.blocking(Files.write(Paths.get("target/sample-credit-note.pdf"), d.bytes)) *>
             IO.println(s"wrote target/sample-credit-note.pdf  pages=${d.pageCount}  sha256=${d.contentSha256}")
+        ) *>
+      renderer
+        .render("GB/en packing_list template v1", packingModel)
+        .flatMap(d =>
+          IO.blocking(Files.write(Paths.get("target/sample-packing-list.pdf"), d.bytes)) *>
+            IO.println(s"wrote target/sample-packing-list.pdf  pages=${d.pageCount}  sha256=${d.contentSha256}")
         )
   }
 }

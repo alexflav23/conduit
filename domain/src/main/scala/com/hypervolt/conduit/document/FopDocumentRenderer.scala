@@ -71,18 +71,94 @@ object FopDocumentRenderer {
       }
       .mkString("\n")
 
-  // The governed A4 invoice layout (doc 17 §5). Pure function of the render model → reproducible FO → reproducible
-  // PDF. Latin base-14 fonts for the year-1 GB/en template; a CJK/Thai font_stack drops in via fo:font-family + a
-  // fop.xconf when those markets come online (doc 02 §A roadmap).
+  // Columns whose values are amounts/quantities → right-aligned in the generic table.
+  private val numericCols =
+    Set("qty", "unit", "amount", "total", "value", "outstanding", "duty", "vat", "price", "unit price", "line total")
+  private def isNum(h: String): Boolean = numericCols.contains(h.trim.toLowerCase)
+
+  // A generic table from model.columns (header labels) + model.rows (arrays of cells) — used by document types
+  // that aren't invoice-shaped (packing list, statement, commercial invoice). Empty when absent.
+  private def genericTable(model: Json): String = {
+    val cols = model.hcursor.downField("columns").values.getOrElse(Nil).toList.flatMap(_.asString)
+    val rows = model.hcursor.downField("rows").values.getOrElse(Nil).toList
+    if (cols.isEmpty) ""
+    else {
+      val colDefs =
+        cols.map(_ => """        <fo:table-column column-width="proportional-column-width(1)"/>""").mkString("\n")
+      val header = cols
+        .map(h =>
+          s"""<fo:table-cell padding="3pt" text-align="${if (isNum(h)) "right" else "left"}"><fo:block>${esc(
+            h
+          )}</fo:block></fo:table-cell>"""
+        )
+        .mkString
+      val body = rows
+        .map { r =>
+          val cells = r.asArray.getOrElse(Vector.empty)
+          val tds = cols.indices.map { i =>
+            val v = cells.lift(i).map(j => j.asString.getOrElse(j.toString)).getOrElse("")
+            s"""<fo:table-cell padding="3pt" text-align="${if (isNum(cols(i))) "right" else "left"}"><fo:block>${esc(
+              v
+            )}</fo:block></fo:table-cell>"""
+          }.mkString
+          s"""        <fo:table-row>$tds</fo:table-row>"""
+        }
+        .mkString("\n")
+      s"""      <fo:table table-layout="fixed" width="100%" space-after="12pt" border-top="0.5pt solid black" border-bottom="0.5pt solid black">
+         |$colDefs
+         |        <fo:table-header font-weight="bold"><fo:table-row>$header</fo:table-row></fo:table-header>
+         |        <fo:table-body>
+         |$body
+         |        </fo:table-body>
+         |      </fo:table>""".stripMargin
+    }
+  }
+
+  // model.meta = [[label, value], …] → "label: value" blocks (incoterms, country of origin, account period, …).
+  private def metaBlocks(model: Json): String =
+    model.hcursor
+      .downField("meta")
+      .values
+      .getOrElse(Nil)
+      .toList
+      .flatMap { m =>
+        val a = m.asArray.getOrElse(Vector.empty)
+        if (a.size >= 2)
+          Some(s"""      <fo:block space-after="2pt">${esc(a(0).asString.getOrElse(""))}: ${esc(
+            a(1).asString.getOrElse(a(1).toString)
+          )}</fo:block>""")
+        else None
+      }
+      .mkString("\n")
+
+  // model.notes = ["…"] → small print (legal clauses, "proforma — not a tax invoice", …).
+  private def noteBlocks(model: Json): String =
+    model.hcursor
+      .downField("notes")
+      .values
+      .getOrElse(Nil)
+      .toList
+      .flatMap(_.asString)
+      .map(n => s"""      <fo:block font-size="8pt" space-before="2pt">${esc(n)}</fo:block>""")
+      .mkString("\n")
+
+  // The governed A4 document layout (doc 17 §5). Pure function of the render model → reproducible FO → reproducible
+  // PDF. Generic enough for every document type: an explicit title, supplier/payer, a meta block, an invoice-style
+  // line table OR a generic columns/rows table, totals, and notes. Latin base-14 fonts for year-1 GB/en; a CJK/Thai
+  // font_stack drops in via fo:font-family + a fop.xconf when those markets come online (doc 02 §A roadmap).
   def foDocument(model: Json): String = {
-    val ccy      = esc(field(model, "currency"))
-    val corrects = field(model, "corrects_number")
-    val reason   = field(model, "reason")
-    val title    = if (corrects.nonEmpty) "CREDIT NOTE" else "INVOICE"
-    val rows     = lineRows(model)
-    // A line table is only valid FO when it has rows (invoices); creditnotes/statements without lines omit it.
+    val ccy        = esc(field(model, "currency"))
+    val corrects   = field(model, "corrects_number")
+    val reason     = field(model, "reason")
+    val titleField = field(model, "title")
+    val title      = if (titleField.nonEmpty) titleField else if (corrects.nonEmpty) "CREDIT NOTE" else "INVOICE"
+    val payerLabel = { val l = field(model, "payer_label"); if (l.nonEmpty) l else "Bill to" }
+    val generic = genericTable(model)
+    val rows    = if (generic.nonEmpty) "" else lineRows(model)
+    // The generic table wins when present; otherwise the invoice-style line table (only valid FO when it has rows).
     val tableBlock =
-      if (rows.trim.isEmpty) ""
+      if (generic.nonEmpty) generic
+      else if (rows.trim.isEmpty) ""
       else
         s"""      <fo:table table-layout="fixed" width="100%" space-after="12pt" border-top="0.5pt solid black" border-bottom="0.5pt solid black">
            |        <fo:table-column column-width="40%"/>
@@ -109,22 +185,29 @@ object FopDocumentRenderer {
       if (reason.isEmpty) "" else s"""      <fo:block space-after="12pt">Reason: ${esc(reason)}</fo:block>"""
     val subtotal = field(model, "subtotal")
     val vat      = field(model, "vat")
+    val total    = field(model, "total")
     val subtotalBlock =
       if (subtotal.isEmpty) ""
       else s"""      <fo:block text-align="right">Total ex VAT: $ccy ${esc(subtotal)}</fo:block>"""
     val vatBlock = if (vat.isEmpty) "" else s"""      <fo:block text-align="right">VAT: $ccy ${esc(vat)}</fo:block>"""
+    val totalBlock =
+      if (total.isEmpty) ""
+      else
+        s"""      <fo:block text-align="right" font-weight="bold" space-before="2pt">Total: $ccy ${esc(
+          total
+        )}</fo:block>"""
     val body = List(
       s"""      <fo:block font-size="20pt" font-weight="bold" space-after="6pt">$title</fo:block>""",
       s"""      <fo:block space-after="2pt">${esc(field(model, "supplier_name"))}</fo:block>""",
-      s"""      <fo:block space-after="12pt">Bill to: ${esc(field(model, "payer_name"))}</fo:block>""",
+      s"""      <fo:block space-after="12pt">$payerLabel: ${esc(field(model, "payer_name"))}</fo:block>""",
+      metaBlocks(model),
       correctsBlock,
       reasonBlock,
       tableBlock,
       subtotalBlock,
       vatBlock,
-      s"""      <fo:block text-align="right" font-weight="bold" space-before="2pt">Total: $ccy ${esc(
-        field(model, "total")
-      )}</fo:block>"""
+      totalBlock,
+      noteBlocks(model)
     ).filter(_.nonEmpty).mkString("\n")
     s"""<?xml version="1.0" encoding="UTF-8"?>
        |<fo:root xmlns:fo="http://www.w3.org/1999/XSL/Format" xml:lang="${esc(field(model, "locale"))}">
