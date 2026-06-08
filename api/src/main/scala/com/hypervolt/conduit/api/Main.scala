@@ -77,12 +77,13 @@ object Main extends IOApp.Simple {
           new DocumentRoutes[IO](xa, auth, new S3DocumentStorage[IO](s3Client, cfg.documents.bucket)).routes
         val voidRoutes      = new InvoiceVoidRoutes[IO](xa, auth).routes
         val lifecycleRoutes = new OrderLifecycleRoutes[IO](xa, auth).routes
+        val taxRoutes       = new com.hypervolt.conduit.api.routes.TaxRoutes[IO](xa, auth).routes
         val app =
           Router(
             "/" -> (HealthRoutes
               .routes[
                 IO
-              ] <+> accessRoutes <+> pricingRoutes <+> commerceRoutes <+> dealDeskRoutes <+> h6qRoutes <+> icRoutes <+> creditRoutes <+> auditRoutes <+> stripeRoutes <+> documentRoutes <+> voidRoutes <+> lifecycleRoutes)
+              ] <+> accessRoutes <+> pricingRoutes <+> commerceRoutes <+> dealDeskRoutes <+> h6qRoutes <+> icRoutes <+> creditRoutes <+> auditRoutes <+> stripeRoutes <+> documentRoutes <+> voidRoutes <+> lifecycleRoutes <+> taxRoutes)
           ).orNotFound
         val host      = Ipv4Address.fromString(cfg.http.host).getOrElse(ipv4"0.0.0.0")
         val apiPort   = Port.fromInt(cfg.http.port).getOrElse(port"8080")
