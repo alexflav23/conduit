@@ -241,9 +241,10 @@ M9b Returns/RMA *(needs spec/09, not yet written)* · M10 Deal Desk + migration/
 **Phase 3 — Forecasting/intercompany/ERP/connect + UI**: M11 H6Q · M12 Intercompany+TP+tax/customs+hedges ·
 M13 ERP/GL+P&L+Xero · M13b Period close+reconciliation+Auditability Center · M14 Companion app + Horizons + reporting + HubSpot.
 
-**Launch-blockers tracked but not yet specced** (`spec/10`): migration runbook, tax/customs engine (likely Avalara/TaxJar/
-Stripe Tax), document generation, NFR/security(GDPR DSAR)/ops-DR docs, back-office desk screen-spec, returns deep-dive (09).
-None block starting the spine; fold in per their milestone.
+**Launch-blockers tracked but not yet specced** (`spec/10`): migration runbook, NFR/security(GDPR DSAR)/ops-DR docs,
+back-office desk screen-spec, returns deep-dive (09). *(Done since: document generation — M13-Docs; the **tax/customs
+engine** — M13-Tax, doc 16: effective-dated multi-level rate-table `TaxProvider` with the external Avalara/TaxJar/
+Stripe-Tax path a `tax_routing` row + adapter away.)* None block starting the spine; fold in per their milestone.
 
 ---
 
