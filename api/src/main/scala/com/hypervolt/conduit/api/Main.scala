@@ -14,9 +14,11 @@ import com.hypervolt.conduit.api.routes.DealDeskRoutes
 import com.hypervolt.conduit.api.routes.H6QRoutes
 import com.hypervolt.conduit.api.routes.HealthRoutes
 import com.hypervolt.conduit.api.routes.IntercompanyRoutes
+import com.hypervolt.conduit.api.routes.DocumentRoutes
 import com.hypervolt.conduit.api.routes.PricingRoutes
 import com.hypervolt.conduit.api.routes.StripeWebhookRoutes
 import com.hypervolt.conduit.config.AppConfig
+import com.hypervolt.conduit.document.S3DocumentStorage
 import com.hypervolt.conduit.config.EnvironmentConfig
 import com.hypervolt.conduit.db.Transactor
 import doobie.hikari.HikariTransactor
@@ -65,12 +67,18 @@ object Main extends IOApp.Simple {
           new com.hypervolt.conduit.payment.StripeSignatureVerifier(cfg.stripe.webhookSecret)
         )
         val stripeRoutes = new StripeWebhookRoutes[IO](xa, stripeVerifier).routes
+        val s3Client =
+          if (cfg.documents.usesEndpoint)
+            S3DocumentStorage.endpointClient(cfg.documents.endpoint, cfg.documents.accessKey, cfg.documents.secretKey)
+          else S3DocumentStorage.awsClient
+        val documentRoutes =
+          new DocumentRoutes[IO](xa, auth, new S3DocumentStorage[IO](s3Client, cfg.documents.bucket)).routes
         val app =
           Router(
             "/" -> (HealthRoutes
               .routes[
                 IO
-              ] <+> accessRoutes <+> pricingRoutes <+> commerceRoutes <+> dealDeskRoutes <+> h6qRoutes <+> icRoutes <+> creditRoutes <+> auditRoutes <+> stripeRoutes)
+              ] <+> accessRoutes <+> pricingRoutes <+> commerceRoutes <+> dealDeskRoutes <+> h6qRoutes <+> icRoutes <+> creditRoutes <+> auditRoutes <+> stripeRoutes <+> documentRoutes)
           ).orNotFound
         val host      = Ipv4Address.fromString(cfg.http.host).getOrElse(ipv4"0.0.0.0")
         val apiPort   = Port.fromInt(cfg.http.port).getOrElse(port"8080")

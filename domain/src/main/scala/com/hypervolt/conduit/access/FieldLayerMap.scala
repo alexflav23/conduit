@@ -55,7 +55,10 @@ object FieldLayerMap {
     ("intercompany_link", "stock_transfer_id")     -> DataLayer.Volume,
     ("tp_document", "transfer_unit_price")         -> DataLayer.InterEntity,
     ("tp_document", "lot_landed_unit_cost")        -> DataLayer.InterEntity,
-    ("tp_document", "markup_or_margin_pct")        -> DataLayer.InterEntity
+    ("tp_document", "markup_or_margin_pct")        -> DataLayer.InterEntity,
+    // legal documents (doc 17 §9): the money on the artefact is commercial; the rest is logistics/identity.
+    ("document", "total_amount") -> DataLayer.Commercial,
+    ("document", "currency")     -> DataLayer.Commercial
   )
 
   def layerOf(objectType: String, field: String): Option[DataLayer] = seed.get((objectType, field))
