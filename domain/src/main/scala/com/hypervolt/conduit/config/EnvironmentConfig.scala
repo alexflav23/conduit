@@ -34,6 +34,12 @@ final case class StripeConfig(webhookSecret: String) {
   def verifies: Boolean = webhookSecret.nonEmpty
 }
 
+// WORM document store (doc 17 §6). `endpoint` empty → the default AWS S3 client (instance role); set → a custom
+// endpoint (LocalStack) with static creds. The consumer renders + stores invoice PDFs here.
+final case class DocumentsConfig(bucket: String, endpoint: String, accessKey: String, secretKey: String) {
+  def usesEndpoint: Boolean = endpoint.nonEmpty
+}
+
 final case class AppConfig(
     env: String,
     db: DbConfig,
@@ -42,7 +48,8 @@ final case class AppConfig(
     pulsar: PulsarConfig,
     tigerbeetle: TigerBeetleConfig,
     xero: XeroConfig,
-    stripe: StripeConfig
+    stripe: StripeConfig,
+    documents: DocumentsConfig
 )
 
 object EnvironmentConfig {
@@ -59,6 +66,7 @@ object EnvironmentConfig {
     val tb     = hv.getConfig("tigerbeetle")
     val xero   = hv.getConfig("xero")
     val stripe = hv.getConfig("stripe")
+    val docs   = hv.getConfig("documents")
     AppConfig(
       env = hv.getString("env"),
       db = DbConfig(
@@ -80,7 +88,13 @@ object EnvironmentConfig {
         tenantId = Option(xero.getString("tenant_id")).map(_.trim).filter(_.nonEmpty),
         scope = xero.getString("scope")
       ),
-      stripe = StripeConfig(webhookSecret = stripe.getString("webhook_secret"))
+      stripe = StripeConfig(webhookSecret = stripe.getString("webhook_secret")),
+      documents = DocumentsConfig(
+        bucket = docs.getString("bucket"),
+        endpoint = docs.getString("endpoint"),
+        accessKey = docs.getString("access_key"),
+        secretKey = docs.getString("secret_key")
+      )
     )
   }
 }

@@ -10,6 +10,9 @@ import com.hypervolt.conduit.accounting.XeroAccountingConsumer
 import com.hypervolt.conduit.config.AppConfig
 import com.hypervolt.conduit.config.EnvironmentConfig
 import com.hypervolt.conduit.db.Transactor
+import com.hypervolt.conduit.document.DocumentService
+import com.hypervolt.conduit.document.FopDocumentRenderer
+import com.hypervolt.conduit.document.S3DocumentStorage
 import com.hypervolt.conduit.event.OutboxRelay
 import com.hypervolt.conduit.event.PulsarEventPublisher
 import com.hypervolt.conduit.ledger.TigerBeetleClient
@@ -55,11 +58,29 @@ object Main extends IOApp.Simple {
           val stripeHandler   = new StripePaymentHandler[IO](new PaymentService[IO](xa, ledger))
           val stripeProcessor = new StripeInboundProcessor[IO](xa, stripeHandler)
           val stripeLoop      = (stripeProcessor.runOnce() *> IO.sleep(2.second)).foreverM
+          val s3Client =
+            if (cfg.documents.usesEndpoint)
+              S3DocumentStorage.endpointClient(cfg.documents.endpoint, cfg.documents.accessKey, cfg.documents.secretKey)
+            else S3DocumentStorage.awsClient
+          val docService = new DocumentService[IO](
+            xa,
+            new FopDocumentRenderer[IO],
+            new S3DocumentStorage[IO](s3Client, cfg.documents.bucket)
+          )
+          val docConsumer = new DocumentGenerationConsumer[IO](pulsar, docService)
           PulsarEventPublisher.create[IO](pulsar).flatMap { publisher =>
             val relay     = new OutboxRelay[IO](xa, publisher)
             val relayLoop = (relay.runOnce() *> IO.sleep(1.second)).foreverM
-            logger.info("Consumer running: outbox relay + Xero invoice + revenue recognition + Stripe settlement") *>
-              List(relayLoop, xeroConsumer.runForever, revConsumer.runForever, stripeLoop).parSequence_
+            logger.info(
+              "Consumer running: outbox relay + Xero invoice + revenue recognition + Stripe settlement + document generation"
+            ) *>
+              List(
+                relayLoop,
+                xeroConsumer.runForever,
+                revConsumer.runForever,
+                stripeLoop,
+                docConsumer.runForever
+              ).parSequence_
           }
         }
     }

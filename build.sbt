@@ -183,7 +183,11 @@ lazy val apiIt = (project in file("api-it"))
     ),
     Test / fork := true
   )
-  .dependsOn(api % "compile->compile;test->test", domain % "compile->compile;test->test")
+  .dependsOn(
+    api      % "compile->compile;test->test",
+    domain   % "compile->compile;test->test",
+    consumer % "compile->compile" // integration tests exercise the real consumer extractors end-to-end
+  )
 
 lazy val consumer = (project in file("consumer"))
   .enablePlugins(JavaAppPackaging)

@@ -57,7 +57,7 @@ final class DispatchService[F[_]: Async](xa: Transactor[F]) {
             // date is the bill-to contact's contractual terms (billing_profile.payment_terms_days → credit_profile
             // → default 30) off today — this is what the cash waterfall buckets on.
             invoiceNo <- sql"SELECT 'INV-' || nextval('invoice_no_seq')".query[String].unique
-            _ <-
+            invId <-
               sql"""INSERT INTO order_invoice (order_id, tranche_id, invoice_no, total_ex_vat, vat_total, total_inc_vat, due_date)
                      SELECT o.id, $trancheId, $invoiceNo, o.subtotal_ex_vat, o.vat_total, o.total_inc_vat,
                             (current_date + (COALESCE(
@@ -66,7 +66,7 @@ final class DispatchService[F[_]: Async](xa: Transactor[F]) {
                                (SELECT cp.terms_days FROM credit_profile cp
                                   WHERE cp.party_id = o.bill_to_party_id ORDER BY cp.id LIMIT 1),
                                30) || ' days')::interval)::date
-                     FROM "order" o WHERE o.id = $orderId""".update.run
+                     FROM "order" o WHERE o.id = $orderId RETURNING id""".query[UUID].unique
             _ <- trancheId.fold(Sync0)(t =>
               sql"UPDATE delivery_tranche SET status = 'invoiced' WHERE id = $t".update.run.void
             )
@@ -85,7 +85,11 @@ final class DispatchService[F[_]: Async](xa: Transactor[F]) {
               event(
                 orderId,
                 "order.invoiced",
-                Json.obj("invoice_no" -> invoiceNo.asJson, "tranche_id" -> trancheId.map(_.toString).asJson)
+                Json.obj(
+                  "invoice_no"       -> invoiceNo.asJson,
+                  "order_invoice_id" -> invId.toString.asJson, // self-describing: the document generator keys on this
+                  "tranche_id"       -> trancheId.map(_.toString).asJson
+                )
               )
             )
           } yield dispatchId.asRight[String]
