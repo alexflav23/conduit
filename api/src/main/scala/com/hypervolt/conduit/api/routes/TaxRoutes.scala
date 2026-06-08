@@ -6,6 +6,8 @@ import com.hypervolt.conduit.access._
 import com.hypervolt.conduit.api.auth.ApiError
 import com.hypervolt.conduit.api.auth.AuthService
 import com.hypervolt.conduit.api.auth.Secured
+import com.hypervolt.conduit.orgconfig.SellingEntityRepo
+import com.hypervolt.conduit.orgconfig.SellingEntityService
 import com.hypervolt.conduit.tax.NewRate
 import com.hypervolt.conduit.tax.RateTableProvider
 import com.hypervolt.conduit.tax.TaxAdminRepo
@@ -62,14 +64,18 @@ final case class NewNexusReq(
 )
 object NewNexusReq { implicit val codec: Codec[NewNexusReq] = deriveCodec }
 
+final case class NewSellingEntityReq(jurisdiction: String, entity_id: String, effective_from: String)
+object NewSellingEntityReq { implicit val codec: Codec[NewSellingEntityReq] = deriveCodec }
+
 // The tax & customs REST surface (doc 16 §10). The determination engine (POST /tax/quote) plus the config admin:
 // regimes/rates (maker-checker — tax_specialist proposes, CFO approves), routing, registrations, nexus, and the
 // reproducible quote history. Layer-projected: amounts project to commercial, quantities to volume, VAT numbers to pii.
 final class TaxRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
 
-  private val base    = Secured.base[F](auth)
-  private val engine  = new TaxDeterminationService[F](xa, Map(RateTableProvider.name -> RateTableProvider))
-  private val rateSvc = new TaxRateService[F](xa)
+  private val base       = Secured.base[F](auth)
+  private val engine     = new TaxDeterminationService[F](xa, Map(RateTableProvider.name -> RateTableProvider))
+  private val rateSvc    = new TaxRateService[F](xa)
+  private val sellingSvc = new SellingEntityService[F](xa)
 
   private def err(s: StatusCode, c: String, m: String): (StatusCode, ApiError) = (s, ApiError(c, m))
   private def uuid(s: String): Either[(StatusCode, ApiError), UUID] =
@@ -255,6 +261,46 @@ final class TaxRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
             }
       )
 
+  private val sellingList = listEndpoint("selling-entities", "selling_entity", emptyInput)(_ => SellingEntityRepo.list)
+
+  private val sellingCreate =
+    base.post
+      .in("api" / "v1" / "tax" / "selling-entities")
+      .in(jsonBody[NewSellingEntityReq])
+      .out(jsonBody[Json])
+      .serverLogic(principal =>
+        req =>
+          if (!PolicyEngine.hasPermission(principal, Action.Create, "selling_entity"))
+            Async[F].pure(Left(err(StatusCode.Forbidden, "forbidden", "requires create:selling_entity")))
+          else
+            (uuid(req.entity_id), date(req.effective_from)).tupled match {
+              case Left(e) => Async[F].pure(Left(e))
+              case Right((eid, from)) =>
+                sellingSvc
+                  .propose(req.jurisdiction, eid, from, principal.userId)
+                  .map(id => Right(Json.obj("id" -> id.toString.asJson, "status" -> "draft".asJson)))
+            }
+      )
+
+  private val sellingActivate =
+    base.post
+      .in("api" / "v1" / "tax" / "selling-entities" / path[String]("id") / "activate")
+      .out(jsonBody[Json])
+      .serverLogic(principal =>
+        idStr =>
+          if (!PolicyEngine.hasPermission(principal, Action.Approve, "selling_entity"))
+            Async[F].pure(Left(err(StatusCode.Forbidden, "forbidden", "requires approve:selling_entity")))
+          else
+            uuid(idStr) match {
+              case Left(e) => Async[F].pure(Left(e))
+              case Right(id) =>
+                sellingSvc.activate(id, principal.userId).map {
+                  case Left(m)  => Left(err(StatusCode.UnprocessableEntity, "unprocessable", m))
+                  case Right(_) => Right(Json.obj("id" -> id.toString.asJson, "status" -> "active".asJson))
+                }
+            }
+      )
+
   val routes: HttpRoutes[F] =
     Http4sServerInterpreter[F]().toRoutes(
       List(
@@ -270,7 +316,10 @@ final class TaxRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
         rateCreate,
         rateActivate,
         registrationCreate,
-        nexusCreate
+        nexusCreate,
+        sellingList,
+        sellingCreate,
+        sellingActivate
       )
     )
 }

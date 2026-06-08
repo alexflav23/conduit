@@ -48,7 +48,7 @@ object TaxRateRepo {
             AND (region IS NULL OR region = $region)
             AND (postcode_prefix IS NULL OR ($postcode IS NOT NULL AND $postcode LIKE postcode_prefix || '%'))
             AND (tax_category_code IS NULL OR tax_category_code = $category)
-            AND status = 'active'
+            AND status <> 'draft'
             AND effective_from <= $asOf
             AND (effective_to IS NULL OR effective_to > $asOf)"""
       .query[RateRow]
