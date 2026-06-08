@@ -43,13 +43,14 @@ Xero invoice + revenue-recognition consumers. Pushed to `github/main`.
 | P3 | **M14** Companion app + desk + Horizons + reporting + HubSpot | ◐ | 08, **20**, **21** | desk (no companion) |
 | X | **NFR / Security / Ops-DR** (cross-cutting, P1 launch-blocker) | ⬜ | **19** | — |
 
-**M13 sub-status** (◐ ~70%):
+**M13 sub-status** (◐ ~90%):
 - ✅ Xero feed — swappable `AccountingConsumer`, ported from Athena (OAuth2 + PUT /Invoices, idempotent, local no-op); `order.invoiced` consumer.
 - ✅ Invoice on **dispatch** (ASC 606) + per-contact **credit terms → due date → cash waterfall**.
 - ✅ **Revenue + COGS recognition at dispatch** (consumer) + **P&L read-model** (`/finance/pnl`) — proved on the ledger.
-- ✅ **Payments / cash application** (`PaymentService`) — settles AR on the ledger (DR cash/clearing, CR AR), allocates to invoice(s), open→part_paid→paid, idempotent on source ref; Stripe payout relieves the clearing into bank net of fees. AR-aging + DSO analytics (`/finance/ar-aging`). *Pending: Stripe-webhook ingestion + manual-payment-via-API (both need the ledger, so they run in the consumer / via TB-in-API).*
+- ✅ **Payments / cash application** (`PaymentService`) — settles AR on the ledger (DR cash/clearing, CR AR), allocates to invoice(s), open→part_paid→paid, idempotent on source ref; Stripe payout relieves the clearing into bank net of fees. AR-aging + DSO analytics (`/finance/ar-aging`).
+- ✅ **Stripe webhook ingestion** (ported from Athena) — public `POST /api/v1/stripe/webhook` verifies the signature (Stripe SDK HMAC), records the event idempotently (`stripe_event`, no TB in the API), and a consumer drain (`StripeInboundProcessor`) settles it via `PaymentService`. `StripeWebhook` parser (charge → settle AR, `payout.paid` → relieve clearing net of fees); `StripeWebhookSpec`, `StripePaymentSuite`, `StripeWebhookRouteSuite` green.
 - ✅ **GL/AR trial balance off the ledger** (`GlProjectionService`, ties out Σdr==Σcr). *Route pending TB-in-API or a `gl_entry` Postgres projection.*
-- ◐ **Document generation** (doc 17) — core done: gapless/immutable numbering (`document_number_series/number`, void consumes a number, no reuse/gap), the `invoice` as a rendered projection of truth (totals read off `order_invoice` + conservation guard), template fallback resolution, deterministic `DocumentRenderer` port (same model → same sha), WORM `document` row + `document.issued`. *Pending: real PDF/A engine + object-store, credit-note/proforma/commercial-invoice/statement types, the event consumer + `/documents` REST + per-locale CJK templates.*
+- ✅ **Document generation** (doc 17) — gapless/immutable numbering (`document_number_series/number`, void consumes a number, no reuse/gap), the `invoice` as a rendered projection of truth (totals read off `order_invoice` + conservation guard), template fallback resolution, WORM `document` row + `document.issued`. **Real PDF engine: Apache FOP** (XSL-FO → PDF, NOT PDFBox), byte-deterministic so the sha re-performability control holds (`FopDocumentRendererSpec`); **object store: S3** (`S3DocumentStorage`, object-lock+versioning WORM bucket; LocalStack in dev/CI — `S3DocumentStorageSuite`). *Pending: credit-note/proforma/commercial-invoice/statement types, the event consumer + `/documents` REST + per-locale CJK font templates.*
 - ⬜ **Real tax/customs engine** (doc 16 — currently a deterministic stub behind the `TaxQuote` contract, M12).
 
 **M13b sub-status** (◐ core done):
@@ -151,6 +152,13 @@ migration-safety (Flyway forward-only, Avro `schemaCheck`, no-float, secret-scan
 - **Gate (doc 19):** the verification block — latency budgets met under load; a DSAR erases PII while the
   financial skeleton stays intact + balances unchanged; DLQ-replay and projection-rebuild runbooks execute;
   backups restore within RTO; all CI gates green on every MR.
+
+### Infra / deploy  · `terraform/` · ✅ **template authored** (mirrors `athena/terraform`)
+End-to-end Terraform tree: `roles-global` (RBAC operator roles + WORM records boundary), `rds` (PG16, Multi-AZ
+prod, writes the runtime creds secret), `conduit-tigerbeetle` (ledger cluster, cluster ids 300/400),
+`conduit-records` (WORM S3: object-lock+versioning, 7y), `conduit-api` + `conduit-consumer` (ASG + nixos-bootstrap),
+`deploy-versions.yaml` + README (apply order, secrets, workspaces). `terraform fmt` clean; private gitlab modules
+need estate SSH for `init`/`plan`. *Pending: the `files/` config (application.conf/logback/mk-env.tmpl) + `.gitlab-ci.yml` publish→deploy stages.*
 
 ---
 
