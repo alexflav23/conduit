@@ -95,8 +95,9 @@ BEGIN
     VALUES ('market', mkt, v_id, per, sc, 100);
   IF NOT EXISTS (SELECT 1 FROM "order" WHERE order_no = 'ORD-FLOW') THEN
     INSERT INTO party (display_name, party_type, is_organization) VALUES ('Flow Cust','wholesaler',true) RETURNING id INTO party_id;
-    INSERT INTO "order" (order_no, type, sold_to_party_id, bill_to_party_id, market_id, status, txn_currency, payment_method, order_date, subtotal_ex_vat, vat_total, total_inc_vat)
-      VALUES ('ORD-FLOW','trade',party_id,party_id,mkt,'placed','GBP','stripe','2026-09-01',25000,5000,30000) RETURNING id INTO ord;
+    -- fixed id so the desk Lifecycle tab can target it deterministically in e2e
+    INSERT INTO "order" (id, order_no, type, sold_to_party_id, bill_to_party_id, market_id, status, txn_currency, payment_method, order_date, subtotal_ex_vat, vat_total, total_inc_vat)
+      VALUES ('33333333-3333-3333-3333-333333333333','ORD-FLOW','trade',party_id,party_id,mkt,'placed','GBP','stripe','2026-09-01',25000,5000,30000) RETURNING id INTO ord;
     INSERT INTO order_line (order_id, product_variant_id, qty, unit_price_ex_vat, vat_amount) VALUES (ord, v_id, 50, 500.00, 5000.00) RETURNING id INTO ol;
     INSERT INTO dispatch (dispatch_no, order_id, date, status) VALUES ('DSP-FLOW', ord, '2026-09-10', 'delivered') RETURNING id INTO dsp;
     INSERT INTO dispatch_line (dispatch_id, order_line_id, qty) VALUES (dsp, ol, 50);
@@ -106,6 +107,12 @@ BEGIN
     -- an open invoice with a contractual due date so the Finance cash waterfall has a bucket to show
     INSERT INTO order_invoice (order_id, invoice_no, total_ex_vat, vat_total, total_inc_vat, due_date, status)
       VALUES (ord, 'INV-FLOW', 25000, 5000, 30000, '2026-10-10', 'open');
+    -- the events behind the sale, so the desk Lifecycle timeline replays a real spine (not just the cycles)
+    INSERT INTO outbox_event (event_id, event_type, schema_version, aggregate_type, aggregate_id, partition_key, payload, occurred_at, status, published_at)
+      VALUES (gen_random_uuid(), 'order.placed', 1, 'order', ord, ord::text, '{}'::jsonb, '2026-09-01', 'published', now()),
+             (gen_random_uuid(), 'dispatch.created', 1, 'order', ord, ord::text, jsonb_build_object('dispatch_no','DSP-FLOW'), '2026-09-10', 'published', now()),
+             (gen_random_uuid(), 'order.invoiced', 1, 'order', ord, ord::text, jsonb_build_object('invoice_no','INV-FLOW'), '2026-09-10', 'published', now()),
+             (gen_random_uuid(), 'revenue.recognized', 1, 'order', ord, ord::text, '{}'::jsonb, '2026-09-15', 'published', now());
   END IF;
 END $$;
 
@@ -187,6 +194,10 @@ BEGIN
   END IF;
 END $$;
 
+INSERT INTO permission (role_id, object_type, action, section, viewable_layers, editable_layers, data_breadth)
+SELECT r.id, 'order', 'view', NULL, '{volume,commercial,pii}', '{}', 'all' FROM role r
+WHERE r.name = 'finance'
+  AND NOT EXISTS (SELECT 1 FROM permission p WHERE p.role_id = r.id AND p.object_type='order' AND p.action='view' AND p.section IS NULL);
 INSERT INTO permission (role_id, object_type, action, section, viewable_layers, editable_layers, data_breadth)
 SELECT r.id, 'order', 'edit', NULL, '{}', '{}', 'all' FROM role r
 WHERE r.name = 'finance'

@@ -212,3 +212,9 @@ export function documentPdfUrl(id: string): string {
 export function voidInvoice(token: string, invoiceNo: string, kind: string, reason: string) {
   return call(`/api/v1/invoices/${encodeURIComponent(invoiceNo)}/void`, token, 'POST', { kind, reason });
 }
+
+// ----- M13 order collection ledger (lifecycle replay) -----
+
+export function getOrderLifecycle(token: string, orderId: string) {
+  return call(`/api/v1/orders/${encodeURIComponent(orderId)}/lifecycle`, token, 'GET');
+}

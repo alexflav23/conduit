@@ -9,6 +9,7 @@ import { SupplyWindow } from './SupplyWindow';
 import { Shelf } from './Shelf';
 import { Finance } from './Finance';
 import { Documents } from './Documents';
+import { Lifecycle } from './Lifecycle';
 import { Auditability } from './Auditability';
 
 const styles = stylex.create({
@@ -25,7 +26,7 @@ const styles = stylex.create({
 
 export function App() {
   const [token, setToken] = useState('dev:agent-e2e');
-  const [view, setView] = useState<'order' | 'dealdesk' | 'h6q' | 'flow' | 'supply' | 'shelf' | 'finance' | 'docs' | 'audit'>('order');
+  const [view, setView] = useState<'order' | 'dealdesk' | 'h6q' | 'flow' | 'supply' | 'shelf' | 'finance' | 'docs' | 'lifecycle' | 'audit'>('order');
 
   return (
     <div {...stylex.props(styles.page)}>
@@ -39,6 +40,7 @@ export function App() {
         <button {...stylex.props(styles.tab, view === 'shelf' && styles.tabActive)} data-testid="tab-shelf" onClick={() => setView('shelf')}>Shelf</button>
         <button {...stylex.props(styles.tab, view === 'finance' && styles.tabActive)} data-testid="tab-finance" onClick={() => setView('finance')}>Finance</button>
         <button {...stylex.props(styles.tab, view === 'docs' && styles.tabActive)} data-testid="tab-docs" onClick={() => setView('docs')}>Documents</button>
+        <button {...stylex.props(styles.tab, view === 'lifecycle' && styles.tabActive)} data-testid="tab-lifecycle" onClick={() => setView('lifecycle')}>Lifecycle</button>
         <button {...stylex.props(styles.tab, view === 'audit' && styles.tabActive)} data-testid="tab-audit" onClick={() => setView('audit')}>Audit</button>
       </div>
       <div {...stylex.props(styles.tokenRow)}>
@@ -53,6 +55,7 @@ export function App() {
         : view === 'shelf' ? <Shelf token={token} />
         : view === 'finance' ? <Finance token={token} />
         : view === 'docs' ? <Documents token={token} />
+        : view === 'lifecycle' ? <Lifecycle token={token} />
         : <Auditability token={token} />}
     </div>
   );
