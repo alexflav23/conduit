@@ -67,7 +67,24 @@ object FieldLayerMap {
     ("collection_cycle", "cogs")           -> DataLayer.Commercial,
     ("collection_cycle", "paid")           -> DataLayer.Commercial,
     ("collection_cycle", "refunded")       -> DataLayer.Commercial,
-    ("collection_cycle", "outstanding")    -> DataLayer.Commercial
+    ("collection_cycle", "outstanding")    -> DataLayer.Commercial,
+    // tax determination (doc 16 §9): amounts + jurisdiction breakdown are commercial; quantities are volume; a
+    // VAT/tax registration number is PII (personal data for a sole trader). Tax never touches profitability —
+    // it is computed off the ex-tax price, not cost — so a tax viewer never gains margin visibility.
+    ("tax_quote", "total_tax")               -> DataLayer.Commercial,
+    ("tax_quote", "buyer_tax_id")            -> DataLayer.Pii,
+    ("tax_quote_line", "taxable_amount")     -> DataLayer.Commercial,
+    ("tax_quote_line", "line_tax_total")     -> DataLayer.Commercial,
+    ("tax_quote_line", "effective_rate_pct") -> DataLayer.Commercial,
+    ("tax_quote_line", "components")         -> DataLayer.Commercial,
+    ("tax_quote_line", "qty")                -> DataLayer.Volume,
+    ("tax_regime", "rate_percent")           -> DataLayer.Commercial,
+    ("tax_rate", "rate_pct")                 -> DataLayer.Commercial,
+    ("tax_registration", "number")           -> DataLayer.Pii,
+    ("nexus_profile", "sales_to_date")       -> DataLayer.Commercial,
+    ("nexus_profile", "txn_count_to_date")   -> DataLayer.Volume,
+    ("intrastat_line", "invoice_value")      -> DataLayer.Commercial,
+    ("ec_sales_line", "net_value")           -> DataLayer.Commercial
   )
 
   def layerOf(objectType: String, field: String): Option[DataLayer] = seed.get((objectType, field))

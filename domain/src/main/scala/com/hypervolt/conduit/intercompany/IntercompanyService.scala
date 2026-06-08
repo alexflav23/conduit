@@ -241,7 +241,7 @@ final class IntercompanyService[F[_]: Async](xa: Transactor[F], ledger: TigerBee
           buyPo     <- insertBuyPo(linkId, te.id, buySupp, buyCcy.code, tpBuy)
           stx       <- insertStockTransfer(fromLoc, toLoc, te.id, variant, totalQty)
           importTax <-
-            if (crossBorder) tax.quote(buildTaxContext(linkId, fe, te, variant, lines, sellCcy.code)).map(Some(_))
+            if (crossBorder) tax.quote(buildTaxContext(linkId, fe, te, variant, lines, sellCcy.code, asOf)).map(Some(_))
             else Option.empty[TaxQuoteResponse].pure[ConnectionIO]
           importStatus = if (crossBorder) "quoted" else "n/a"
           fxRateOpt    = if (sellCcy.code != buyCcy.code) Some(fxRate) else Option.empty[BigDecimal]
@@ -488,7 +488,8 @@ final class IntercompanyService[F[_]: Async](xa: Transactor[F], ledger: TigerBee
       te: EntityNode,
       variant: UUID,
       lines: List[LineCalc],
-      ccy: String
+      ccy: String,
+      asOf: LocalDate
   ): TaxQuoteRequest =
     TaxQuoteRequest(
       context = "intercompany_import",
@@ -496,6 +497,7 @@ final class IntercompanyService[F[_]: Async](xa: Transactor[F], ledger: TigerBee
       shipToJurisdiction = te.jurisdiction,
       shipToRegime = te.jurisdiction,
       lines = lines.map(l => TaxQuoteLine(variant, None, l.qty, l.lineTp, ccy)),
-      movementRef = linkId
+      movementRef = linkId,
+      asOf = asOf
     )
 }

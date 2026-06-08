@@ -3,6 +3,7 @@ package com.hypervolt.conduit.intercompany
 import doobie._
 import io.circe.Encoder
 import io.circe.generic.semiauto._
+import java.time.LocalDate
 import java.util.UUID
 
 // The tax/customs engine boundary (doc 13 §6). This subsystem DOES NOT determine VAT/duty; it assembles the
@@ -23,7 +24,8 @@ final case class TaxQuoteRequest(
     shipToJurisdiction: String,
     shipToRegime: String,
     lines: List[TaxQuoteLine],
-    movementRef: UUID
+    movementRef: UUID,
+    asOf: LocalDate = LocalDate.now()
 )
 
 final case class TaxQuoteResponseLine(
