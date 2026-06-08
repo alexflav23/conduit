@@ -35,6 +35,7 @@ object LedgerTransferCode {
   val Opening: Int      = 20 // migration opening-balance transfer (doc 18 §2)
   val Intercompany: Int = 30 // intercompany movement leg (doc 13 §3.3)
   val Payment: Int      = 40 // cash application — settles AR (doc 13 §payments)
+  val Reversal: Int     = 50 // invoice invalidation — negates a recognition (doc 13 §void, ASC 606)
 }
 
 // TigerBeetle transfer flags (two-phase + linking).
