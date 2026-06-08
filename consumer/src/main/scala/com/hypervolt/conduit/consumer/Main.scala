@@ -21,6 +21,8 @@ import com.hypervolt.conduit.payment.PaymentService
 import com.hypervolt.conduit.payment.StripeInboundProcessor
 import com.hypervolt.conduit.payment.StripePaymentHandler
 import com.hypervolt.conduit.pulsar.PulsarUtils
+import com.hypervolt.conduit.revenue.InvoiceReversalService
+import com.hypervolt.conduit.revenue.InvoiceVoidProcessor
 import com.hypervolt.conduit.revenue.RevenueRecognitionService
 import com.tigerbeetle.{Client => TbClient}
 import doobie.hikari.HikariTransactor
@@ -68,6 +70,12 @@ object Main extends IOApp.Simple {
             new S3DocumentStorage[IO](s3Client, cfg.documents.bucket)
           )
           val docConsumer = new DocumentGenerationConsumer[IO](pulsar, docService)
+          val voidProcessor = new InvoiceVoidProcessor[IO](
+            xa,
+            new InvoiceReversalService[IO](xa, ledger),
+            new PaymentService[IO](xa, ledger)
+          )
+          val voidConsumer = new InvoiceVoidConsumer[IO](pulsar, voidProcessor)
           PulsarEventPublisher.create[IO](pulsar).flatMap { publisher =>
             val relay     = new OutboxRelay[IO](xa, publisher)
             val relayLoop = (relay.runOnce() *> IO.sleep(1.second)).foreverM
@@ -79,7 +87,8 @@ object Main extends IOApp.Simple {
                 xeroConsumer.runForever,
                 revConsumer.runForever,
                 stripeLoop,
-                docConsumer.runForever
+                docConsumer.runForever,
+                voidConsumer.runForever
               ).parSequence_
           }
         }
