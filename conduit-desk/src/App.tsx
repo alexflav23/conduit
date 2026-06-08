@@ -8,6 +8,7 @@ import { Flow } from './Flow';
 import { SupplyWindow } from './SupplyWindow';
 import { Shelf } from './Shelf';
 import { Finance } from './Finance';
+import { Auditability } from './Auditability';
 
 const styles = stylex.create({
   page: { minHeight: '100vh', backgroundColor: colors.bg, color: colors.text, fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif', padding: '2rem' },
@@ -23,7 +24,7 @@ const styles = stylex.create({
 
 export function App() {
   const [token, setToken] = useState('dev:agent-e2e');
-  const [view, setView] = useState<'order' | 'dealdesk' | 'h6q' | 'flow' | 'supply' | 'shelf' | 'finance'>('order');
+  const [view, setView] = useState<'order' | 'dealdesk' | 'h6q' | 'flow' | 'supply' | 'shelf' | 'finance' | 'audit'>('order');
 
   return (
     <div {...stylex.props(styles.page)}>
@@ -36,6 +37,7 @@ export function App() {
         <button {...stylex.props(styles.tab, view === 'supply' && styles.tabActive)} data-testid="tab-supply" onClick={() => setView('supply')}>Supply</button>
         <button {...stylex.props(styles.tab, view === 'shelf' && styles.tabActive)} data-testid="tab-shelf" onClick={() => setView('shelf')}>Shelf</button>
         <button {...stylex.props(styles.tab, view === 'finance' && styles.tabActive)} data-testid="tab-finance" onClick={() => setView('finance')}>Finance</button>
+        <button {...stylex.props(styles.tab, view === 'audit' && styles.tabActive)} data-testid="tab-audit" onClick={() => setView('audit')}>Audit</button>
       </div>
       <div {...stylex.props(styles.tokenRow)}>
         <span {...stylex.props(styles.label)}>Auth token</span>
@@ -47,7 +49,8 @@ export function App() {
         : view === 'flow' ? <Flow token={token} />
         : view === 'supply' ? <SupplyWindow token={token} />
         : view === 'shelf' ? <Shelf token={token} />
-        : <Finance token={token} />}
+        : view === 'finance' ? <Finance token={token} />
+        : <Auditability token={token} />}
     </div>
   );
 }

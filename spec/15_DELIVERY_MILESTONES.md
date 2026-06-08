@@ -56,7 +56,8 @@ Xero invoice + revenue-recognition consumers. Pushed to `github/main`.
 - ✅ **Reconciliation engine** (`ReconciliationService`) — AR↔invoices + TB↔GL tie-outs off the ledger, expected/actual/variance/status, sign-off; an unsigned exception blocks the lock.
 - ✅ **Control runner** (`ControlRunner`) — re-performable `evidence_query` → pass/fail + `control_run`; seeded CTRL-DOC-GAPLESS / CTRL-RECON-EXCEPTIONS / CTRL-INV-CONSERVATION.
 - ✅ **Auditability lineage** (`LineageService`) — figure → order_invoice → ledger transfer ids → events → issued PDF.
-- ⬜ Auditability **Center UI** (desk) + the remaining reconciliations (GL↔Xero, inventory↔counts) + REST + evidence export.
+- ✅ **Auditability Center desk tab** (`AuditRoutes` + `Auditability.tsx`) — close board (close/lock), SOX control register with re-performable runs, lineage explorer; Playwright + headless-Chrome verified.
+- ⬜ Remaining reconciliations (GL↔Xero, inventory↔counts), reconciliation-run REST (needs TB-in-API/consumer), evidence export.
 
 > Every backing doc exists (deep-dives 09/11/12/13 + launch-blockers 16–21). No "unwritten spec" blockers —
 > only implementation. Open: companion-app Flutter-vs-React (M14). **Finance desk tab built** (P&L + cash

@@ -169,3 +169,27 @@ export function setCreditTerms(token: string, partyId: string, paymentTermsDays:
 }
 
 export const FINANCE_MARKET = DEMO_MARKET;
+
+// ----- M13b auditability center (close board / controls / lineage) -----
+
+export function getPeriods(token: string) {
+  return call('/api/v1/finance/periods', token, 'GET');
+}
+export function getPeriodReconciliations(token: string, periodId: string) {
+  return call(`/api/v1/finance/periods/${periodId}/reconciliations`, token, 'GET');
+}
+export function closePeriod(token: string, periodId: string) {
+  return call(`/api/v1/finance/periods/${periodId}/close`, token, 'POST');
+}
+export function lockPeriod(token: string, periodId: string) {
+  return call(`/api/v1/finance/periods/${periodId}/lock`, token, 'POST');
+}
+export function getControls(token: string) {
+  return call('/api/v1/finance/controls', token, 'GET');
+}
+export function runControl(token: string, code: string) {
+  return call(`/api/v1/finance/controls/${code}/run`, token, 'POST');
+}
+export function getLineage(token: string, invoiceNo: string) {
+  return call(`/api/v1/finance/lineage?invoice_no=${invoiceNo}`, token, 'GET');
+}

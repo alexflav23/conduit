@@ -146,3 +146,19 @@ BEGIN
       ('SHELF-3','v3',v_id,flowcust,'activated');
   END IF;
 END $$;
+
+-- Auditability Center demo: an entity with an open September period and a matched AR reconciliation, so the
+-- close board shows a period that can be closed + locked over clean books.
+DO $$
+DECLARE ent uuid; per uuid;
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM entity WHERE name = 'HV UK Demo') THEN
+    INSERT INTO entity (name, jurisdiction, functional_currency, entity_type)
+      VALUES ('HV UK Demo','GB','GBP','operating') RETURNING id INTO ent;
+    INSERT INTO accounting_period (entity_id, scope, period_key, reporting_tz, status)
+      VALUES (ent,'month','2026-09','Europe/London','open') RETURNING id INTO per;
+    INSERT INTO reconciliation (type, period_id, expected, actual, currency, variance, status)
+      VALUES ('ar_vs_invoices', per, 30000, 30000, 'GBP', 0, 'matched'),
+             ('tb_vs_gl',        per, 30000, 30000, 'GBP', 0, 'matched');
+  END IF;
+END $$;
