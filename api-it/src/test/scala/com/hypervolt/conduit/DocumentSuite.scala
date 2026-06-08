@@ -4,6 +4,7 @@ import cats.effect.IO
 import cats.effect.Resource
 import com.hypervolt.conduit.document.DocumentNumberAllocator
 import com.hypervolt.conduit.document.DocumentService
+import com.hypervolt.conduit.document.DocumentStorage
 import com.hypervolt.conduit.document.FopDocumentRenderer
 import doobie.implicits._
 import doobie.postgres.implicits._
@@ -84,17 +85,19 @@ object DocumentSuite extends IOSuite {
   test(
     "invoice is a projection of typed truth: total read off order_invoice, gapless number, deterministic, idempotent"
   ) { xa =>
-    val svc = new DocumentService[IO](xa, new FopDocumentRenderer[IO]) // real Apache FOP PDF engine
     for {
+      storage <- DocumentStorage.inMemory[IO]
+      svc = new DocumentService[IO](xa, new FopDocumentRenderer[IO], storage) // real Apache FOP PDF engine + WORM store
       e   <- entityWithSeries(xa)
       inv <- invoice(xa, e)
       r1  <- svc.generateInvoice(inv)
       r2  <- svc.generateInvoice(inv) // redelivery — must not mint a second invoice/number
       finalised <-
-        sql"SELECT status, total_amount, content_sha256 FROM document WHERE order_invoice_id = $inv"
-          .query[(String, BigDecimal, String)]
+        sql"SELECT status, total_amount, content_sha256, storage_uri FROM document WHERE order_invoice_id = $inv"
+          .query[(String, BigDecimal, String, String)]
           .to[List]
           .transact(xa)
+      storedBytes <- storage.get(finalised.head._4)
       issuedEvt <-
         sql"SELECT count(*) FROM outbox_event WHERE event_type='document.issued'".query[Long].unique.transact(xa)
     } yield {
@@ -108,6 +111,8 @@ object DocumentSuite extends IOSuite {
           b.documentId == a.documentId && b.formattedNumber == a.formattedNumber && b.contentSha256 == a.contentSha256
         ) and                                                               // idempotent
         expect(finalised.size == 1 && finalised.head._1 == "finalised") and // exactly one, WORM
+        expect(finalised.head._4.startsWith("mem://documents/")) and        // stored to object storage, URI recorded
+        expect(new String(storedBytes.take(5), "US-ASCII") == "%PDF-") and  // the stored artefact is the real PDF
         expect(issuedEvt == 1L)                                             // single document.issued
     }
   }

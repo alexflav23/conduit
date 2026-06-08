@@ -60,7 +60,11 @@ private final case class Prepared(
 // from order_invoice (never recomputed) and conservation-checked (Σ lines == total); the gapless number is
 // allocated only after a successful render; the finalised document is WORM. Idempotent on a deterministic
 // document id, so a redelivered order.invoiced mints no second invoice or number.
-final class DocumentService[F[_]: Async](xa: Transactor[F], renderer: DocumentRenderer[F]) {
+final class DocumentService[F[_]: Async](
+    xa: Transactor[F],
+    renderer: DocumentRenderer[F],
+    storage: DocumentStorage[F]
+) {
 
   private def docId(orderInvoiceId: UUID): UUID =
     UUID.nameUUIDFromBytes(s"document:invoice:$orderInvoiceId".getBytes(StandardCharsets.UTF_8))
@@ -74,7 +78,11 @@ final class DocumentService[F[_]: Async](xa: Transactor[F], renderer: DocumentRe
           case Left(e) => e.asLeft[DocumentResult].pure[F]
           case Right(prep) =>
             renderer.render(prep.body, prep.model).flatMap { rendered =>
-              persist(id, orderInvoiceId, prep, rendered).transact(xa)
+              // Put the bytes to WORM storage BEFORE the row commits; the URI is then recorded immutably. A failed
+              // commit leaves an orphan object (harmless — the deterministic key re-puts identically on retry).
+              storage
+                .put(s"documents/$id.pdf", rendered.bytes, "application/pdf")
+                .flatMap(uri => persist(id, orderInvoiceId, prep, rendered, uri).transact(xa))
             }
         }
     }
@@ -180,13 +188,13 @@ final class DocumentService[F[_]: Async](xa: Transactor[F], renderer: DocumentRe
       id: UUID,
       orderInvoiceId: UUID,
       prep: Prepared,
-      rendered: RenderedDoc
+      rendered: RenderedDoc,
+      storageUri: String
   ): ConnectionIO[Either[String, DocumentResult]] = {
     val h = prep.head
     DocumentNumberAllocator.allocate(h.entityId, "invoice", h.jurisdiction, LocalDate.now().getYear).flatMap {
       case None => "no active number series for invoice".asLeft[DocumentResult].pure[ConnectionIO]
       case Some(num) =>
-        val storageUri = s"worm://documents/$id.pdf"
         for {
           _ <- sql"""INSERT INTO document
                        (id, document_type, entity_id, document_number_id, formatted_number, order_invoice_id,

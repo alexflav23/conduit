@@ -31,6 +31,18 @@ services:
     security_opt:
       - "seccomp=unconfined"
 
+  # LocalStack stands in for S3 (WORM document storage). The records bucket is created by the init script;
+  # in AWS the bucket is provisioned by terraform/conduit-records with object-lock + versioning.
+  conduit-localstack:
+    image: localstack/localstack:3.4
+    container_name: conduit-local-s3
+    environment:
+      SERVICES: s3
+    ports:
+      - "4566:4566"
+    volumes:
+      - ./docker/localstack-init.sh:/etc/localstack/init/ready.d/init.sh:ro
+
   conduit-api:
     build:
       context: .

@@ -11,6 +11,7 @@ import com.hypervolt.conduit.batch.LotBatchRepo
 import com.hypervolt.conduit.batch.NewBatch
 import com.hypervolt.conduit.document.DocumentRenderer
 import com.hypervolt.conduit.document.DocumentService
+import com.hypervolt.conduit.document.DocumentStorage
 import com.hypervolt.conduit.inventory.DispatchLineInput
 import com.hypervolt.conduit.inventory.DispatchService
 import com.hypervolt.conduit.inventory.InventoryRepo
@@ -37,8 +38,9 @@ object PeriodCloseSuite extends IOSuite {
   private def soldAndDocumented(xa: HikariTransactor[IO], ledger: TigerBeetleLedger[IO]): IO[(UUID, UUID)] = {
     val disp = new DispatchService[IO](xa)
     val rev  = new RevenueRecognitionService[IO](xa, ledger)
-    val docs = new DocumentService[IO](xa, DocumentRenderer.deterministic[IO])
     for {
+      storage <- DocumentStorage.inMemory[IO]
+      docs = new DocumentService[IO](xa, DocumentRenderer.deterministic[IO], storage)
       ids <- (for {
           e <-
             sql"INSERT INTO entity (name, jurisdiction, functional_currency, entity_type) VALUES ('HV UK','GB','GBP','operating') RETURNING id"

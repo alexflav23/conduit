@@ -39,6 +39,7 @@ lazy val Versions = new {
   val squants        = "1.6.0"
   val fop            = "2.9"
   val stripe         = "29.5.0-beta.1"
+  val awssdk2        = "2.34.8"
 
   val testContainers    = "0.41.0"
   val consulContainer   = "1.18.3"
@@ -143,6 +144,9 @@ lazy val domain = (project in file("domain"))
       // doc 13 §payments — Stripe (ported from Athena) is one source feeding the ledger settlement; webhook
       // signature verification uses Stripe's own SDK. Swappable: the ledger settlement is the system of record.
       "com.stripe"                   % "stripe-java"                  % Versions.stripe,
+      // doc 17 §6 — finalised documents are WORM in S3 (object-lock + versioning). LocalStack stands in for S3
+      // in dev/CI (the bucket is provisioned by terraform; see terraform/conduit-records).
+      "software.amazon.awssdk"       % "s3"                           % Versions.awssdk2,
 
       "org.typelevel"               %% "squants"                      % Versions.squants,
       // Test-only: ToolBox-based "does not type-check" assertions (cross-currency safety).
@@ -174,7 +178,8 @@ lazy val apiIt = (project in file("api-it"))
       "com.dimafeng"       %% "testcontainers-scala-postgresql" % Versions.testContainers % Test,
       "org.testcontainers"  % "postgresql"                      % Versions.postgresContainer % Test,
       "org.testcontainers"  % "pulsar"                          % Versions.pulsarContainer   % Test,
-      "org.testcontainers"  % "consul"                          % Versions.consulContainer   % Test
+      "org.testcontainers"  % "consul"                          % Versions.consulContainer   % Test,
+      "org.testcontainers"  % "localstack"                      % Versions.postgresContainer % Test
     ),
     Test / fork := true
   )
