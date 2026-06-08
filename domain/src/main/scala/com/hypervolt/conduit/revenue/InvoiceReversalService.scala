@@ -40,6 +40,7 @@ private final case class ReversalHead(
     revenueExVat: BigDecimal,
     vat: BigDecimal,
     cogs: BigDecimal,
+    shipping: BigDecimal,
     dispatchId: Option[UUID]
 )
 
@@ -79,19 +80,23 @@ final class InvoiceReversalService[F[_]: Async](xa: Transactor[F], ledger: Tiger
               Currency.fromCode(h.currency) match {
                 case None => s"unknown currency ${h.currency}".asLeft[InvoiceReversalResult].pure[F]
                 case Some(ccy) =>
-                  val entity   = h.entity.getOrElse(zero)
-                  val ledgerId = Ledgers.forCurrency(ccy)
-                  val arAcc    = TbIds.accountId(s"AR:${h.billTo}")
-                  val revAcc   = TbIds.accountId(s"REVENUE:$entity")
-                  val vatAcc   = TbIds.accountId(s"VAT:$entity")
-                  val cogsAcc  = TbIds.accountId(s"COGS:$entity")
-                  val invAcc   = TbIds.accountId(s"INV:$entity")
+                  val entity     = h.entity.getOrElse(zero)
+                  val ledgerId   = Ledgers.forCurrency(ccy)
+                  val arAcc      = TbIds.accountId(s"AR:${h.billTo}")
+                  val revAcc     = TbIds.accountId(s"REVENUE:$entity")
+                  val vatAcc     = TbIds.accountId(s"VAT:$entity")
+                  val cogsAcc    = TbIds.accountId(s"COGS:$entity")
+                  val invAcc     = TbIds.accountId(s"INV:$entity")
+                  val carExpAcc  = TbIds.accountId(s"CARRIAGE_EXPENSE:$entity")
+                  val carAccrAcc = TbIds.accountId(s"CARRIAGE_ACCRUAL:$entity")
                   val accounts = List(
                     LedgerAccount(arAcc, ledgerId, LedgerAccountCode.Ar),
                     LedgerAccount(revAcc, ledgerId, LedgerAccountCode.Revenue),
                     LedgerAccount(vatAcc, ledgerId, LedgerAccountCode.Vat),
                     LedgerAccount(cogsAcc, ledgerId, LedgerAccountCode.CosClearing),
-                    LedgerAccount(invAcc, ledgerId, LedgerAccountCode.Inv)
+                    LedgerAccount(invAcc, ledgerId, LedgerAccountCode.Inv),
+                    LedgerAccount(carExpAcc, ledgerId, LedgerAccountCode.CarriageExpense),
+                    LedgerAccount(carAccrAcc, ledgerId, LedgerAccountCode.CarriageAccrual)
                   )
                   // Negate recognition: swap debit/credit of each original leg.
                   val transfers = List(
@@ -116,6 +121,15 @@ final class InvoiceReversalService[F[_]: Async](xa: Transactor[F], ledger: Tiger
                       invAcc,
                       cogsAcc,
                       minor(h.cogs),
+                      ledgerId,
+                      LedgerTransferCode.Reversal
+                    ),
+                    // recall outbound carriage too — the full per-event set (DR accrual / CR expense)
+                    LedgerTransfer(
+                      TbIds.transferId(rid, 3),
+                      carAccrAcc,
+                      carExpAcc,
+                      minor(h.shipping),
                       ledgerId,
                       LedgerTransferCode.Reversal
                     )
@@ -143,7 +157,7 @@ final class InvoiceReversalService[F[_]: Async](xa: Transactor[F], ledger: Tiger
   private def head(orderInvoiceId: UUID): ConnectionIO[Option[ReversalHead]] =
     sql"""SELECT i.order_id, o.entity_id, o.bill_to_party_id, o.txn_currency, i.status, i.invoice_no,
                  COALESCE(rr.revenue_ex_vat, i.total_ex_vat), COALESCE(rr.vat, i.vat_total), COALESCE(rr.cogs, 0),
-                 rr.dispatch_id
+                 COALESCE(rr.shipping_cost, 0), rr.dispatch_id
           FROM order_invoice i
             JOIN "order" o ON o.id = i.order_id
             LEFT JOIN revenue_recognition rr ON rr.invoice_no = i.invoice_no

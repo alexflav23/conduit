@@ -13,20 +13,22 @@ object Ledgers {
 
 // TigerBeetle account `code` = the GL account role (doc 04 §Ledger). u16 categorisation.
 object LedgerAccountCode {
-  val Ar: Int             = 1  // receivable per trade customer
-  val Ap: Int             = 2  // payable per supplier
-  val Inv: Int            = 3  // inventory asset per entity (specific-identification batch cost)
-  val CosClearing: Int    = 4  // cost-of-sales clearing — relieved on delivery, reclassified downstream
-  val Vat: Int            = 5  // tax control
-  val CommPayable: Int    = 6  // commission payable per agent
-  val Intercompany: Int   = 7  // intercompany clearing
-  val FxClearing: Int     = 8  // cross-currency bridge
-  val Revenue: Int        = 9
-  val OpeningEquity: Int  = 10 // OPENING_BALANCE_EQUITY contra — migration opening balances post against it (doc 18 §2)
-  val IcMargin: Int       = 11 // intragroup margin on an intercompany sell leg — eliminated on consolidation (doc 13 §7)
-  val Bank: Int           = 12 // cash at bank per entity — receives settled AR (doc 13 §payments)
-  val StripeClearing: Int = 13 // Stripe balance per entity — gross on payment, relieved net+fee on payout
-  val FeeExpense: Int     = 14 // payment-processor fees (Stripe) → P&L
+  val Ar: Int              = 1  // receivable per trade customer
+  val Ap: Int              = 2  // payable per supplier
+  val Inv: Int             = 3  // inventory asset per entity (specific-identification batch cost)
+  val CosClearing: Int     = 4  // cost-of-sales clearing — relieved on delivery, reclassified downstream
+  val Vat: Int             = 5  // tax control
+  val CommPayable: Int     = 6  // commission payable per agent
+  val Intercompany: Int    = 7  // intercompany clearing
+  val FxClearing: Int      = 8  // cross-currency bridge
+  val Revenue: Int         = 9
+  val OpeningEquity: Int   = 10 // OPENING_BALANCE_EQUITY contra — migration opening balances post against it (doc 18 §2)
+  val IcMargin: Int        = 11 // intragroup margin on an intercompany sell leg — eliminated on consolidation (doc 13 §7)
+  val Bank: Int            = 12 // cash at bank per entity — receives settled AR (doc 13 §payments)
+  val StripeClearing: Int  = 13 // Stripe balance per entity — gross on payment, relieved net+fee on payout
+  val FeeExpense: Int      = 14 // payment-processor fees (Stripe) → P&L
+  val CarriageExpense: Int = 15 // outbound shipping/carriage to the customer → P&L (recalled on cancellation)
+  val CarriageAccrual: Int = 16 // carriage owed to the carrier — liability, relieved when the carrier is paid
 }
 
 object LedgerTransferCode {

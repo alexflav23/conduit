@@ -39,6 +39,7 @@ private final case class RecogCtx(
     head: DispatchHead,
     rev: BigDecimal,
     cogs: BigDecimal,
+    shipping: BigDecimal,
     qty: Int,
     invoiceId: Option[UUID],
     asOf: LocalDate
@@ -54,11 +55,13 @@ final class RevenueRecognitionService[F[_]: Async](xa: Transactor[F], ledger: Ti
   private val zero = new UUID(0L, 0L)
   private val tax  = new TaxDeterminationService[F](xa, Map(RateTableProvider.name -> RateTableProvider))
 
-  def ar(party: UUID): BigInt       = TbIds.accountId(s"AR:$party")
-  def revenue(entity: UUID): BigInt = TbIds.accountId(s"REVENUE:$entity")
-  def vatAcc(entity: UUID): BigInt  = TbIds.accountId(s"VAT:$entity")
-  def cogsAcc(entity: UUID): BigInt = TbIds.accountId(s"COGS:$entity")
-  def inv(entity: UUID): BigInt     = TbIds.accountId(s"INV:$entity")
+  def ar(party: UUID): BigInt            = TbIds.accountId(s"AR:$party")
+  def revenue(entity: UUID): BigInt      = TbIds.accountId(s"REVENUE:$entity")
+  def vatAcc(entity: UUID): BigInt       = TbIds.accountId(s"VAT:$entity")
+  def cogsAcc(entity: UUID): BigInt      = TbIds.accountId(s"COGS:$entity")
+  def inv(entity: UUID): BigInt          = TbIds.accountId(s"INV:$entity")
+  def carriageExp(entity: UUID): BigInt  = TbIds.accountId(s"CARRIAGE_EXPENSE:$entity")
+  def carriageAccr(entity: UUID): BigInt = TbIds.accountId(s"CARRIAGE_ACCRUAL:$entity")
 
   private def minor(amount: BigDecimal): BigInt = (amount.setScale(2, RoundingMode.HALF_UP) * 100).toBigInt
 
@@ -87,8 +90,12 @@ final class RevenueRecognitionService[F[_]: Async](xa: Transactor[F], ledger: Ti
       LedgerAccount(revenue(entity), ledgerId, LedgerAccountCode.Revenue),
       LedgerAccount(vatAcc(entity), ledgerId, LedgerAccountCode.Vat),
       LedgerAccount(cogsAcc(entity), ledgerId, LedgerAccountCode.CosClearing),
-      LedgerAccount(inv(entity), ledgerId, LedgerAccountCode.Inv)
+      LedgerAccount(inv(entity), ledgerId, LedgerAccountCode.Inv),
+      LedgerAccount(carriageExp(entity), ledgerId, LedgerAccountCode.CarriageExpense),
+      LedgerAccount(carriageAccr(entity), ledgerId, LedgerAccountCode.CarriageAccrual)
     )
+    // leg 3 = outbound carriage (DR expense / CR accrual). Recorded like the others so the void path reverses the
+    // FULL set — adding this cost category needed no change to the reversal logic (per-event reversal, doc 04 §Ledger).
     val transfers = List(
       LedgerTransfer(
         TbIds.transferId(dispatchId, 0),
@@ -111,6 +118,14 @@ final class RevenueRecognitionService[F[_]: Async](xa: Transactor[F], ledger: Ti
         cogsAcc(entity),
         inv(entity),
         minor(ctx.cogs),
+        ledgerId,
+        LedgerTransferCode.Generic
+      ),
+      LedgerTransfer(
+        TbIds.transferId(dispatchId, 3),
+        carriageExp(entity),
+        carriageAccr(entity),
+        minor(ctx.shipping),
         ledgerId,
         LedgerTransferCode.Generic
       )
@@ -147,15 +162,19 @@ final class RevenueRecognitionService[F[_]: Async](xa: Transactor[F], ledger: Ti
           head(dispatchId),
           revenueExVat(dispatchId),
           cogs(dispatchId),
+          shippingCost(dispatchId),
           dispatchedQty(dispatchId),
           invoiceId(dispatchId),
           asOf(dispatchId)
         ).tupled
           .map {
-            case (None, _, _, _, _, _)            => "unknown dispatch".asLeft[Option[RecogCtx]]
-            case (Some(h), rev, c, qty, inv, dat) => Some(RecogCtx(h, rev, c, qty, inv, dat)).asRight[String]
+            case (None, _, _, _, _, _, _)             => "unknown dispatch".asLeft[Option[RecogCtx]]
+            case (Some(h), rev, c, ship, qty, inv, d) => Some(RecogCtx(h, rev, c, ship, qty, inv, d)).asRight[String]
           }
     }
+
+  private def shippingCost(dispatchId: UUID): ConnectionIO[BigDecimal] =
+    sql"SELECT COALESCE(shipping_cost, 0) FROM dispatch WHERE id = $dispatchId".query[BigDecimal].unique
 
   private def alreadyRecognised(dispatchId: UUID): ConnectionIO[Boolean] =
     sql"SELECT count(*) FROM revenue_recognition WHERE dispatch_id = $dispatchId".query[Int].unique.map(_ > 0)
@@ -217,15 +236,18 @@ final class RevenueRecognitionService[F[_]: Async](xa: Transactor[F], ledger: Ti
     val h = ctx.head
     sql"""INSERT INTO revenue_recognition
             (dispatch_id, order_id, invoice_no, entity_id, currency, revenue_ex_vat, vat, cogs, gross_margin,
-             vat_jurisdiction, tax_quote_id, ar_transfer_id, vat_transfer_id, cogs_transfer_id)
+             vat_jurisdiction, tax_quote_id, shipping_cost, ar_transfer_id, vat_transfer_id, cogs_transfer_id,
+             carriage_transfer_id)
           VALUES ($dispatchId, ${h.orderId},
              (SELECT invoice_no FROM order_invoice WHERE order_id = ${h.orderId} ORDER BY issued_at DESC LIMIT 1),
              ${h.entityId}, ${h.currency}, ${ctx.rev}, $vatAmt, ${ctx.cogs}, ${ctx.rev - ctx.cogs}, ${h.jurisdiction},
              (SELECT id FROM tax_quote WHERE order_invoice_id = ${ctx.invoiceId} AND context = 'invoice'
                 ORDER BY determined_at DESC LIMIT 1),
+             ${ctx.shipping},
              ${TbIds.transferId(dispatchId, 0).bigInteger.toString}::numeric,
              ${TbIds.transferId(dispatchId, 1).bigInteger.toString}::numeric,
-             ${TbIds.transferId(dispatchId, 2).bigInteger.toString}::numeric)
+             ${TbIds.transferId(dispatchId, 2).bigInteger.toString}::numeric,
+             ${TbIds.transferId(dispatchId, 3).bigInteger.toString}::numeric)
           ON CONFLICT (dispatch_id) DO NOTHING""".update.run.flatMap { n =>
       OutboxRepo
         .append(
