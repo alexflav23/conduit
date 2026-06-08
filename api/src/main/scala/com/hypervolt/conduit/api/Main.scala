@@ -16,6 +16,7 @@ import com.hypervolt.conduit.api.routes.HealthRoutes
 import com.hypervolt.conduit.api.routes.IntercompanyRoutes
 import com.hypervolt.conduit.api.routes.DocumentRoutes
 import com.hypervolt.conduit.api.routes.InvoiceVoidRoutes
+import com.hypervolt.conduit.api.routes.OrderLifecycleRoutes
 import com.hypervolt.conduit.api.routes.PricingRoutes
 import com.hypervolt.conduit.api.routes.StripeWebhookRoutes
 import com.hypervolt.conduit.config.AppConfig
@@ -74,13 +75,14 @@ object Main extends IOApp.Simple {
           else S3DocumentStorage.awsClient
         val documentRoutes =
           new DocumentRoutes[IO](xa, auth, new S3DocumentStorage[IO](s3Client, cfg.documents.bucket)).routes
-        val voidRoutes = new InvoiceVoidRoutes[IO](xa, auth).routes
+        val voidRoutes      = new InvoiceVoidRoutes[IO](xa, auth).routes
+        val lifecycleRoutes = new OrderLifecycleRoutes[IO](xa, auth).routes
         val app =
           Router(
             "/" -> (HealthRoutes
               .routes[
                 IO
-              ] <+> accessRoutes <+> pricingRoutes <+> commerceRoutes <+> dealDeskRoutes <+> h6qRoutes <+> icRoutes <+> creditRoutes <+> auditRoutes <+> stripeRoutes <+> documentRoutes <+> voidRoutes)
+              ] <+> accessRoutes <+> pricingRoutes <+> commerceRoutes <+> dealDeskRoutes <+> h6qRoutes <+> icRoutes <+> creditRoutes <+> auditRoutes <+> stripeRoutes <+> documentRoutes <+> voidRoutes <+> lifecycleRoutes)
           ).orNotFound
         val host      = Ipv4Address.fromString(cfg.http.host).getOrElse(ipv4"0.0.0.0")
         val apiPort   = Port.fromInt(cfg.http.port).getOrElse(port"8080")

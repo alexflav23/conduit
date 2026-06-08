@@ -58,7 +58,16 @@ object FieldLayerMap {
     ("tp_document", "markup_or_margin_pct")        -> DataLayer.InterEntity,
     // legal documents (doc 17 §9): the money on the artefact is commercial; the rest is logistics/identity.
     ("document", "total_amount") -> DataLayer.Commercial,
-    ("document", "currency")     -> DataLayer.Commercial
+    ("document", "currency")     -> DataLayer.Commercial,
+    // order collection ledger (doc 13 §void): the cycle money is commercial; the structure (invoice no, status,
+    // dates, void kind, replaced-by) is logistics/identity and stays visible to a volume-only viewer.
+    ("collection_cycle", "total")          -> DataLayer.Commercial,
+    ("collection_cycle", "revenue_ex_vat") -> DataLayer.Commercial,
+    ("collection_cycle", "vat")            -> DataLayer.Commercial,
+    ("collection_cycle", "cogs")           -> DataLayer.Commercial,
+    ("collection_cycle", "paid")           -> DataLayer.Commercial,
+    ("collection_cycle", "refunded")       -> DataLayer.Commercial,
+    ("collection_cycle", "outstanding")    -> DataLayer.Commercial
   )
 
   def layerOf(objectType: String, field: String): Option[DataLayer] = seed.get((objectType, field))
