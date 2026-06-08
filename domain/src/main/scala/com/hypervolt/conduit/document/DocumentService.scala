@@ -253,7 +253,8 @@ final class DocumentService[F[_]: Async](
         "locale"           -> h.locale.asJson,
         "jurisdiction"     -> h.jurisdiction.asJson
       ),
-      Instant.now()
+      Instant.now(),
+      "service:documents"
     )
 
   // ===== invoice invalidation (doc 13 §void / 17 §6) =====
@@ -420,6 +421,7 @@ final class DocumentService[F[_]: Async](
         "locale"           -> orig.locale.asJson,
         "jurisdiction"     -> orig.jurisdiction.asJson
       ),
-      Instant.now()
+      Instant.now(),
+      "service:documents"
     )
 }

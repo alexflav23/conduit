@@ -23,8 +23,19 @@ const styles = stylex.create({
   ev: { display: 'flex', gap: '0.7rem', alignItems: 'baseline', padding: '0.3rem 0', borderBottom: `1px solid ${colors.border}`, fontSize: '0.86rem' },
   seq: { color: colors.muted, fontVariantNumeric: 'tabular-nums', width: '2.5rem' },
   etype: { fontWeight: 600, minWidth: '11rem' },
+  when: { color: colors.muted, fontVariantNumeric: 'tabular-nums', minWidth: '13rem', fontSize: '0.8rem' },
+  origin: { fontSize: '0.72rem', fontWeight: 600, padding: '0.05rem 0.4rem', borderRadius: '6px', backgroundColor: 'rgba(150,45,255,0.14)', color: colors.accent },
   corr: { color: colors.accent, fontSize: '0.72rem', fontFamily: 'monospace' },
 });
+
+// Render the stored UTC instant as a complete, timezone-explicit timestamp (e.g. "2026-09-10 09:30:00 UTC").
+function utc(iso: string | undefined): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return iso;
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())} UTC`;
+}
 
 export function Lifecycle({ token }: { token: string }) {
   const [orderId, setOrderId] = useState('33333333-3333-3333-3333-333333333333');
@@ -95,8 +106,9 @@ export function Lifecycle({ token }: { token: string }) {
           {timeline.map((e, i) => (
             <div key={i} {...stylex.props(styles.ev)} data-testid="life-event">
               <span {...stylex.props(styles.seq)}>{e.seq}</span>
+              <span {...stylex.props(styles.when)} data-testid="life-when">{utc(e.occurred_at)}</span>
               <span {...stylex.props(styles.etype)}>{e.event_type}</span>
-              <span {...stylex.props(styles.label)}>{(e.occurred_at ?? '').slice(0, 10)}</span>
+              {e.origin && <span {...stylex.props(styles.origin)} data-testid="life-origin">{e.origin}</span>}
               {e.invoice_no && <span {...stylex.props(styles.label)}>{e.invoice_no}</span>}
               {e.correlation_id && <span {...stylex.props(styles.corr)}>⛓ {String(e.correlation_id).slice(0, 8)}</span>}
             </div>

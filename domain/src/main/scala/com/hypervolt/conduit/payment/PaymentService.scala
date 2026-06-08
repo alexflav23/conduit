@@ -283,6 +283,7 @@ final class PaymentService[F[_]: Async](xa: Transactor[F], ledger: TigerBeetleLe
         "method"           -> method.asJson,
         "invoice_status"   -> status.asJson
       ),
-      Instant.now()
+      Instant.now(),
+      s"payment:$method" // origin: which rail moved the cash (stripe / bank / refund)
     )
 }

@@ -20,20 +20,21 @@ object OrderLifecycleRepo {
 
   // Structural-only (no money): the event spine. Money lives in `cycles`, which the route layer-projects.
   def timeline(orderId: UUID): ConnectionIO[List[Json]] =
-    sql"""SELECT seq, event_id, event_type, occurred_at, correlation_id, causation_id, payload
+    sql"""SELECT seq, event_id, event_type, occurred_at, origin, correlation_id, causation_id, payload
           FROM outbox_event
           WHERE aggregate_id = $orderId OR payload->>'order_id' = ${orderId.toString}
           ORDER BY seq"""
-      .query[(Long, UUID, String, Instant, Option[UUID], Option[UUID], Json)]
+      .query[(Long, UUID, String, Instant, String, Option[UUID], Option[UUID], Json)]
       .to[List]
       .map(_.map {
-        case (seq, eid, tpe, at, corr, cause, payload) =>
+        case (seq, eid, tpe, at, origin, corr, cause, payload) =>
           val c = payload.hcursor
           Json.obj(
             "seq"              -> seq.asJson,
             "event_id"         -> eid.toString.asJson,
             "event_type"       -> tpe.asJson,
-            "occurred_at"      -> at.toString.asJson,
+            "occurred_at"      -> at.toString.asJson,          // ISO-8601 UTC instant (timezone-complete, e.g. …T09:30:00Z)
+            "origin"           -> origin.asJson,               // who/what emitted it (user:… / service:… / payment:…)
             "correlation_id"   -> corr.map(_.toString).asJson, // the cycle thread (column, not payload)
             "causation_id"     -> cause.map(_.toString).asJson,
             "invoice_no"       -> c.get[String]("invoice_no").toOption.asJson,

@@ -89,7 +89,8 @@ final class InvoiceVoidRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[
         "reason"           -> reason.asJson,
         "requested_by"     -> actor.asJson
       ),
-      Instant.now()
+      Instant.now(),
+      s"user:$actor" // origin: the finance user who requested the void
     )
 
   val routes: HttpRoutes[F] = Http4sServerInterpreter[F]().toRoutes(voidInvoice)

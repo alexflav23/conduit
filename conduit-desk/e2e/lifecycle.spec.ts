@@ -17,4 +17,9 @@ test('Lifecycle: finance replays an order — collection cycle + event timeline'
   // the event timeline replays the spine
   await expect(page.getByTestId('life-timeline')).toContainText('order.invoiced');
   await expect(page.getByTestId('life-timeline')).toContainText('revenue.recognized');
+
+  // lineage precision: each event shows its origin + a complete UTC timestamp
+  await expect(page.getByTestId('life-origin').first()).toContainText('service:');
+  await expect(page.getByTestId('life-when').first()).toContainText('UTC');
+  await expect(page.getByTestId('life-when').first()).toContainText('2026-09-01 09:12:00');
 });

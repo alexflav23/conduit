@@ -232,7 +232,8 @@ final class OrderService[F[_]: Async](xa: Transactor[F]) {
         "total_inc_vat" -> total.toString.asJson,
         "lines"         -> lineJson(priced)
       ),
-      Instant.now()
+      Instant.now(),
+      "service:order"
     )
 
   private def exceptionEvent(orderId: UUID, orderNo: String): OutboxEvent =
@@ -247,7 +248,8 @@ final class OrderService[F[_]: Async](xa: Transactor[F]) {
       None,
       None,
       Json.obj("order_no" -> orderNo.asJson, "status" -> "pending_ceo".asJson),
-      Instant.now()
+      Instant.now(),
+      "service:order"
     )
 
   private def amendedEvent(orderId: UUID, before: Json, after: Json, actor: Option[UUID]): OutboxEvent =
@@ -262,6 +264,7 @@ final class OrderService[F[_]: Async](xa: Transactor[F]) {
       None,
       None,
       Json.obj("before" -> before, "after" -> after, "actor" -> actor.map(_.toString).asJson),
-      Instant.now()
+      Instant.now(),
+      actor.map(a => s"user:$a").getOrElse("service:order")
     )
 }

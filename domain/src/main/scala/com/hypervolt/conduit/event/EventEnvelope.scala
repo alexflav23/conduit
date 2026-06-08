@@ -27,7 +27,9 @@ object EventEnvelope {
   implicit val encoder: Encoder[EventEnvelope]     = Encoder.gen[EventEnvelope]
   implicit val decoder: Decoder[EventEnvelope]     = Decoder.gen[EventEnvelope]
 
-  def fromOutbox(e: OutboxEvent, actor: String = "system:relay"): EventEnvelope =
+  // The wire `actor` IS the persisted origin (the relay is just transport, not the cause).
+  def fromOutbox(e: OutboxEvent, actor: String = ""): EventEnvelope = {
+    val resolvedActor = if (actor.nonEmpty) actor else e.origin
     EventEnvelope(
       event_id = e.eventId.toString,
       event_type = e.eventType,
@@ -38,10 +40,11 @@ object EventEnvelope {
       scope = e.scope.map(_.noSpaces),
       correlation_id = e.correlationId.map(_.toString),
       causation_id = e.causationId.map(_.toString),
-      actor = actor,
+      actor = resolvedActor,
       occurred_at = e.occurredAt.toEpochMilli,
       payload = e.payload.noSpaces.getBytes(StandardCharsets.UTF_8)
     )
+  }
 }
 
 // Topic per aggregate type (doc 01 §4 / doc 03 §1). Falls back to conduit.<aggregateType> for new aggregates.

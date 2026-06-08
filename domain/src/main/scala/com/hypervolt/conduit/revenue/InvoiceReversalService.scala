@@ -173,7 +173,7 @@ final class InvoiceReversalService[F[_]: Async](xa: Transactor[F], ledger: Tiger
                  ${TbIds.transferId(rid, 2).toString}::numeric, $actor)""".update.run
       _ <- sql"""UPDATE order_invoice SET status = 'void', voided_at = now(), void_reason = $reason, void_kind = $kind
               WHERE id = $orderInvoiceId""".update.run
-      _ <- OutboxRepo.append(event(rid, orderInvoiceId, h, kind, reason, causedBy))
+      _ <- OutboxRepo.append(event(rid, orderInvoiceId, h, kind, reason, causedBy, actor))
     } yield InvoiceReversalResult(rid, h.invoiceNo, kind, h.revenueExVat + h.vat, "void").asRight[String]
 
   // correlation = rid (the cycle thread, which is also this event's id); causation = the void request that triggered it.
@@ -183,7 +183,8 @@ final class InvoiceReversalService[F[_]: Async](xa: Transactor[F], ledger: Tiger
       h: ReversalHead,
       kind: String,
       reason: String,
-      causedBy: Option[UUID]
+      causedBy: Option[UUID],
+      actor: String
   ): OutboxEvent =
     OutboxEvent(
       rid,
@@ -206,6 +207,7 @@ final class InvoiceReversalService[F[_]: Async](xa: Transactor[F], ledger: Tiger
         "reversed_vat"     -> h.vat.asJson,
         "reversed_cogs"    -> h.cogs.asJson
       ),
-      Instant.now()
+      Instant.now(),
+      s"user:$actor"
     )
 }

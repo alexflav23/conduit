@@ -108,11 +108,11 @@ BEGIN
     INSERT INTO order_invoice (order_id, invoice_no, total_ex_vat, vat_total, total_inc_vat, due_date, status)
       VALUES (ord, 'INV-FLOW', 25000, 5000, 30000, '2026-10-10', 'open');
     -- the events behind the sale, so the desk Lifecycle timeline replays a real spine (not just the cycles)
-    INSERT INTO outbox_event (event_id, event_type, schema_version, aggregate_type, aggregate_id, partition_key, payload, occurred_at, status, published_at)
-      VALUES (gen_random_uuid(), 'order.placed', 1, 'order', ord, ord::text, '{}'::jsonb, '2026-09-01', 'published', now()),
-             (gen_random_uuid(), 'dispatch.created', 1, 'order', ord, ord::text, jsonb_build_object('dispatch_no','DSP-FLOW'), '2026-09-10', 'published', now()),
-             (gen_random_uuid(), 'order.invoiced', 1, 'order', ord, ord::text, jsonb_build_object('invoice_no','INV-FLOW'), '2026-09-10', 'published', now()),
-             (gen_random_uuid(), 'revenue.recognized', 1, 'order', ord, ord::text, '{}'::jsonb, '2026-09-15', 'published', now());
+    INSERT INTO outbox_event (event_id, event_type, schema_version, aggregate_type, aggregate_id, partition_key, payload, occurred_at, origin, status, published_at)
+      VALUES (gen_random_uuid(), 'order.placed', 1, 'order', ord, ord::text, '{}'::jsonb, '2026-09-01T09:12:00Z', 'service:order', 'published', now()),
+             (gen_random_uuid(), 'dispatch.created', 1, 'order', ord, ord::text, jsonb_build_object('dispatch_no','DSP-FLOW'), '2026-09-10T08:30:00Z', 'service:dispatch', 'published', now()),
+             (gen_random_uuid(), 'order.invoiced', 1, 'order', ord, ord::text, jsonb_build_object('invoice_no','INV-FLOW'), '2026-09-10T08:30:05Z', 'service:dispatch', 'published', now()),
+             (gen_random_uuid(), 'revenue.recognized', 1, 'order', ord, ord::text, '{}'::jsonb, '2026-09-10T08:30:05Z', 'service:revenue-recognition', 'published', now());
   END IF;
 END $$;
 

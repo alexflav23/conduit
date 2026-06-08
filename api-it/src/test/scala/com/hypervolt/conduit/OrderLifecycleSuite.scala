@@ -135,15 +135,20 @@ object OrderLifecycleSuite extends IOSuite {
         timeline <- OrderLifecycleRepo.timeline(ord).transact(xa)
         cycles   <- OrderLifecycleRepo.cycles(ord).transact(xa)
       } yield {
-        val types = timeline.map(_.hcursor.get[String]("event_type").toOption.getOrElse(""))
-        val seqs  = timeline.flatMap(_.hcursor.get[Long]("seq").toOption)
-        val byNo  = cycles.map(c => c.hcursor.get[String]("invoice_no").toOption.getOrElse("") -> c).toMap
-        val cyc1  = byNo(no1).hcursor
-        val cyc2  = byNo(no2).hcursor
+        val types   = timeline.map(_.hcursor.get[String]("event_type").toOption.getOrElse(""))
+        val seqs    = timeline.flatMap(_.hcursor.get[Long]("seq").toOption)
+        val origins = timeline.flatMap(_.hcursor.get[String]("origin").toOption).toSet
+        val byNo    = cycles.map(c => c.hcursor.get[String]("invoice_no").toOption.getOrElse("") -> c).toMap
+        val cyc1    = byNo(no1).hcursor
+        val cyc2    = byNo(no2).hcursor
         expect(seqs == seqs.sorted) and // chronological replay
           expect(types.contains("order.invoiced")) and
           expect(types.count(_ == "payment.received") >= 2) and // pay, refund, pay
           expect(types.contains("invoice.voided")) and
+          // lineage precision: each event records its origin + a timezone-complete UTC instant
+          expect(origins.contains("payment:bank")) and     // the refund/payment rail
+          expect(origins.contains("user:finance:e2e")) and // the void's actor
+          expect(timeline.forall(_.hcursor.get[String]("occurred_at").exists(_.endsWith("Z")))) and
           expect(cycles.size == 2) and // two collection cycles on one order
           expect(cyc1.get[String]("status").toOption.contains("void")) and
           expect(cyc1.get[String]("void_kind").toOption.contains("refund")) and

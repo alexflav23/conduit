@@ -189,6 +189,7 @@ final class DispatchService[F[_]: Async](xa: Transactor[F]) {
       None,
       None,
       payload,
-      Instant.now()
+      Instant.now(),
+      "service:dispatch"
     )
 }

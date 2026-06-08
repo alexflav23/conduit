@@ -128,11 +128,12 @@ object InvoiceVoidHttpSuite extends IOSuite {
         (entity, billTo, no, inv) = s
         arPaid    <- ledger.balance(TbIds.accountId(s"AR:$billTo")).map(b => b.debitsPosted - b.creditsPosted)
         (code, _) <- post(routes, no, kc, """{"kind":"refund","reason":"customer returned the unit"}""")
-        evtRow <-
-          sql"""SELECT payload::text FROM outbox_event WHERE event_type='invoice.void_requested' AND payload->>'invoice_no' = $no LIMIT 1"""
-            .query[String]
+        evt <-
+          sql"""SELECT payload::text, origin FROM outbox_event WHERE event_type='invoice.void_requested' AND payload->>'invoice_no' = $no LIMIT 1"""
+            .query[(String, String)]
             .unique
             .transact(xa)
+        (evtRow, evtOrigin) = evt
         // replay what the consumer would do off that event
         env = EventEnvelope(
           UUID.randomUUID().toString,
@@ -155,6 +156,7 @@ object InvoiceVoidHttpSuite extends IOSuite {
         status  <- sql"SELECT status FROM order_invoice WHERE id = $inv".query[String].unique.transact(xa)
       } yield expect(arPaid == BigInt(0)) and // paid: AR settled
         expect(code == 202) and
+        expect(evtOrigin.startsWith("user:")) and // lineage: the void request records its requester as origin
         expect(instr._1 == inv && instr._3 == "refund") and
         expect(arEnd == BigInt(0)) and   // recognition reversed (-) then refund (+) net 0
         expect(bankEnd == BigInt(0)) and // cash returned to the customer

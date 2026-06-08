@@ -17,7 +17,10 @@ final case class OutboxEvent(
     correlationId: Option[UUID],
     causationId: Option[UUID],
     payload: Json,
-    occurredAt: Instant
+    occurredAt: Instant,
+    // The origin of the event — the actor/service/consumer that emitted it (lineage, doc 03 §1). Defaults to
+    // 'system' so existing emit sites compile; the order→cash sites pass a meaningful origin (user:… / service:…).
+    origin: String = "system"
 )
 
 // A pending row with its monotonic sequence (publication order).

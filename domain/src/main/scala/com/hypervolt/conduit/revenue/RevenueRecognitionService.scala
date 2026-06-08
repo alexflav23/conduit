@@ -168,7 +168,8 @@ final class RevenueRecognitionService[F[_]: Async](xa: Transactor[F], ledger: Ti
               "cogs"           -> cogsAmt.toString.asJson,
               "gross_margin"   -> (rev - cogsAmt).toString.asJson
             ),
-            Instant.now()
+            Instant.now(),
+            "service:revenue-recognition"
           )
         )
         .as(n)
