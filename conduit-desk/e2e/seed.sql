@@ -206,3 +206,19 @@ INSERT INTO permission (role_id, object_type, action, section, viewable_layers, 
 SELECT r.id, 'order', 'approve', NULL, '{}', '{}', 'all' FROM role r
 WHERE r.name = 'finance'
   AND NOT EXISTS (SELECT 1 FROM permission p WHERE p.role_id = r.id AND p.object_type='order' AND p.action='approve' AND p.section IS NULL);
+
+-- M13-Tax: a tax demo entity (fixed id the desk quote tester persists against) + a tax_specialist user. CFO
+-- governance reuses ceo-e2e (the CFO/approver). A nexus profile (low threshold) so the nexus board has a row.
+INSERT INTO entity (id, name, jurisdiction, functional_currency, entity_type)
+  VALUES ('33333333-3333-3333-3333-333333333333', 'HV Tax Demo', 'GB', 'GBP', 'operating')
+  ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO app_user (keycloak_id, name) VALUES ('tax-e2e', 'E2E Tax') ON CONFLICT (keycloak_id) DO NOTHING;
+INSERT INTO role_assignment (user_id, role_id)
+  SELECT u.id, r.id FROM app_user u, role r
+  WHERE u.keycloak_id = 'tax-e2e' AND r.name = 'tax_specialist'
+  AND NOT EXISTS (SELECT 1 FROM role_assignment ra WHERE ra.user_id = u.id AND ra.role_id = r.id);
+
+INSERT INTO nexus_profile (entity_id, jurisdiction, region, threshold_amount, status)
+  VALUES ('33333333-3333-3333-3333-333333333333', 'US', 'CA', 100000.0000, 'monitoring')
+  ON CONFLICT (entity_id, jurisdiction, region) DO NOTHING;

@@ -218,3 +218,56 @@ export function voidInvoice(token: string, invoiceNo: string, kind: string, reas
 export function getOrderLifecycle(token: string, orderId: string) {
   return call(`/api/v1/orders/${encodeURIComponent(orderId)}/lifecycle`, token, 'GET');
 }
+
+// ----- M13-Tax (doc 16): determination engine + rate-table admin (effective-dated, multi-level) -----
+
+// A seeded operating entity (the liable taxpayer) so the quote tester has a valid entity_id to persist against.
+export const TAX_DEMO_ENTITY = '33333333-3333-3333-3333-333333333333';
+
+export interface TaxQuoteInput {
+  shipFromJurisdiction: string;
+  shipToJurisdiction: string;
+  shipToRegion?: string;
+  shipToPostcode?: string;
+  partyTaxStatus: string;
+  buyerTaxId?: string;
+  currency: string;
+  taxableAmount: string;
+}
+
+export function taxQuote(token: string, q: TaxQuoteInput) {
+  return call('/api/v1/tax/quote', token, 'POST', {
+    context: 'quote_preview',
+    entityId: TAX_DEMO_ENTITY,
+    shipFrom: { jurisdiction: q.shipFromJurisdiction, region: null, postcode: null },
+    shipTo: { jurisdiction: q.shipToJurisdiction, region: q.shipToRegion || null, postcode: q.shipToPostcode || null },
+    partyTaxStatus: q.partyTaxStatus,
+    buyerTaxId: q.buyerTaxId || null,
+    incoterm: null,
+    currency: q.currency,
+    asOf: '2026-06-01',
+    lines: [{ ref: 'l1', productVariantId: null, taxCategoryCode: 'goods_standard', hsCode: null, qty: 1, taxableAmount: q.taxableAmount }],
+  });
+}
+
+export function getTaxRates(token: string, jurisdiction?: string) {
+  const q = jurisdiction ? `?jurisdiction=${encodeURIComponent(jurisdiction)}` : '';
+  return call(`/api/v1/tax/rates${q}`, token, 'GET');
+}
+
+export function proposeTaxRate(token: string, body: unknown) {
+  return call('/api/v1/tax/rates', token, 'POST', body);
+}
+
+export function activateTaxRate(token: string, id: string) {
+  return call(`/api/v1/tax/rates/${id}/activate`, token, 'POST');
+}
+
+export function getTaxRouting(token: string) {
+  return call('/api/v1/tax/routing', token, 'GET');
+}
+
+export function getTaxNexus(token: string, entityId?: string) {
+  const q = entityId ? `?entity_id=${encodeURIComponent(entityId)}` : '';
+  return call(`/api/v1/tax/nexus${q}`, token, 'GET');
+}
