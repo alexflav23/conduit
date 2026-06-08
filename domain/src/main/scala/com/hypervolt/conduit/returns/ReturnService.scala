@@ -25,13 +25,13 @@ final class ReturnService[F[_]: Async](xa: Transactor[F], ledger: TigerBeetleLed
 
   private val gbpLedger = Ledgers.forCurrency(Currency.GBP)
 
-  def arAccount(party: UUID): BigInt       = TbIds.accountId(s"AR:$party")
-  def revenueAccount(entity: UUID): BigInt = TbIds.accountId(s"REVENUE:$entity")
-  def vatAccount(entity: UUID): BigInt     = TbIds.accountId(s"VAT:$entity")
-  def invAccount(entity: UUID): BigInt     = TbIds.accountId(s"INV:$entity")
-  def cosClearing(entity: UUID): BigInt    = TbIds.accountId(s"COS_CLEARING:$entity")
-  def commPayable(agent: UUID): BigInt     = TbIds.accountId(s"COMM_PAYABLE:$agent:GBP")
-  def commExpense(agent: UUID): BigInt     = TbIds.accountId(s"COMM_EXPENSE:$agent:GBP")
+  def arAccount(party: UUID): BigInt                         = TbIds.accountId(s"AR:$party")
+  def revenueAccount(entity: UUID): BigInt                   = TbIds.accountId(s"REVENUE:$entity")
+  def vatAccount(entity: UUID, jurisdiction: String): BigInt = TbIds.accountId(s"VAT:$entity:$jurisdiction")
+  def invAccount(entity: UUID): BigInt                       = TbIds.accountId(s"INV:$entity")
+  def cosClearing(entity: UUID): BigInt                      = TbIds.accountId(s"COS_CLEARING:$entity")
+  def commPayable(agent: UUID): BigInt                       = TbIds.accountId(s"COMM_PAYABLE:$agent:GBP")
+  def commExpense(agent: UUID): BigInt                       = TbIds.accountId(s"COMM_EXPENSE:$agent:GBP")
 
   private def minor(a: BigDecimal): BigInt = (a.setScale(2, RoundingMode.HALF_UP) * 100).toBigInt
 
@@ -300,6 +300,7 @@ final class ReturnService[F[_]: Async](xa: Transactor[F], ledger: TigerBeetleLed
             val refund = h.refundAmount.getOrElse(BigDecimal(0))
             for {
               vatRate <- vatRateFor(rmaId).transact(xa)
+              vatJur  <- vatJurisdictionFor(h.orderId).transact(xa)
               vat    = (refund * vatRate / 100).setScale(2, RoundingMode.HALF_UP)
               entity = h.entityId.getOrElse(new UUID(0L, 0L))
               // AR/VAT/revenue reversal (only if a refund is due)
@@ -317,7 +318,7 @@ final class ReturnService[F[_]: Async](xa: Transactor[F], ledger: TigerBeetleLed
                       ),
                       LedgerTransfer(
                         TbIds.transferId(rmaId, 11),
-                        vatAccount(entity),
+                        vatAccount(entity, vatJur),
                         arAccount(h.billTo),
                         minor(vat),
                         gbpLedger,
@@ -397,6 +398,17 @@ final class ReturnService[F[_]: Async](xa: Transactor[F], ledger: TigerBeetleLed
     sql"""SELECT COALESCE(MAX(tr.rate_percent), 0) FROM rma_line rl
           JOIN order_line ol ON ol.id = rl.order_line_id
           LEFT JOIN tax_regime tr ON tr.code = ol.tax_regime WHERE rl.rma_id = $rmaId""".query[BigDecimal].unique
+
+  // The VAT jurisdiction the refund must reverse — the original recognition's place of supply; falls back to the
+  // selling entity's home jurisdiction, then GB (so the return nets the same VAT:<entity>:<jur> the sale accrued).
+  private def vatJurisdictionFor(orderId: UUID): ConnectionIO[String] =
+    sql"""SELECT COALESCE(
+            (SELECT vat_jurisdiction FROM revenue_recognition WHERE order_id = $orderId AND vat_jurisdiction IS NOT NULL
+               ORDER BY recognized_at DESC LIMIT 1),
+            (SELECT e.jurisdiction FROM "order" o JOIN entity e ON e.id = o.entity_id WHERE o.id = $orderId),
+            'GB')"""
+      .query[String]
+      .unique
 
   private def statusOf(rmaId: UUID): ConnectionIO[Option[String]] =
     sql"SELECT status FROM rma WHERE id = $rmaId".query[String].option

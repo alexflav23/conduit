@@ -56,9 +56,15 @@ object VatExposureRepo {
           )
       })
 
-  // Σ outstanding across all jurisdictions/periods for an entity — what the VAT:<entity> ledger balance must equal.
+  // Σ outstanding across all jurisdictions/periods for an entity.
   def outstandingForEntity(entityId: UUID): ConnectionIO[BigDecimal] =
     exposure(Some(entityId), None).map(
+      _.foldLeft(BigDecimal(0))((acc, j) => acc + j.hcursor.get[BigDecimal]("outstanding").getOrElse(BigDecimal(0)))
+    )
+
+  // Σ outstanding for one (entity, jurisdiction) — what the VAT:<entity>:<jurisdiction> ledger balance must equal.
+  def outstandingFor(entityId: UUID, jurisdiction: String): ConnectionIO[BigDecimal] =
+    exposure(Some(entityId), Some(jurisdiction)).map(
       _.foldLeft(BigDecimal(0))((acc, j) => acc + j.hcursor.get[BigDecimal]("outstanding").getOrElse(BigDecimal(0)))
     )
 }

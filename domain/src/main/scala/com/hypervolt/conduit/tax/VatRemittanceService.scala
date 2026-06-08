@@ -28,8 +28,8 @@ import scala.math.BigDecimal.RoundingMode
 // entity == its VAT:<entity> credit balance. (Posts TigerBeetle, so it runs outside the API — consumer/service.)
 final class VatRemittanceService[F[_]: Async](xa: Transactor[F], ledger: TigerBeetleLedger[F]) {
 
-  def vatAcc(entity: UUID): BigInt = TbIds.accountId(s"VAT:$entity")
-  def bank(entity: UUID): BigInt   = TbIds.accountId(s"BANK:$entity")
+  def vatAcc(entity: UUID, jurisdiction: String): BigInt = TbIds.accountId(s"VAT:$entity:$jurisdiction")
+  def bank(entity: UUID): BigInt                         = TbIds.accountId(s"BANK:$entity")
 
   private def minor(amount: BigDecimal): BigInt = (amount.setScale(2, RoundingMode.HALF_UP) * 100).toBigInt
 
@@ -61,14 +61,14 @@ final class VatRemittanceService[F[_]: Async](xa: Transactor[F], ledger: TigerBe
       case Some(ccy) =>
         val ledgerId = Ledgers.forCurrency(ccy)
         val accounts = List(
-          LedgerAccount(vatAcc(entity), ledgerId, LedgerAccountCode.Vat),
+          LedgerAccount(vatAcc(entity, jurisdiction), ledgerId, LedgerAccountCode.Vat),
           LedgerAccount(bank(entity), ledgerId, LedgerAccountCode.Bank)
         )
         // DR VAT (reduce the liability) / CR BANK (cash out) — debit_account, credit_account.
         val transfer =
           LedgerTransfer(
             TbIds.transferId(id, 0),
-            vatAcc(entity),
+            vatAcc(entity, jurisdiction),
             bank(entity),
             minor(amount),
             ledgerId,
@@ -122,17 +122,19 @@ final class VatRemittanceService[F[_]: Async](xa: Transactor[F], ledger: TigerBe
         .as(n)
     )
 
-  // The immutable-proof tie: the per-jurisdiction projection summed for the entity must equal the ledger VAT balance.
-  def reconcile(entity: UUID): F[Json] =
-    (VatExposureRepo.outstandingForEntity(entity).transact(xa), ledger.balance(vatAcc(entity))).mapN {
-      (projected, bal) =>
+  // The immutable-proof tie, per (entity, jurisdiction): the projection's outstanding must equal the
+  // VAT:<entity>:<jurisdiction> ledger balance (credits − debits).
+  def reconcile(entity: UUID, jurisdiction: String): F[Json] =
+    (VatExposureRepo.outstandingFor(entity, jurisdiction).transact(xa), ledger.balance(vatAcc(entity, jurisdiction)))
+      .mapN { (projected, bal) =>
         val ledgerOutstanding = (BigDecimal(bal.creditsPosted) - BigDecimal(bal.debitsPosted)) / 100
         Json.obj(
           "entity_id"             -> entity.toString.asJson,
+          "jurisdiction"          -> jurisdiction.asJson,
           "projected_outstanding" -> projected.setScale(2, RoundingMode.HALF_UP).asJson,
           "ledger_vat_balance"    -> ledgerOutstanding.setScale(2, RoundingMode.HALF_UP).asJson,
           "matched" -> (projected.setScale(2, RoundingMode.HALF_UP) == ledgerOutstanding
             .setScale(2, RoundingMode.HALF_UP)).asJson
         )
-    }
+      }
 }

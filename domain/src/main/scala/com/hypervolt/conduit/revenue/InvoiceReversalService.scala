@@ -39,6 +39,7 @@ private final case class ReversalHead(
     invoiceNo: String,
     revenueExVat: BigDecimal,
     vat: BigDecimal,
+    vatJurisdiction: String,
     cogs: BigDecimal,
     shipping: BigDecimal,
     dispatchId: Option[UUID]
@@ -84,7 +85,7 @@ final class InvoiceReversalService[F[_]: Async](xa: Transactor[F], ledger: Tiger
                   val ledgerId   = Ledgers.forCurrency(ccy)
                   val arAcc      = TbIds.accountId(s"AR:${h.billTo}")
                   val revAcc     = TbIds.accountId(s"REVENUE:$entity")
-                  val vatAcc     = TbIds.accountId(s"VAT:$entity")
+                  val vatAcc     = TbIds.accountId(s"VAT:$entity:${h.vatJurisdiction}")
                   val cogsAcc    = TbIds.accountId(s"COGS:$entity")
                   val invAcc     = TbIds.accountId(s"INV:$entity")
                   val carExpAcc  = TbIds.accountId(s"CARRIAGE_EXPENSE:$entity")
@@ -156,7 +157,8 @@ final class InvoiceReversalService[F[_]: Async](xa: Transactor[F], ledger: Tiger
   // invoice was never recognised (no dispatch), so a same-day mistake still reverses cleanly.
   private def head(orderInvoiceId: UUID): ConnectionIO[Option[ReversalHead]] =
     sql"""SELECT i.order_id, o.entity_id, o.bill_to_party_id, o.txn_currency, i.status, i.invoice_no,
-                 COALESCE(rr.revenue_ex_vat, i.total_ex_vat), COALESCE(rr.vat, i.vat_total), COALESCE(rr.cogs, 0),
+                 COALESCE(rr.revenue_ex_vat, i.total_ex_vat), COALESCE(rr.vat, i.vat_total),
+                 COALESCE(rr.vat_jurisdiction, 'GB'), COALESCE(rr.cogs, 0),
                  COALESCE(rr.shipping_cost, 0), rr.dispatch_id
           FROM order_invoice i
             JOIN "order" o ON o.id = i.order_id

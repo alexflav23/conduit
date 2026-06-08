@@ -108,7 +108,7 @@ object InvoiceReversalSuite extends IOSuite {
         r         <- voider.reverse(inv, "mistake", "wrong customer on the PO", "finance:e2e")
         arAfter   <- bal(ledger, rev.ar(billTo))
         revAfter  <- bal(ledger, rev.revenue(entity))
-        vatAfter  <- bal(ledger, rev.vatAcc(entity))
+        vatAfter  <- bal(ledger, rev.vatAcc(entity, "GB"))
         cogsAfter <- bal(ledger, rev.cogsAcc(entity))
         invAfter  <- bal(ledger, rev.inv(entity))
         row <-

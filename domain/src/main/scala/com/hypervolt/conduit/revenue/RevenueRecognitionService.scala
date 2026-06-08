@@ -55,13 +55,15 @@ final class RevenueRecognitionService[F[_]: Async](xa: Transactor[F], ledger: Ti
   private val zero = new UUID(0L, 0L)
   private val tax  = new TaxDeterminationService[F](xa, Map(RateTableProvider.name -> RateTableProvider))
 
-  def ar(party: UUID): BigInt            = TbIds.accountId(s"AR:$party")
-  def revenue(entity: UUID): BigInt      = TbIds.accountId(s"REVENUE:$entity")
-  def vatAcc(entity: UUID): BigInt       = TbIds.accountId(s"VAT:$entity")
-  def cogsAcc(entity: UUID): BigInt      = TbIds.accountId(s"COGS:$entity")
-  def inv(entity: UUID): BigInt          = TbIds.accountId(s"INV:$entity")
-  def carriageExp(entity: UUID): BigInt  = TbIds.accountId(s"CARRIAGE_EXPENSE:$entity")
-  def carriageAccr(entity: UUID): BigInt = TbIds.accountId(s"CARRIAGE_ACCRUAL:$entity")
+  def ar(party: UUID): BigInt       = TbIds.accountId(s"AR:$party")
+  def revenue(entity: UUID): BigInt = TbIds.accountId(s"REVENUE:$entity")
+  // VAT control is per (entity, place-of-supply jurisdiction) — the exposure accrues where the VAT is due, on the
+  // immutable ledger. Year-1 (one jurisdiction per entity) this is simply VAT:<entity>:GB.
+  def vatAcc(entity: UUID, jurisdiction: String): BigInt = TbIds.accountId(s"VAT:$entity:$jurisdiction")
+  def cogsAcc(entity: UUID): BigInt                      = TbIds.accountId(s"COGS:$entity")
+  def inv(entity: UUID): BigInt                          = TbIds.accountId(s"INV:$entity")
+  def carriageExp(entity: UUID): BigInt                  = TbIds.accountId(s"CARRIAGE_EXPENSE:$entity")
+  def carriageAccr(entity: UUID): BigInt                 = TbIds.accountId(s"CARRIAGE_ACCRUAL:$entity")
 
   private def minor(amount: BigDecimal): BigInt = (amount.setScale(2, RoundingMode.HALF_UP) * 100).toBigInt
 
@@ -88,7 +90,7 @@ final class RevenueRecognitionService[F[_]: Async](xa: Transactor[F], ledger: Ti
     val accounts = List(
       LedgerAccount(ar(ctx.head.billTo), ledgerId, LedgerAccountCode.Ar),
       LedgerAccount(revenue(entity), ledgerId, LedgerAccountCode.Revenue),
-      LedgerAccount(vatAcc(entity), ledgerId, LedgerAccountCode.Vat),
+      LedgerAccount(vatAcc(entity, ctx.head.jurisdiction), ledgerId, LedgerAccountCode.Vat),
       LedgerAccount(cogsAcc(entity), ledgerId, LedgerAccountCode.CosClearing),
       LedgerAccount(inv(entity), ledgerId, LedgerAccountCode.Inv),
       LedgerAccount(carriageExp(entity), ledgerId, LedgerAccountCode.CarriageExpense),
@@ -108,7 +110,7 @@ final class RevenueRecognitionService[F[_]: Async](xa: Transactor[F], ledger: Ti
       LedgerTransfer(
         TbIds.transferId(dispatchId, 1),
         ar(ctx.head.billTo),
-        vatAcc(entity),
+        vatAcc(entity, ctx.head.jurisdiction),
         minor(vatAmt),
         ledgerId,
         LedgerTransferCode.Generic

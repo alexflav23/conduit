@@ -107,7 +107,7 @@ object CarriageReversalSuite extends IOSuite {
         carExpAfter <- ledger.balance(rev.carriageExp(e))
         carAccAfter <- ledger.balance(rev.carriageAccr(e))
         revAfter    <- ledger.balance(rev.revenue(e))
-        vatAfter    <- ledger.balance(rev.vatAcc(e))
+        vatAfter    <- ledger.balance(rev.vatAcc(e, "GB"))
         shipRow <-
           sql"SELECT shipping_cost FROM revenue_recognition WHERE dispatch_id = $did"
             .query[BigDecimal]

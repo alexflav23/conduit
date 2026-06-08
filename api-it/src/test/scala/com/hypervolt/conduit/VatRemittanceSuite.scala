@@ -103,8 +103,8 @@ object VatRemittanceSuite extends IOSuite {
         // remit £50 of the £200 GB VAT
         _       <- remit.remit(e, "GB", period, BigDecimal("50.00"), "GBP", Some("HMRC-REF"), "test").map(_.toOption.get)
         after   <- VatExposureRepo.exposure(Some(e), None).transact(xa)
-        recon   <- remit.reconcile(e)
-        vatBal  <- ledger.balance(rev.vatAcc(e))
+        recon   <- remit.reconcile(e, "GB")
+        vatBal  <- ledger.balance(rev.vatAcc(e, "GB"))
         control <- new ControlRunner[IO](xa).run("CTRL-VAT-NO-OVER-REMIT", None).map(_.toOption.get)
       } yield {
         val gbBefore =

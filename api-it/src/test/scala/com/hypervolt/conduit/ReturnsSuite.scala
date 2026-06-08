@@ -93,7 +93,7 @@ object ReturnsSuite extends IOSuite {
       List(
         LedgerAccount(svc.arAccount(s.billTo), gbp, LedgerAccountCode.Ar),
         LedgerAccount(svc.revenueAccount(s.entity), gbp, LedgerAccountCode.Revenue),
-        LedgerAccount(svc.vatAccount(s.entity), gbp, LedgerAccountCode.Vat),
+        LedgerAccount(svc.vatAccount(s.entity, "GB"), gbp, LedgerAccountCode.Vat),
         LedgerAccount(svc.invAccount(s.entity), gbp, LedgerAccountCode.Inv),
         LedgerAccount(svc.cosClearing(s.entity), gbp, LedgerAccountCode.CosClearing),
         LedgerAccount(svc.commPayable(s.agent), gbp, LedgerAccountCode.CommPayable),

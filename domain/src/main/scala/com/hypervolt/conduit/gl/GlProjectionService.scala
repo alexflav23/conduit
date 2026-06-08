@@ -30,39 +30,50 @@ final class GlProjectionService[F[_]: Async](xa: Transactor[F], ledger: TigerBee
       .query[(UUID, String)]
       .to[List]
 
-  def trialBalance(entity: UUID): F[Json] =
-    arParties(entity).transact(xa).flatMap { parties =>
-      val entityAccounts = List(
-        "REVENUE" -> acc(s"REVENUE:$entity"),
-        "VAT"     -> acc(s"VAT:$entity"),
-        "COGS"    -> acc(s"COGS:$entity"),
-        "INV"     -> acc(s"INV:$entity")
-      )
-      val arAccounts = parties.map { case (pid, name) => s"AR:$name" -> acc(s"AR:$pid") }
+  // The VAT control is per (entity, jurisdiction); the trial balance lists one VAT line per jurisdiction the entity
+  // owes in (recognised, plus its home). Year-1 that's a single VAT:GB line.
+  private def vatJurisdictions(entity: UUID): ConnectionIO[List[String]] =
+    sql"""SELECT DISTINCT jur FROM (
+            SELECT vat_jurisdiction AS jur FROM revenue_recognition WHERE entity_id = $entity AND vat_jurisdiction IS NOT NULL
+            UNION SELECT jurisdiction FROM entity WHERE id = $entity
+          ) j WHERE jur IS NOT NULL ORDER BY jur"""
+      .query[String]
+      .to[List]
 
-      (entityAccounts ::: arAccounts)
-        .traverse {
-          case (label, id) =>
-            ledger.balance(id).map(b => (label, b.debitsPosted, b.creditsPosted))
-        }
-        .map { rows =>
-          val totalDr = rows.map(_._2).sum
-          val totalCr = rows.map(_._3).sum
-          Json.obj(
-            "entity_id" -> entity.toString.asJson,
-            "accounts" -> rows.map {
-              case (label, dr, cr) =>
-                Json.obj(
-                  "account" -> label.asJson,
-                  "debits"  -> money(dr).asJson,
-                  "credits" -> money(cr).asJson,
-                  "balance" -> money(dr - cr).asJson
-                )
-            }.asJson,
-            "total_debits"  -> money(totalDr).asJson,
-            "total_credits" -> money(totalCr).asJson,
-            "balanced"      -> (totalDr == totalCr).asJson // proof: the ledger projection ties out
-          )
-        }
+  def trialBalance(entity: UUID): F[Json] =
+    (arParties(entity), vatJurisdictions(entity)).tupled.transact(xa).flatMap {
+      case (parties, vatJurs) =>
+        val vatAccounts = vatJurs.map(j => s"VAT:$j" -> acc(s"VAT:$entity:$j"))
+        val entityAccounts = List(
+          "REVENUE" -> acc(s"REVENUE:$entity"),
+          "COGS"    -> acc(s"COGS:$entity"),
+          "INV"     -> acc(s"INV:$entity")
+        ) ::: vatAccounts
+        val arAccounts = parties.map { case (pid, name) => s"AR:$name" -> acc(s"AR:$pid") }
+
+        (entityAccounts ::: arAccounts)
+          .traverse {
+            case (label, id) =>
+              ledger.balance(id).map(b => (label, b.debitsPosted, b.creditsPosted))
+          }
+          .map { rows =>
+            val totalDr = rows.map(_._2).sum
+            val totalCr = rows.map(_._3).sum
+            Json.obj(
+              "entity_id" -> entity.toString.asJson,
+              "accounts" -> rows.map {
+                case (label, dr, cr) =>
+                  Json.obj(
+                    "account" -> label.asJson,
+                    "debits"  -> money(dr).asJson,
+                    "credits" -> money(cr).asJson,
+                    "balance" -> money(dr - cr).asJson
+                  )
+              }.asJson,
+              "total_debits"  -> money(totalDr).asJson,
+              "total_credits" -> money(totalCr).asJson,
+              "balanced"      -> (totalDr == totalCr).asJson // proof: the ledger projection ties out
+            )
+          }
     }
 }

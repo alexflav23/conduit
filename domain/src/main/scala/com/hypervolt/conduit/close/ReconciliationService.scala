@@ -31,12 +31,14 @@ final class ReconciliationService[F[_]: Async](xa: Transactor[F], ledger: TigerB
 
   // TB ↔ GL: the trial balance read off the ledger must tie out (Σ debits == Σ credits).
   def tbVsGl(periodId: UUID, entity: UUID, currency: String): F[ReconResult] =
-    arParties(entity).transact(xa).flatMap { parties =>
-      val keys =
-        List(s"REVENUE:$entity", s"VAT:$entity", s"COGS:$entity", s"INV:$entity") ::: parties.map(p => s"AR:$p")
-      keys
-        .traverse(k => ledger.balance(TbIds.accountId(k)).map(b => (b.debitsPosted, b.creditsPosted)))
-        .flatMap(bs => record("tb_vs_gl", periodId, money(bs.map(_._1).sum), money(bs.map(_._2).sum), currency))
+    (arParties(entity), vatJurisdictions(entity)).tupled.transact(xa).flatMap {
+      case (parties, vatJurs) =>
+        val keys =
+          List(s"REVENUE:$entity", s"COGS:$entity", s"INV:$entity") :::
+            vatJurs.map(j => s"VAT:$entity:$j") ::: parties.map(p => s"AR:$p")
+        keys
+          .traverse(k => ledger.balance(TbIds.accountId(k)).map(b => (b.debitsPosted, b.creditsPosted)))
+          .flatMap(bs => record("tb_vs_gl", periodId, money(bs.map(_._1).sum), money(bs.map(_._2).sum), currency))
     }
 
   def signOff(reconId: UUID, actor: UUID): F[Int] =
@@ -52,6 +54,13 @@ final class ReconciliationService[F[_]: Async](xa: Transactor[F], ledger: TigerB
   private def arParties(entity: UUID): doobie.ConnectionIO[List[UUID]] =
     sql"""SELECT DISTINCT o.bill_to_party_id FROM order_invoice i JOIN "order" o ON o.id=i.order_id
           WHERE o.entity_id=$entity""".query[UUID].to[List]
+
+  // The jurisdictions this entity holds VAT in (recognised + its home) — the per-jurisdiction VAT control accounts.
+  private def vatJurisdictions(entity: UUID): doobie.ConnectionIO[List[String]] =
+    sql"""SELECT DISTINCT jur FROM (
+            SELECT vat_jurisdiction AS jur FROM revenue_recognition WHERE entity_id=$entity AND vat_jurisdiction IS NOT NULL
+            UNION SELECT jurisdiction FROM entity WHERE id=$entity
+          ) j WHERE jur IS NOT NULL""".query[String].to[List]
 
   private def record(
       reconType: String,

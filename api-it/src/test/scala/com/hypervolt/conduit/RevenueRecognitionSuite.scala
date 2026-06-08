@@ -95,7 +95,7 @@ object RevenueRecognitionSuite extends IOSuite {
         r2      <- rev.recognize(did) // idempotent — must not double-post
         arBal   <- ledger.balance(rev.ar(billTo))
         revBal  <- ledger.balance(rev.revenue(e))
-        vatBal  <- ledger.balance(rev.vatAcc(e))
+        vatBal  <- ledger.balance(rev.vatAcc(e, "GB"))
         cogsBal <- ledger.balance(rev.cogsAcc(e))
         invBal  <- ledger.balance(rev.inv(e))
         row <-
