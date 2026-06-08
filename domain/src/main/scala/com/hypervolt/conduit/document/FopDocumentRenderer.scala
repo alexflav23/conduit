@@ -75,44 +75,68 @@ object FopDocumentRenderer {
   // PDF. Latin base-14 fonts for the year-1 GB/en template; a CJK/Thai font_stack drops in via fo:font-family + a
   // fop.xconf when those markets come online (doc 02 §A roadmap).
   def foDocument(model: Json): String = {
-    val ccy = esc(field(model, "currency"))
+    val ccy      = esc(field(model, "currency"))
+    val corrects = field(model, "corrects_number")
+    val reason   = field(model, "reason")
+    val title    = if (corrects.nonEmpty) "CREDIT NOTE" else "INVOICE"
+    val rows     = lineRows(model)
+    // A line table is only valid FO when it has rows (invoices); creditnotes/statements without lines omit it.
+    val tableBlock =
+      if (rows.trim.isEmpty) ""
+      else
+        s"""      <fo:table table-layout="fixed" width="100%" space-after="12pt" border-top="0.5pt solid black" border-bottom="0.5pt solid black">
+           |        <fo:table-column column-width="40%"/>
+           |        <fo:table-column column-width="20%"/>
+           |        <fo:table-column column-width="10%"/>
+           |        <fo:table-column column-width="15%"/>
+           |        <fo:table-column column-width="15%"/>
+           |        <fo:table-header font-weight="bold">
+           |          <fo:table-row>
+           |            <fo:table-cell padding="3pt"><fo:block>Description</fo:block></fo:table-cell>
+           |            <fo:table-cell padding="3pt"><fo:block>SKU</fo:block></fo:table-cell>
+           |            <fo:table-cell padding="3pt" text-align="right"><fo:block>Qty</fo:block></fo:table-cell>
+           |            <fo:table-cell padding="3pt" text-align="right"><fo:block>Unit</fo:block></fo:table-cell>
+           |            <fo:table-cell padding="3pt" text-align="right"><fo:block>Line total</fo:block></fo:table-cell>
+           |          </fo:table-row>
+           |        </fo:table-header>
+           |        <fo:table-body>
+           |$rows
+           |        </fo:table-body>
+           |      </fo:table>""".stripMargin
+    val correctsBlock =
+      if (corrects.isEmpty) "" else s"""      <fo:block space-after="2pt">Corrects: ${esc(corrects)}</fo:block>"""
+    val reasonBlock =
+      if (reason.isEmpty) "" else s"""      <fo:block space-after="12pt">Reason: ${esc(reason)}</fo:block>"""
+    val subtotal = field(model, "subtotal")
+    val vat      = field(model, "vat")
+    val subtotalBlock =
+      if (subtotal.isEmpty) ""
+      else s"""      <fo:block text-align="right">Total ex VAT: $ccy ${esc(subtotal)}</fo:block>"""
+    val vatBlock = if (vat.isEmpty) "" else s"""      <fo:block text-align="right">VAT: $ccy ${esc(vat)}</fo:block>"""
+    val body = List(
+      s"""      <fo:block font-size="20pt" font-weight="bold" space-after="6pt">$title</fo:block>""",
+      s"""      <fo:block space-after="2pt">${esc(field(model, "supplier_name"))}</fo:block>""",
+      s"""      <fo:block space-after="12pt">Bill to: ${esc(field(model, "payer_name"))}</fo:block>""",
+      correctsBlock,
+      reasonBlock,
+      tableBlock,
+      subtotalBlock,
+      vatBlock,
+      s"""      <fo:block text-align="right" font-weight="bold" space-before="2pt">Total: $ccy ${esc(
+        field(model, "total")
+      )}</fo:block>"""
+    ).filter(_.nonEmpty).mkString("\n")
     s"""<?xml version="1.0" encoding="UTF-8"?>
        |<fo:root xmlns:fo="http://www.w3.org/1999/XSL/Format" xml:lang="${esc(field(model, "locale"))}">
        |  <fo:layout-master-set>
-       |    <fo:simple-page-master master-name="invoice" page-width="210mm" page-height="297mm"
+       |    <fo:simple-page-master master-name="doc" page-width="210mm" page-height="297mm"
        |        margin-top="20mm" margin-bottom="20mm" margin-left="20mm" margin-right="20mm">
        |      <fo:region-body/>
        |    </fo:simple-page-master>
        |  </fo:layout-master-set>
-       |  <fo:page-sequence master-reference="invoice" font-family="Helvetica" font-size="10pt">
+       |  <fo:page-sequence master-reference="doc" font-family="Helvetica" font-size="10pt">
        |    <fo:flow flow-name="xsl-region-body">
-       |      <fo:block font-size="20pt" font-weight="bold" space-after="6pt">INVOICE</fo:block>
-       |      <fo:block space-after="2pt">${esc(field(model, "supplier_name"))}</fo:block>
-       |      <fo:block space-after="12pt">Bill to: ${esc(field(model, "payer_name"))}</fo:block>
-       |      <fo:table table-layout="fixed" width="100%" space-after="12pt" border-top="0.5pt solid black" border-bottom="0.5pt solid black">
-       |        <fo:table-column column-width="40%"/>
-       |        <fo:table-column column-width="20%"/>
-       |        <fo:table-column column-width="10%"/>
-       |        <fo:table-column column-width="15%"/>
-       |        <fo:table-column column-width="15%"/>
-       |        <fo:table-header font-weight="bold">
-       |          <fo:table-row>
-       |            <fo:table-cell padding="3pt"><fo:block>Description</fo:block></fo:table-cell>
-       |            <fo:table-cell padding="3pt"><fo:block>SKU</fo:block></fo:table-cell>
-       |            <fo:table-cell padding="3pt" text-align="right"><fo:block>Qty</fo:block></fo:table-cell>
-       |            <fo:table-cell padding="3pt" text-align="right"><fo:block>Unit</fo:block></fo:table-cell>
-       |            <fo:table-cell padding="3pt" text-align="right"><fo:block>Line total</fo:block></fo:table-cell>
-       |          </fo:table-row>
-       |        </fo:table-header>
-       |        <fo:table-body>
-       |${lineRows(model)}
-       |        </fo:table-body>
-       |      </fo:table>
-       |      <fo:block text-align="right">Total ex VAT: $ccy ${esc(field(model, "subtotal"))}</fo:block>
-       |      <fo:block text-align="right">VAT: $ccy ${esc(field(model, "vat"))}</fo:block>
-       |      <fo:block text-align="right" font-weight="bold" space-before="2pt">Total: $ccy ${esc(
-      field(model, "total")
-    )}</fo:block>
+       |$body
        |    </fo:flow>
        |  </fo:page-sequence>
        |</fo:root>""".stripMargin

@@ -47,6 +47,19 @@ private final case class InvLine(
     vatAmount: BigDecimal
 )
 private final case class TemplateRow(id: UUID, version: Int, body: String, requiredFields: List[String])
+private final case class OrigDoc(
+    id: UUID,
+    entityId: UUID,
+    formattedNumber: String,
+    orderId: Option[UUID],
+    billTo: Option[UUID],
+    locale: String,
+    jurisdiction: String,
+    currency: String,
+    total: BigDecimal,
+    supplierName: String,
+    payerName: String
+)
 private final case class Prepared(
     head: InvHead,
     templateId: UUID,
@@ -239,6 +252,159 @@ final class DocumentService[F[_]: Async](
         "content_sha256"   -> rendered.contentSha256.asJson,
         "locale"           -> h.locale.asJson,
         "jurisdiction"     -> h.jurisdiction.asJson
+      ),
+      Instant.now()
+    )
+
+  // ===== invoice invalidation (doc 13 §void / 17 §6) =====
+  // On invoice.voided: stamp the original invoice document with a WORM-safe void marker (bytes untouched) and mint
+  // a credit_note document that `corrects_document_id` it. Idempotent on a deterministic credit-note id. Returns
+  // None when there is no original invoice document to invalidate (nothing to correct).
+  def invalidateInvoice(orderInvoiceId: UUID, reason: String): F[Either[String, Option[DocumentResult]]] = {
+    val cnId = UUID.nameUUIDFromBytes(s"document:credit_note:$orderInvoiceId".getBytes(StandardCharsets.UTF_8))
+    existing(cnId).transact(xa).flatMap {
+      case Some(r) => Option(r).asRight[String].pure[F] // idempotent: credit note already minted
+      case None =>
+        origInvoiceDoc(orderInvoiceId).transact(xa).flatMap {
+          case None => Option.empty[DocumentResult].asRight[String].pure[F] // no invoice document to invalidate
+          case Some(orig) =>
+            creditTemplate(orig.jurisdiction, orig.locale).transact(xa).flatMap {
+              case None => "no active credit_note template".asLeft[Option[DocumentResult]].pure[F]
+              case Some(t) =>
+                val model = creditModel(orig, reason)
+                renderer
+                  .render(t.body, model)
+                  .flatMap(rendered =>
+                    storage
+                      .put(s"documents/$cnId.pdf", rendered.bytes, "application/pdf")
+                      .flatMap(uri => persistCreditNote(cnId, orig, t, model, rendered, uri, reason).transact(xa))
+                  )
+            }
+        }
+    }
+  }
+
+  private def origInvoiceDoc(orderInvoiceId: UUID): ConnectionIO[Option[OrigDoc]] =
+    sql"""SELECT id, entity_id, formatted_number, order_id, bill_to_party_id, locale, jurisdiction, currency,
+                 total_amount, render_model
+          FROM document
+          WHERE order_invoice_id = $orderInvoiceId AND document_type = 'invoice' AND status = 'finalised'
+          ORDER BY issued_at DESC LIMIT 1"""
+      .query[
+        (
+            UUID,
+            UUID,
+            Option[String],
+            Option[UUID],
+            Option[UUID],
+            String,
+            String,
+            Option[String],
+            Option[BigDecimal],
+            Json
+        )
+      ]
+      .option
+      .map(_.map {
+        case (id, ent, no, ord, bill, loc, jur, ccy, tot, rm) =>
+          OrigDoc(
+            id,
+            ent,
+            no.getOrElse(""),
+            ord,
+            bill,
+            loc,
+            jur,
+            ccy.getOrElse("GBP"),
+            tot.getOrElse(BigDecimal(0)),
+            rm.hcursor.get[String]("supplier_name").getOrElse(""),
+            rm.hcursor.get[String]("payer_name").getOrElse("")
+          )
+      })
+
+  private def creditTemplate(jurisdiction: String, locale: String): ConnectionIO[Option[TemplateRow]] =
+    sql"""SELECT id, version, body, required_fields FROM document_template
+          WHERE document_type = 'credit_note' AND status = 'active'
+            AND (jurisdiction = $jurisdiction OR jurisdiction IS NULL)
+            AND (locale = $locale OR locale IS NULL)
+          ORDER BY (jurisdiction IS NOT NULL) DESC, (locale IS NOT NULL) DESC, version DESC LIMIT 1"""
+      .query[(UUID, Int, String, List[String])]
+      .option
+      .map(_.map { case (id, v, b, rf) => TemplateRow(id, v, b, rf) })
+
+  private def creditModel(o: OrigDoc, reason: String): Json =
+    Json.obj(
+      "supplier_name"   -> o.supplierName.asJson,
+      "payer_name"      -> o.payerName.asJson,
+      "locale"          -> o.locale.asJson,
+      "jurisdiction"    -> o.jurisdiction.asJson,
+      "currency"        -> o.currency.asJson,
+      "corrects_number" -> o.formattedNumber.asJson,
+      "reason"          -> reason.asJson,
+      "total"           -> o.total.asJson
+    )
+
+  private def persistCreditNote(
+      cnId: UUID,
+      orig: OrigDoc,
+      t: TemplateRow,
+      model: Json,
+      rendered: RenderedDoc,
+      storageUri: String,
+      reason: String
+  ): ConnectionIO[Either[String, Option[DocumentResult]]] =
+    DocumentNumberAllocator.allocate(orig.entityId, "credit_note", orig.jurisdiction, LocalDate.now().getYear).flatMap {
+      case None => "no active number series for credit_note".asLeft[Option[DocumentResult]].pure[ConnectionIO]
+      case Some(num) =>
+        for {
+          // stamp the original (WORM: bytes unchanged, the row carries the marker); idempotent on voided_at IS NULL
+          _ <-
+            sql"UPDATE document SET voided_at = now(), void_reason = $reason WHERE id = ${orig.id} AND voided_at IS NULL".update.run
+          _ <- sql"""INSERT INTO document
+                       (id, document_type, entity_id, document_number_id, formatted_number, order_invoice_id,
+                        order_id, bill_to_party_id, locale, jurisdiction, template_id, template_version, currency,
+                        total_amount, render_model, corrects_document_id, status, storage_uri, content_sha256, issued_at)
+                     VALUES ($cnId, 'credit_note', ${orig.entityId}, ${num.numberId}, ${num.formatted},
+                        (SELECT order_invoice_id FROM document WHERE id = ${orig.id}),
+                        ${orig.orderId}, ${orig.billTo}, ${orig.locale}, ${orig.jurisdiction}, ${t.id}, ${t.version},
+                        ${orig.currency}, ${orig.total}, $model, ${orig.id}, 'finalised', $storageUri, ${rendered.contentSha256}, now())""".update.run
+          _ <- DocumentNumberAllocator.markIssued(num.numberId, cnId)
+          _ <- OutboxRepo.append(creditIssuedEvent(cnId, num.formatted, orig, rendered, storageUri))
+        } yield Option(DocumentResult(cnId, num.formatted, rendered.contentSha256, orig.total, "finalised"))
+          .asRight[String]
+    }
+
+  private def creditIssuedEvent(
+      id: UUID,
+      number: String,
+      orig: OrigDoc,
+      rendered: RenderedDoc,
+      storageUri: String
+  ): OutboxEvent =
+    OutboxEvent(
+      UUID.randomUUID(),
+      "document.issued",
+      1,
+      "document",
+      id,
+      id.toString,
+      None,
+      None,
+      None,
+      Json.obj(
+        "document_id"      -> id.toString.asJson,
+        "document_type"    -> "credit_note".asJson,
+        "formatted_number" -> number.asJson,
+        "corrects_number"  -> orig.formattedNumber.asJson,
+        "entity_id"        -> orig.entityId.toString.asJson,
+        "order_id"         -> orig.orderId.map(_.toString).asJson,
+        "bill_to_party_id" -> orig.billTo.map(_.toString).asJson,
+        "currency"         -> orig.currency.asJson,
+        "total_amount"     -> orig.total.asJson,
+        "storage_uri"      -> storageUri.asJson,
+        "content_sha256"   -> rendered.contentSha256.asJson,
+        "locale"           -> orig.locale.asJson,
+        "jurisdiction"     -> orig.jurisdiction.asJson
       ),
       Instant.now()
     )

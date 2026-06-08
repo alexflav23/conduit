@@ -43,11 +43,32 @@ object SampleInvoicePdf extends IOApp.Simple {
       "total"    -> "1200.00".asJson
     )
 
-  def run: IO[Unit] =
-    new FopDocumentRenderer[IO]
+  // A credit note that invalidates an invoice (doc 13 §void): no line table, carries corrects + reason.
+  private val creditModel: Json =
+    Json.obj(
+      "supplier_name"   -> "Hypervolt UK Ltd".asJson,
+      "payer_name"      -> "Doc Customer Ltd".asJson,
+      "locale"          -> "en".asJson,
+      "jurisdiction"    -> "GB".asJson,
+      "currency"        -> "GBP".asJson,
+      "corrects_number" -> "HV-UK-INV-2026-000001".asJson,
+      "reason"          -> "Wrong customer on the PO".asJson,
+      "total"           -> "1200.00".asJson
+    )
+
+  def run: IO[Unit] = {
+    val renderer = new FopDocumentRenderer[IO]
+    renderer
       .render("GB/en invoice template v1", model)
       .flatMap(d =>
         IO.blocking(Files.write(Paths.get("target/sample-invoice.pdf"), d.bytes)) *>
           IO.println(s"wrote target/sample-invoice.pdf  pages=${d.pageCount}  sha256=${d.contentSha256}")
-      )
+      ) *>
+      renderer
+        .render("GB/en credit_note template v1", creditModel)
+        .flatMap(d =>
+          IO.blocking(Files.write(Paths.get("target/sample-credit-note.pdf"), d.bytes)) *>
+            IO.println(s"wrote target/sample-credit-note.pdf  pages=${d.pageCount}  sha256=${d.contentSha256}")
+        )
+  }
 }

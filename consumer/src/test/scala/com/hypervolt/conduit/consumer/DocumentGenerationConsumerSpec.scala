@@ -50,4 +50,23 @@ object DocumentGenerationConsumerSpec extends FunSuite {
           .isEmpty
       )
   }
+
+  test("invoice.voided yields the invoice id + reason for the credit note") {
+    val id = UUID.randomUUID()
+    val e  = env("invoice.voided", s"""{"order_invoice_id":"$id","reason":"wrong customer","kind":"mistake"}""")
+    expect(DocumentGenerationConsumer.voidedInvoice(e).contains((id, "wrong customer")))
+  }
+
+  test("invoice.voided without a reason still yields the id (reason defaults empty)") {
+    val id = UUID.randomUUID()
+    val e  = env("invoice.voided", s"""{"order_invoice_id":"$id"}""")
+    expect(DocumentGenerationConsumer.voidedInvoice(e).contains((id, "")))
+  }
+
+  test("order.invoiced is not a void event and vice versa") {
+    val id      = UUID.randomUUID()
+    val payload = s"""{"order_invoice_id":"$id"}"""
+    expect(DocumentGenerationConsumer.voidedInvoice(env("order.invoiced", payload)).isEmpty) and
+      expect(DocumentGenerationConsumer.orderInvoiceId(env("invoice.voided", payload)).isEmpty)
+  }
 }

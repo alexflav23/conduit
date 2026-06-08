@@ -51,15 +51,29 @@ final class DocumentGenerationConsumer[F[_]: Async](client: PulsarClient, servic
     }
 
   private def handle(env: EventEnvelope): F[Unit] =
-    DocumentGenerationConsumer.orderInvoiceId(env) match {
-      case None if env.event_type == "order.invoiced" =>
-        logger.warn(s"order.invoiced ${env.event_id} had no order_invoice_id — skipping document generation")
-      case None => Async[F].unit // not an invoice event
-      case Some(invId) =>
-        service.generateInvoice(invId).flatMap {
-          case Right(r) => logger.info(s"generated invoice document ${r.formattedNumber} for $invId")
-          case Left(m)  => Async[F].raiseError(new RuntimeException(s"document generation failed for $invId: $m"))
+    env.event_type match {
+      case "order.invoiced" =>
+        DocumentGenerationConsumer.orderInvoiceId(env) match {
+          case None =>
+            logger.warn(s"order.invoiced ${env.event_id} had no order_invoice_id — skipping document generation")
+          case Some(invId) =>
+            service.generateInvoice(invId).flatMap {
+              case Right(r) => logger.info(s"generated invoice document ${r.formattedNumber} for $invId")
+              case Left(m)  => Async[F].raiseError(new RuntimeException(s"document generation failed for $invId: $m"))
+            }
         }
+      case "invoice.voided" =>
+        DocumentGenerationConsumer.voidedInvoice(env) match {
+          case None =>
+            logger.warn(s"invoice.voided ${env.event_id} had no order_invoice_id — skipping credit note")
+          case Some((invId, reason)) =>
+            service.invalidateInvoice(invId, reason).flatMap {
+              case Right(Some(r)) => logger.info(s"minted credit note ${r.formattedNumber} for voided invoice $invId")
+              case Right(None)    => logger.info(s"no invoice document to invalidate for $invId")
+              case Left(m)        => Async[F].raiseError(new RuntimeException(s"credit note failed for $invId: $m"))
+            }
+        }
+      case _ => Async[F].unit // not a document event
     }
 }
 
@@ -71,4 +85,16 @@ object DocumentGenerationConsumer {
       parse(new String(env.payload, StandardCharsets.UTF_8)).toOption
         .flatMap(_.hcursor.get[String]("order_invoice_id").toOption)
         .flatMap(s => scala.util.Try(UUID.fromString(s)).toOption)
+
+  // Pure: filter invoice.voided + extract (order_invoice_id, reason) to mint the credit note.
+  def voidedInvoice(env: EventEnvelope): Option[(UUID, String)] =
+    if (env.event_type != "invoice.voided") None
+    else
+      parse(new String(env.payload, StandardCharsets.UTF_8)).toOption.flatMap { j =>
+        val c = j.hcursor
+        c.get[String]("order_invoice_id")
+          .toOption
+          .flatMap(s => scala.util.Try(UUID.fromString(s)).toOption)
+          .map(id => (id, c.get[String]("reason").toOption.getOrElse("")))
+      }
 }
