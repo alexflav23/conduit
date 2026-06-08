@@ -8,6 +8,7 @@ import com.hypervolt.conduit.api.auth.AuthService
 import com.hypervolt.conduit.api.auth.Secured
 import com.hypervolt.conduit.credit.CashWaterfallRepo
 import com.hypervolt.conduit.credit.CreditTermsService
+import com.hypervolt.conduit.payment.PaymentQueryRepo
 import com.hypervolt.conduit.revenue.RevenueQueryRepo
 import doobie.implicits._
 import doobie.util.transactor.Transactor
@@ -123,6 +124,23 @@ final class CreditRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
             }
       })
 
+  // AR aging — outstanding (invoice − payments) bucketed by overdue age; the realised-collections counterpart
+  // to the (forward) cash waterfall. Plus DSO. Off the payment data Conduit owns (no TB-in-API).
+  private val arAging =
+    base.get
+      .in("api" / "v1" / "finance" / "ar-aging")
+      .in(query[Option[String]]("currency"))
+      .out(jsonBody[Json])
+      .serverLogic(principal =>
+        ccy =>
+          if (!PolicyEngine.hasPermission(principal, Action.View, "credit_profile"))
+            Async[F].pure(Left(err(StatusCode.Forbidden, "forbidden", "requires view:credit_profile")))
+          else
+            (PaymentQueryRepo.arAging(ccy), PaymentQueryRepo.dso(ccy)).tupled.transact(xa).map {
+              case (aging, dso) => Right(Json.obj("aging" -> Json.fromValues(aging), "dso" -> dso))
+            }
+      )
+
   val routes: HttpRoutes[F] =
-    Http4sServerInterpreter[F]().toRoutes(List(getTerms, setTerms, cashWaterfall, pnl))
+    Http4sServerInterpreter[F]().toRoutes(List(getTerms, setTerms, cashWaterfall, pnl, arAging))
 }

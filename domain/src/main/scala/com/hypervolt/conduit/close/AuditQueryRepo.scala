@@ -18,9 +18,16 @@ object AuditQueryRepo {
     (base ++ filt ++ fr"ORDER BY period_key DESC LIMIT 60")
       .query[(UUID, UUID, String, String, String, Option[java.time.Instant])]
       .to[List]
-      .map(_.map { case (id, e, sc, pk, st, ca) =>
-        Json.obj("id" -> id.toString.asJson, "entity_id" -> e.toString.asJson, "scope" -> sc.asJson,
-          "period_key" -> pk.asJson, "status" -> st.asJson, "closed_at" -> ca.map(_.toString).asJson)
+      .map(_.map {
+        case (id, e, sc, pk, st, ca) =>
+          Json.obj(
+            "id"         -> id.toString.asJson,
+            "entity_id"  -> e.toString.asJson,
+            "scope"      -> sc.asJson,
+            "period_key" -> pk.asJson,
+            "status"     -> st.asJson,
+            "closed_at"  -> ca.map(_.toString).asJson
+          )
       })
   }
 
@@ -29,9 +36,17 @@ object AuditQueryRepo {
           FROM reconciliation WHERE period_id = $periodId ORDER BY type"""
       .query[(String, Option[BigDecimal], Option[BigDecimal], Option[BigDecimal], Option[String], String, Boolean)]
       .to[List]
-      .map(_.map { case (t, exp, act, vr, ccy, st, signed) =>
-        Json.obj("type" -> t.asJson, "expected" -> exp.asJson, "actual" -> act.asJson, "variance" -> vr.asJson,
-          "currency" -> ccy.asJson, "status" -> st.asJson, "signed_off" -> signed.asJson)
+      .map(_.map {
+        case (t, exp, act, vr, ccy, st, signed) =>
+          Json.obj(
+            "type"       -> t.asJson,
+            "expected"   -> exp.asJson,
+            "actual"     -> act.asJson,
+            "variance"   -> vr.asJson,
+            "currency"   -> ccy.asJson,
+            "status"     -> st.asJson,
+            "signed_off" -> signed.asJson
+          )
       })
 
   // The control register with the latest run result — the SOX control board.
@@ -42,9 +57,15 @@ object AuditQueryRepo {
           FROM control c WHERE c.status = 'active' ORDER BY c.code"""
       .query[(String, String, String, Option[String], Option[java.time.Instant])]
       .to[List]
-      .map(_.map { case (code, name, typ, last, at) =>
-        Json.obj("code" -> code.asJson, "name" -> name.asJson, "type" -> typ.asJson,
-          "last_result" -> last.asJson, "last_run_at" -> at.map(_.toString).asJson)
+      .map(_.map {
+        case (code, name, typ, last, at) =>
+          Json.obj(
+            "code"        -> code.asJson,
+            "name"        -> name.asJson,
+            "type"        -> typ.asJson,
+            "last_result" -> last.asJson,
+            "last_run_at" -> at.map(_.toString).asJson
+          )
       })
 
   def resolveInvoiceNo(invoiceNo: String): ConnectionIO[Option[UUID]] =

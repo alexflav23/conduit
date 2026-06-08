@@ -60,10 +60,11 @@ final class AuditRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
       .serverLogic(p =>
         id =>
           if (!gate(p, "reconciliation")) Async[F].pure(Left(forbid("reconciliation")))
-          else uuid(id) match {
-            case Left(x)    => Async[F].pure(Left(x))
-            case Right(pid) => AuditQueryRepo.reconciliations(pid).transact(xa).map(r => Right(Json.fromValues(r)))
-          }
+          else
+            uuid(id) match {
+              case Left(x)    => Async[F].pure(Left(x))
+              case Right(pid) => AuditQueryRepo.reconciliations(pid).transact(xa).map(r => Right(Json.fromValues(r)))
+            }
       )
 
   private val closePeriod =
@@ -74,13 +75,15 @@ final class AuditRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
         id =>
           if (!PolicyEngine.hasPermission(p, Action.Edit, "accounting_period"))
             Async[F].pure(Left(err(StatusCode.Forbidden, "forbidden", "requires edit:accounting_period")))
-          else uuid(id) match {
-            case Left(x)    => Async[F].pure(Left(x))
-            case Right(pid) => close.close(pid, p.userId).map {
-                case Left(m)  => Left(err(StatusCode.UnprocessableEntity, "unprocessable", m))
-                case Right(_) => Right(Json.obj("id" -> pid.toString.asJson, "status" -> "closed".asJson))
-              }
-          }
+          else
+            uuid(id) match {
+              case Left(x) => Async[F].pure(Left(x))
+              case Right(pid) =>
+                close.close(pid, p.userId).map {
+                  case Left(m)  => Left(err(StatusCode.UnprocessableEntity, "unprocessable", m))
+                  case Right(_) => Right(Json.obj("id" -> pid.toString.asJson, "status" -> "closed".asJson))
+                }
+            }
       )
 
   private val lockPeriod =
@@ -91,13 +94,15 @@ final class AuditRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
         id =>
           if (!PolicyEngine.hasPermission(p, Action.Edit, "accounting_period"))
             Async[F].pure(Left(err(StatusCode.Forbidden, "forbidden", "requires edit:accounting_period")))
-          else uuid(id) match {
-            case Left(x)    => Async[F].pure(Left(x))
-            case Right(pid) => close.lock(pid, p.userId).map {
-                case Left(m)  => Left(err(StatusCode.UnprocessableEntity, "unprocessable", m))
-                case Right(_) => Right(Json.obj("id" -> pid.toString.asJson, "status" -> "locked".asJson))
-              }
-          }
+          else
+            uuid(id) match {
+              case Left(x) => Async[F].pure(Left(x))
+              case Right(pid) =>
+                close.lock(pid, p.userId).map {
+                  case Left(m)  => Left(err(StatusCode.UnprocessableEntity, "unprocessable", m))
+                  case Right(_) => Right(Json.obj("id" -> pid.toString.asJson, "status" -> "locked".asJson))
+                }
+            }
       )
 
   private val controls =
@@ -119,8 +124,11 @@ final class AuditRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
           if (!gate(p, "control")) Async[F].pure(Left(forbid("control")))
           else
             runner.run(code, None).map {
-              case Left(m)  => Left(err(StatusCode.UnprocessableEntity, "unprocessable", m))
-              case Right(o) => Right(Json.obj("code" -> o.code.asJson, "result" -> o.result.asJson, "violations" -> o.violations.asJson))
+              case Left(m) => Left(err(StatusCode.UnprocessableEntity, "unprocessable", m))
+              case Right(o) =>
+                Right(
+                  Json.obj("code" -> o.code.asJson, "result" -> o.result.asJson, "violations" -> o.violations.asJson)
+                )
             }
       )
 
