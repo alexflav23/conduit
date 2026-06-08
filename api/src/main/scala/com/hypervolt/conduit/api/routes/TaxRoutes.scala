@@ -14,6 +14,7 @@ import com.hypervolt.conduit.tax.TaxAdminRepo
 import com.hypervolt.conduit.tax.TaxDeterminationService
 import com.hypervolt.conduit.tax.TaxQuoteRequest
 import com.hypervolt.conduit.tax.TaxRateService
+import com.hypervolt.conduit.tax.VatExposureRepo
 import doobie.implicits._
 import doobie.util.transactor.Transactor
 import io.circe.Codec
@@ -159,6 +160,17 @@ final class TaxRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
   private val nexusList =
     listEndpoint("nexus", "nexus_profile", query[Option[String]]("entity_id").and(query[Option[String]]("status"))) {
       case (e, s) => TaxAdminRepo.nexus(e.flatMap(x => Try(UUID.fromString(x)).toOption), s)
+    }
+
+  // VAT exposure per entity × jurisdiction × period (accrued − reversed − remitted = outstanding) — a pure-SQL
+  // projection over immutable rows, so it is API-safe (no TigerBeetle in the API). Gated on tax_quote view.
+  private val vatExposure =
+    listEndpoint(
+      "vat/exposure",
+      "tax_quote",
+      query[Option[String]]("entity_id").and(query[Option[String]]("jurisdiction"))
+    ) {
+      case (e, j) => VatExposureRepo.exposure(e.flatMap(x => Try(UUID.fromString(x)).toOption), j)
     }
 
   private val rateCreate =
@@ -313,6 +325,7 @@ final class TaxRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
         ratesList,
         registrationsList,
         nexusList,
+        vatExposure,
         rateCreate,
         rateActivate,
         registrationCreate,
