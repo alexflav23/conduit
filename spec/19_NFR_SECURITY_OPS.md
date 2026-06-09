@@ -125,6 +125,15 @@ Key management is AWS KMS for infrastructure-level keys; **application-level PII
 
 ### B.3 GDPR right-to-erasure / DSAR procedure (crypto-shred + immutable financial skeleton)
 
+> **✅ Implemented (M-NFR.1).** `pii_key` (per-subject wrapped DEK) + `pii_record` vault (V1_0_46); `privacy.CryptoShred`
+> (AES-256-GCM envelope encryption, KEK from `PII_KEK`/Secrets Manager, dev fallback), `privacy.PiiVault`
+> (put/get/shred, `«erased»` tombstone), `privacy.DsarService` (maker-checker erasure → shred → `pii.shredded`
+> event carrying **no PII**). REST: `POST /api/v1/privacy/dsar/erasure`, `…/dsar/{id}/approve`, `GET …/privacy/pii`.
+> Control **CTRL-PII-SHRED** (a shredded key must have no wrapped DEK). `DsarSuite` proves erasure tombstones PII
+> + destroys the DEK while the financial skeleton + invoice amounts survive and re-perform. *Follow-on: migrate the
+> existing plaintext PII columns on `party`/`contact` through the vault (mechanical), and a consumer that propagates
+> the tombstone to projections/HubSpot (§B.3.3 step 5).*
+
 This is the procedure doc 01 §3a and doc 14 §5.3 flag but do not write. It resolves the tension between **GDPR erasure** (a data subject can require their personal data be deleted) and **indefinite, immutable financial/audit retention** (SOX/PCAOB, doc 14). The mechanism is **crypto-shredding**: PII is encrypted with a per-subject key; erasure destroys the key, rendering the ciphertext permanently unrecoverable, while the **non-personal financial skeleton** (amounts, dates, IDs, ledger transfers) is retained intact and still reconciles.
 
 #### B.3.1 Key hierarchy

@@ -42,7 +42,7 @@ Xero invoice + revenue-recognition consumers. Pushed to `github/main`.
 | P3 | **M13** ERP/GL + P&L + Xero + documents + **tax/customs engine** | ✅ | 04§Ledger, **16**, **17** | ✓ (see below) |
 | P3 | **M13b** Period close + reconciliation + Auditability Center | ✅ | 14§5–6, **20** | ✓ |
 | P3 | **M14** Companion app + desk + Horizons + reporting + HubSpot | ◐ | 08, **20**, **21** | desk (no companion) |
-| X | **NFR / Security / Ops-DR** (cross-cutting, P1 launch-blocker) | ⬜ | **19** | — |
+| X | **NFR / Security / Ops-DR** (cross-cutting, P1 launch-blocker) | ◐ | **19** | DSAR crypto-shred ✓ |
 
 **M13 sub-status** (✅ complete — invalidation, Order Collection Ledger, extra document types, multi-locale fonts, the **real tax/customs engine** and the **sales-VAT-at-recognition + per-jurisdiction ledger + quote/placement** path all landed):
 - ✅ Xero feed — swappable `AccountingConsumer`, ported from Athena (OAuth2 + PUT /Invoices, idempotent, local no-op); `order.invoiced` consumer.

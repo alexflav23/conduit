@@ -78,12 +78,24 @@ object Main extends IOApp.Simple {
         val voidRoutes      = new InvoiceVoidRoutes[IO](xa, auth).routes
         val lifecycleRoutes = new OrderLifecycleRoutes[IO](xa, auth).routes
         val taxRoutes       = new com.hypervolt.conduit.api.routes.TaxRoutes[IO](xa, auth).routes
+        // PII key-encryption-key: from the secrets-injected PII_KEK (base64, 32 bytes) in prod; dev falls back to a
+        // fixed local key (doc 19 §B.1/§B.3). The KEK only WRAPS per-subject DEKs; it never touches plaintext PII.
+        val piiKek = sys.env
+          .get("PII_KEK")
+          .map(k => java.util.Base64.getDecoder.decode(k))
+          .getOrElse(com.hypervolt.conduit.privacy.CryptoShred.devKey)
+        val privacyRoutes =
+          new com.hypervolt.conduit.api.routes.PrivacyRoutes[IO](
+            xa,
+            auth,
+            new com.hypervolt.conduit.privacy.CryptoShred(piiKek)
+          ).routes
         val app =
           Router(
             "/" -> (HealthRoutes
               .routes[
                 IO
-              ] <+> accessRoutes <+> pricingRoutes <+> commerceRoutes <+> dealDeskRoutes <+> h6qRoutes <+> icRoutes <+> creditRoutes <+> auditRoutes <+> stripeRoutes <+> documentRoutes <+> voidRoutes <+> lifecycleRoutes <+> taxRoutes)
+              ] <+> accessRoutes <+> pricingRoutes <+> commerceRoutes <+> dealDeskRoutes <+> h6qRoutes <+> icRoutes <+> creditRoutes <+> auditRoutes <+> stripeRoutes <+> documentRoutes <+> voidRoutes <+> lifecycleRoutes <+> taxRoutes <+> privacyRoutes)
           ).orNotFound
         val host      = Ipv4Address.fromString(cfg.http.host).getOrElse(ipv4"0.0.0.0")
         val apiPort   = Port.fromInt(cfg.http.port).getOrElse(port"8080")
