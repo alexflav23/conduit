@@ -8,6 +8,7 @@ import com.hypervolt.conduit.api.auth.AuthService
 import com.hypervolt.conduit.api.auth.Secured
 import com.hypervolt.conduit.close.AuditQueryRepo
 import com.hypervolt.conduit.close.ControlRunner
+import com.hypervolt.conduit.close.EvidenceService
 import com.hypervolt.conduit.close.LineageService
 import com.hypervolt.conduit.close.PeriodCloseService
 import com.hypervolt.conduit.close.ReconResult
@@ -33,13 +34,14 @@ import sttp.tapir.server.http4s.Http4sServerInterpreter
 // read; finance closes/locks. All Postgres-backed (no TB-in-API); running a reconciliation stays server-side.
 final class AuditRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
 
-  private val base    = Secured.base[F](auth)
-  private val close   = new PeriodCloseService[F](xa)
-  private val runner  = new ControlRunner[F](xa)
-  private val lineage = new LineageService[F](xa)
-  private val recon   = new ReconciliationService[F](xa)
-  private val glProj  = new GlProjectionService[F](xa)
-  private val consol  = new ConsolidationService[F](xa)
+  private val base     = Secured.base[F](auth)
+  private val close    = new PeriodCloseService[F](xa)
+  private val runner   = new ControlRunner[F](xa)
+  private val lineage  = new LineageService[F](xa)
+  private val recon    = new ReconciliationService[F](xa)
+  private val glProj   = new GlProjectionService[F](xa)
+  private val consol   = new ConsolidationService[F](xa)
+  private val evidence = new EvidenceService[F](xa)
 
   private def reconJson(r: ReconResult): Json =
     Json.obj(
@@ -185,8 +187,21 @@ final class AuditRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
             (uuid(id), uuid(entityS)).tupled match {
               case Left(x) => Async[F].pure(Left(x))
               case Right((pid, entity)) =>
-                (recon.arVsInvoices(pid, entity, currency), recon.tbVsGl(pid, currency)).tupled.map {
-                  case (ar, tb) => Right(Json.obj("ar_vs_invoices" -> reconJson(ar), "tb_vs_gl" -> reconJson(tb)))
+                (
+                  recon.arVsInvoices(pid, entity, currency),
+                  recon.tbVsGl(pid, currency),
+                  recon.inventoryVsCounts(pid, entity, currency),
+                  recon.glVsXero(pid, entity, currency)
+                ).tupled.map {
+                  case (ar, tb, inv, xero) =>
+                    Right(
+                      Json.obj(
+                        "ar_vs_invoices"     -> reconJson(ar),
+                        "tb_vs_gl"           -> reconJson(tb),
+                        "inventory_vs_count" -> reconJson(inv),
+                        "gl_vs_xero"         -> reconJson(xero)
+                      )
+                    )
                 }
             }
       })
@@ -277,6 +292,22 @@ final class AuditRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
             }
       )
 
+  // Signed, time-stamped evidence pack for a period (the reconciliations + control runs + a content hash) — WORM:
+  // read, never edit. Auditors (view:reconciliation) can pull it.
+  private val evidencePack =
+    base.get
+      .in("api" / "v1" / "finance" / "periods" / path[String]("id") / "evidence")
+      .out(jsonBody[Json])
+      .serverLogic(p =>
+        id =>
+          if (!gate(p, "reconciliation")) Async[F].pure(Left(forbid("reconciliation")))
+          else
+            uuid(id) match {
+              case Left(x)    => Async[F].pure(Left(x))
+              case Right(pid) => evidence.pack(pid, java.time.Instant.now().toString).map(Right(_))
+            }
+      )
+
   val routes: HttpRoutes[F] =
     Http4sServerInterpreter[F]().toRoutes(
       List(
@@ -292,7 +323,8 @@ final class AuditRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
         trialBalance,
         glAsOf,
         runConsolidation,
-        consolidationLineage
+        consolidationLineage,
+        evidencePack
       )
     )
 }

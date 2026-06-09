@@ -52,6 +52,20 @@ final class ReconciliationService[F[_]: Async](xa: Transactor[F]) {
         .flatMap(mismatches => record("gl_vs_tb", periodId, BigDecimal(0), BigDecimal(mismatches), currency))
     }
 
+  // Inventory ↔ counts: the INV ledger value must equal the on-hand stock valued at specific batch landed cost
+  // (doc 14 §5.2). expected = ledger INV; actual = physical valuation.
+  def inventoryVsCounts(periodId: UUID, entity: UUID, currency: String): F[ReconResult] =
+    (GlEntryRepo.roleNet(entity, LedgerAccountCode.Inv), physicalInventory(entity)).tupled
+      .transact(xa)
+      .flatMap { case (invNet, physical) => record("inventory_vs_count", periodId, money(invNet), physical, currency) }
+
+  // GL ↔ Xero: every non-void invoice in the GL must have reached Xero (a `xero_invoice_id`); the unsynced value is
+  // the variance, so a failed/dropped accounting dispatch surfaces as an exception rather than silent drift.
+  def glVsXero(periodId: UUID, entity: UUID, currency: String): F[ReconResult] =
+    invoicedVsXero(entity).transact(xa).flatMap {
+      case (invoiced, synced) => record("gl_vs_xero", periodId, invoiced, synced, currency)
+    }
+
   def signOff(reconId: UUID, actor: UUID): F[Int] =
     sql"UPDATE reconciliation SET signed_off_by=$actor, signed_off_at=now(), updated_at=now() WHERE id=$reconId".update.run
       .transact(xa)
@@ -59,6 +73,21 @@ final class ReconciliationService[F[_]: Async](xa: Transactor[F]) {
   private def openInvoiceTotal(entity: UUID, currency: String): doobie.ConnectionIO[BigDecimal] =
     sql"""SELECT COALESCE(SUM(i.total_inc_vat),0) FROM order_invoice i JOIN "order" o ON o.id=i.order_id
           WHERE o.entity_id=$entity AND o.txn_currency=$currency AND i.status='open'""".query[BigDecimal].unique
+
+  // On-hand units valued at the variant's latest lot landed cost (specific-identification basis, doc 02 §G).
+  private def physicalInventory(entity: UUID): doobie.ConnectionIO[BigDecimal] =
+    sql"""SELECT COALESCE(SUM(si.qty_on_hand * COALESCE(
+            (SELECT lb.landed_unit_cost FROM lot_batch lb WHERE lb.product_variant_id = si.product_variant_id
+             ORDER BY lb.received_date DESC NULLS LAST LIMIT 1), 0)), 0)
+          FROM stock_item si WHERE si.entity_id = $entity""".query[BigDecimal].unique
+
+  // (Σ non-void invoiced, Σ of those that reached Xero) — the gap is the unsynced value.
+  private def invoicedVsXero(entity: UUID): doobie.ConnectionIO[(BigDecimal, BigDecimal)] =
+    sql"""SELECT COALESCE(SUM(i.total_inc_vat) FILTER (WHERE i.status <> 'void'), 0),
+                 COALESCE(SUM(i.total_inc_vat) FILTER (WHERE i.status <> 'void' AND i.xero_invoice_id IS NOT NULL), 0)
+          FROM order_invoice i JOIN "order" o ON o.id = i.order_id WHERE o.entity_id = $entity"""
+      .query[(BigDecimal, BigDecimal)]
+      .unique
 
   private def record(
       reconType: String,
