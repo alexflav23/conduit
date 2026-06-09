@@ -283,3 +283,20 @@ and (where reachable) layer-stripped states.
 > **Status:** this pack is complete and ready to hand over. It is authored for pickup; per the current request it
 > does **not** itself start the Figma/design build. The functional substrate (docs 05/06/08/14/20/20-H6Q/21 + the
 > running `conduit-desk`) is in place; this doc is the bridge from that substrate to the designed product.
+
+---
+
+## Addendum (June 2026) — forecast surfaces added since this pack was authored
+
+M-Forecast (doc 26) landed three H6Q-board surfaces after the inventory above was written. They bind to the
+same live API and belong to the doc 20-H6Q board's design scope:
+
+1. **Per-channel accuracy matrix** — channels × eval quarters, each cell a one-step-ahead WAPE; the selected
+   policy (model or blend) is named per row. Dense, scannable, the credibility spine of the board.
+2. **Nowcast strip** — the OPEN quarter as closed-months-actual + remaining-months-model = projected close.
+   The partial quarter is the product, not a caveat; actual and model segments must read differently at a glance.
+3. **Forward curve + TAM overlay** — next two quarters' model forecast with the UK BEV registration trajectory
+   (SMMT, exogenous series) as the demand-ceiling context line.
+
+Same invariants apply: data-layer aware (money collapses when hidden), model provenance always visible
+(`model_version` names the policy), no number without its origin.
