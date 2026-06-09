@@ -126,46 +126,91 @@ expected final tier — see §5.2).
 
 ## 5. Downstream propagation — every ledger reflects the contract (the substantial part)
 
-The product owner's key requirement: *"AR, revenue, sales and all the other ledgers must correctly reflect the full
-structure of a contract."* For `per_order` / `cumulative_prospective` this is automatic (the line price is the band
-price; nothing retro). For **`cumulative_retrospective`** it is **ASC 606 variable consideration** and must be
-modelled explicitly.
+The product owner's requirement: *"AR, revenue, sales and all the other ledgers must correctly reflect the full
+structure of a contract"* — and this **must be perfect** (it's critical infrastructure). For `per_order` /
+`cumulative_prospective` it's automatic (the line price is the band price; nothing retro). For
+**`cumulative_retrospective`** it is **ASC 606 variable consideration** and turns on **one central distinction:**
 
-### 5.1 Revenue recognition (ASC 606)
-- At each sale, the recognition service (doc 04 §Ledger, the M13 `RevenueRecognitionService`) consults the
-  agreement's **expected final tier** (`rebate_method`: expected-value or most-likely, off the volume estimate in
-  §5.2) and recognises revenue **net of the expected rebate** — i.e. at the *expected* contract price, not the
-  current band — with the difference posted to a **rebate-accrual liability** (a contra-revenue / `REBATE_ACCRUAL`
-  account on the immutable ledger).
-- **Threshold crossing → true-up.** When actual cumulative volume crosses a band, the accrual is trued-up to the now-
-  certain price; any retrospective repricing of prior units is booked as a **rebate** (credit note / accrual release
-  → AR or a rebate payable). This **reuses the commission true-up rail's pattern** (M5: posted entries are never
-  reopened; the delta is a new current-period adjustment) — the rebate true-up is the same shape on the revenue side.
-- The estimate is **constrained** (ASC 606 §56–58): only recognise consideration highly likely not to reverse;
-  conservative tier when volume is uncertain.
+> **ACCRUE (calculate) ≠ APPLY (settle).** The system **continuously tracks and calculates** the rebate owed —
+> per product, per tier, against the contract year — and reflects that as an **accrued liability on the immutable
+> ledger**. It does **NOT unilaterally apply** (pay/credit) it. Applying the rebate is a **separate, discrete,
+> governed act** (year-end or an agreed milestone, maker-checker) that draws the accrual down. Calculation is
+> automatic and reproducible; settlement is deliberate and never automatic. Keeping these two apart is the whole
+> game — conflating them is the classic way rebate accounting goes wrong.
 
-### 5.2 The estimate comes from H6Q / the contract commitment
-The "expected final tier" is not guesswork: it's the customer's **committed/forecast volume** for the period, which
-H6Q already models (commitments, coverage, time-fences — M11). The agreement's `terms.min_commitment_units` sets a
-floor. So forecasting and pricing are linked: the H6Q commitment drives the rebate estimate, and actuals drive the
-true-up.
+### 5.1 The contract year (rolling, anchored to commencement)
+The cumulative window is **12 months from the agreement's `commencement_date`**, rolling — *not* a calendar or
+fiscal year. Year *N* = `[commencement + N·12mo, commencement + (N+1)·12mo)`; cumulative volume and the rebate
+accrual are **scoped to the current contract year and reset at each anniversary** (no carry-over across years). Each
+agreement has its own anchor, so many contracts run on different year boundaries simultaneously. `contract_year` is
+derived from `commencement_date` + the order's `occurred_at` (a UTC-instant re-projection, exactly like fiscal-period
+assignment, doc 14 §2 — never baked into rows). The fiscal/accounting period (doc 14) is a *separate* axis: a single
+contract year spans several accounting periods, and the accrual is carried/closed within each (§5.6).
 
-### 5.3 The ledger
+### 5.2 Accrual — track & CALCULATE, per tier (continuous, reproducible)
+The accrued rebate is a **deterministic projection** over the contract year's immutable order/dispatch stream + the
+agreement's tier ladder — recomputable to the penny by replay (this is what makes "perfect" testable). It is computed
+**per product, per achieved tier**, not as a blended number:
+
+- For each product on the agreement, take the **cumulative qualifying volume** in the current contract year →
+  the **achieved tier** `t*` and its unit price `p(t*)`.
+- The **earned/retrospective accrual** = `Σ over the year's units of ( invoiced_unit_price − p(t*) )`, evaluated
+  per product. As volume climbs and `t*` improves, the accrual **recomputes upward** (more units now entitled to a
+  lower price). Because it's a pure function of (units, invoiced prices, tier ladder, contract year), redelivery /
+  replay yields the identical figure.
+- This **earned** accrual (what's actually owed given volume to date) is distinct from the **expected** accrual used
+  for revenue recognition (§5.3) — the engine carries both: *expected* drives in-year revenue, *earned* is the
+  realised liability, and they converge as the year completes.
+
+### 5.3 Revenue recognition net of the expected rebate (ASC 606)
+At each sale the recognition service (M13 `RevenueRecognitionService`) recognises revenue **net of the expected
+rebate** — at the *expected* final-tier price, not the current band — posting the difference to `REBATE_ACCRUAL`.
+The **expected final tier** comes from the customer's **committed/forecast annual volume (H6Q** — commitments,
+time-fences, M11; `terms.min_commitment_units` sets a floor), **constrained** per ASC 606 §56–58 (recognise only
+consideration highly likely not to reverse; conservative tier when uncertain). As actual volume lands, the
+**earned** accrual (§5.2) trues the **expected** accrual up/down — reusing the **M5 commission true-up pattern**
+(posted entries never reopened; the delta is a current-period adjustment) on the revenue side.
+
+### 5.4 Application / settlement — discrete, governed, NOT unilateral
+Settling the rebate (the customer actually receives it) is a **separate event**, typically at the **contract-year
+boundary** or an agreed milestone:
+- It is **maker-checker governed** (finance proposes the year-end rebate statement from the earned accrual; an
+  approver authorises) — never auto-applied.
+- It **draws down `REBATE_ACCRUAL`** and issues the settlement instrument: a **credit note** (doc-17 machinery →
+  reduces AR / cash waterfall) or a **rebate payment**.
+- It is **idempotent** (a deterministic settlement id per (agreement, contract_year, milestone)) so a re-run never
+  double-credits — the same discipline as the rest of the ledger.
+- The **earned accrual statement** (per product/tier, for the contract year) is the auditable basis the settlement
+  is computed from; the customer-facing rebate statement is a generated document (doc 17).
+
+### 5.5 The ledger
 - New account role **`REBATE_ACCRUAL:<entity>`** (contra-revenue / customer-rebate liability) on the immutable
-  TigerBeetle ledger, alongside the existing per-entity Revenue/AR/VAT/COGS. Recognition splits: DR AR / CR Revenue
-  (at expected net price) / CR `REBATE_ACCRUAL` (the expected rebate). True-up and rebate settlement move the
-  accrual. Per-event reversal (the M13b model) extends cleanly — a cancellation recalls the rebate leg too.
-- **Period close / reconciliation (M13b):** the rebate accrual is a reconciled balance (expected vs. actual rebates
-  paid); a new control (`CTRL-REBATE-ACCRUAL`) ties the projection to the ledger. VAT is computed on the **net**
-  consideration (the rebate reduces the taxable amount — confirm per jurisdiction with the tax engine, doc 16).
+  TigerBeetle ledger, alongside per-entity Revenue/AR/VAT/COGS, mirrored into `gl_entry` (M13b). Recognition splits
+  DR AR / CR Revenue (expected net) / CR `REBATE_ACCRUAL` (expected rebate); true-up moves the accrual; **settlement**
+  DRs `REBATE_ACCRUAL` / CRs AR-or-Bank. Per-event reversal (M13b) extends cleanly — a cancellation recalls the
+  rebate leg too.
+- **VAT** is on the **net** consideration; a retrospective rebate reduces the taxable base (credit note with VAT) —
+  confirm per jurisdiction via the tax engine (doc 16).
 
-### 5.4 AR, commission, documents
-- **AR:** the invoice reflects the band price at sale; a retrospective rebate is a **credit note** (the existing
-  doc-17 credit-note machinery) or a rebate payment — reflected in AR aging / cash waterfall.
-- **Commission (M5):** basis = gross margin at the **contract** price; a rebate true-up flows through the **existing
-  quarterly true-up** as a delta (commission already re-bases on actuals — the rebate is one more input).
-- **Documents (doc 17):** invoices/credit-notes show the agreement reference + band; a rebate credit note cites the
-  threshold crossing.
+### 5.6 AR, commission, documents, period close
+- **AR / cash:** invoices post at the in-year price; the year-end rebate is a credit note or payment in AR-aging / the
+  cash waterfall.
+- **Commission (M5):** basis = gross margin at the **contract** price; the rebate true-up is one more input to the
+  existing quarterly true-up.
+- **Documents (doc 17):** the rebate statement + credit note cite the agreement, contract year, per-tier earned
+  figures.
+- **Period close / reconciliation (M13b):** at each accounting-period close the open `REBATE_ACCRUAL` is a reconciled
+  balance; **`CTRL-REBATE-ACCRUAL`** ties the earned-accrual projection to the ledger account, and a conservation
+  check asserts `Σ settled + Σ outstanding == Σ earned` for the contract year.
+
+### 5.7 Correctness properties (because it must be perfect)
+Tested as ScalaCheck properties + reconciliation controls, in the M1/M13b style:
+1. **Reproducible** — replaying a contract year's orders yields the identical earned accrual (deterministic projection).
+2. **Conservation** — `Σ rebate settled + Σ outstanding accrual == Σ earned rebate` per (agreement, contract_year).
+3. **Year-boundary integrity** — volume + accrual reset at the anniversary; no unit counts toward two contract years.
+4. **Idempotent settlement** — a settlement applied twice credits once.
+5. **Ledger tie** — the earned-accrual projection equals the `REBATE_ACCRUAL` ledger balance (the `gl_vs_*` discipline).
+6. **No unilateral application** — no code path settles/credits a rebate without the maker-checker step.
 
 ---
 
@@ -202,9 +247,13 @@ never a one-order patch.
   resolved band + the recognised-net vs list for rebate trace.
 - `contract_volume` (new) — cumulative position keyed by **(agreement, variant, contract_year)**, summed across the
   agreement's whole customer set (group-level), with an annual reset (for the cumulative bases).
-- Ledger: `REBATE_ACCRUAL` account role; `rebate_accrual` projection + `CTRL-REBATE-ACCRUAL` control.
+- `contract_year` is **derived** from `commencement_date` + `occurred_at` (not stored) — a rolling-12mo re-projection.
+- Ledger: `REBATE_ACCRUAL` account role; the **earned-rebate** is a reproducible **projection** (per agreement /
+  product / tier / contract_year), reconciled by `CTRL-REBATE-ACCRUAL`; `rebate_settlement` records discrete,
+  governed, idempotent settlements (credit note / payment) that draw it down.
 - Events: `pricing.agreement.requested`, `pricing.agreement.activated`, `pricing.rebate.accrued`,
-  `pricing.rebate.trued_up` (envelope per doc 03; on the relevant topics).
+  `pricing.rebate.trued_up`, **`pricing.rebate.settled`** (the discrete, maker-checker settlement — separate from
+  accrual); envelope per doc 03.
 
 ---
 
@@ -252,8 +301,12 @@ commission, M13 revenue, M13b close). Build order when greenlit:
    customer + per-order band**; remove typed prices + server enforcement; the **tier-request workflow** (reuse the
    maker-checker activation). *(Closes the "no typed prices / exception = tier request" principle.)*
 2. **Cumulative tracking** (`contract_volume`) + `cumulative_prospective` resolution.
-3. **`cumulative_retrospective`**: the rebate accrual ledger account + H6Q-driven expected-tier estimate +
-   recognition net-of-rebate + threshold-crossing true-up + `CTRL-REBATE-ACCRUAL` + AR/commission propagation.
+3. **`cumulative_retrospective`** (the critical, get-it-perfect piece): the rolling contract-year window (§5.1); the
+   reproducible **earned-rebate accrual projection** per product/tier (§5.2) + `REBATE_ACCRUAL` ledger account;
+   H6Q-driven expected-tier estimate + recognition net-of-rebate + true-up (§5.3); the **separate, governed,
+   idempotent settlement** that draws the accrual down (§5.4, NOT auto-applied); `CTRL-REBATE-ACCRUAL` + the §5.7
+   property suite (reproducibility, conservation, year-boundary, idempotent settlement, ledger tie); AR/commission
+   propagation.
 4. Desk (agreements governance) + companion (tier-request form, ladder display) — per the design pass (doc 22/23).
 
 > **Not started.** This is the design of record; implementation is sequenced above and begins only when greenlit.
