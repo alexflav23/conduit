@@ -34,6 +34,9 @@ services:
 
   conduit-tigerbeetle:
     image: ghcr.io/tigerbeetle/tigerbeetle:0.16.46
+    networks:
+      conduit:
+        ipv4_address: 172.31.250.10
     container_name: conduit-tigerbeetle
     entrypoint: ["/bin/sh", "/entrypoint.sh"]
     ports:
@@ -41,8 +44,6 @@ services:
     volumes:
       - conduit_tigerbeetle_data:/data
       - ./docker/tigerbeetle-entrypoint.sh:/entrypoint.sh:ro
-    networks:
-      - conduit
     security_opt:
       - "seccomp=unconfined"
 
@@ -70,13 +71,17 @@ services:
   conduit-api:
     build: { context: ., dockerfile: Dockerfile }
     container_name: conduit-api
-    depends_on: [conduit-postgres, conduit-pulsar, conduit-tigerbeetle]
+    restart: unless-stopped
+    depends_on:
+      conduit-postgres: { condition: service_healthy }
+      conduit-pulsar: { condition: service_started }
+      conduit-tigerbeetle: { condition: service_started }
     environment:
       HYPERVOLT_ENV: local
       CONDUIT_DB_HOST: conduit-postgres
       CONDUIT_DB_PORT: "5432"
       CONDUIT_PULSAR_URL: pulsar://conduit-pulsar:6650
-      CONDUIT_TB_ADDRESSES: conduit-tigerbeetle:3000
+      CONDUIT_TB_ADDRESSES: 172.31.250.10:3000
       INGEST_DIR: /app/ingest
     volumes:
       - ./ingest:/app/ingest:ro
@@ -86,20 +91,28 @@ services:
   conduit-consumer:
     build: { context: ., dockerfile: Dockerfile.consumer }
     container_name: conduit-consumer
-    depends_on: [conduit-api]
+    restart: unless-stopped
+    depends_on:
+      conduit-api: { condition: service_started }
     environment:
       HYPERVOLT_ENV: local
       CONDUIT_DB_HOST: conduit-postgres
       CONDUIT_DB_PORT: "5432"
       CONDUIT_PULSAR_URL: pulsar://conduit-pulsar:6650
-      CONDUIT_TB_ADDRESSES: conduit-tigerbeetle:3000
+      CONDUIT_TB_ADDRESSES: 172.31.250.10:3000
+      CONDUIT_TB_CLUSTER: "1"
       PROMETHEUS_PORT: "9465"
-    ports: ["9465:9465"]
+    security_opt:
+      - "seccomp=unconfined"
+    ports: ["9466:9465"]
     networks: [conduit]
 
 networks:
   conduit:
     driver: bridge
+    ipam:
+      config:
+        - subnet: 172.31.250.0/24
 
 volumes:
   conduit_postgres_data:
