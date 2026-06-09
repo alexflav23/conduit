@@ -46,24 +46,41 @@ contract (§5 — the substantial part).
 ```
 price_agreement                          -- the contract / governed tier set
   id, name, surface(customer|inter_entity), currency,
-  scope: applies_to ∈ { open_list | customer_set | segment },   -- "open_list" = the standard ADLP everyone gets
-  volume_basis ∈ { per_order | cumulative_prospective | cumulative_retrospective },   -- §4
-  rebate_method ∈ { none | expected_value | most_likely },       -- ASC 606 estimation (§5) when retrospective
+  scope: applies_to ∈ { open_list | customer_set | segment | sector },  -- "open_list" = the standard ADLP everyone gets
+  base_volume_basis ∈ { per_order | cumulative_prospective },    -- how the BASE tier price is picked (always knowable at order time)
   effective_from, effective_to,                                  -- validity window (immutable; supersession, not edit)
-  terms (JSONB: min_commitment_units, period, notes),
+  -- term & renewal lifecycle (§5.8) — track renewals for big accounts (e.g. Octopus Group):
+  commencement_date, term_months, renewal_type ∈ { fixed | auto | evergreen | manual },
+  renews_from (→ price_agreement, the predecessor),  lifecycle ∈ { draft|active|expiring|renewed|lapsed|terminated },
+  terms (JSONB: min_commitment_units, notes),
   status(draft|active|superseded), version,
   proposed_by, approved_by, approved_at                          -- maker-checker (doc 05 §4)
 
-price_agreement_customer  (M:N)          -- which parties this agreement is valid for
+price_agreement_customer  (M:N)          -- which parties this agreement is valid for (group aggregation, §4)
   agreement_id → price_agreement, party_id → party
   -- empty set + applies_to=open_list ⇒ the standard list (today's behaviour); a non-empty set ⇒ a customer contract
 
-price_tier  (the volume bands; evolves price_rule)
+price_tier  (the base price bands; evolves price_rule)
   agreement_id → price_agreement, product_variant_id,
   from_qty (band threshold), up_to_qty (NULL = open-ended),       -- the ladder: [1–99]@X, [100–499]@Y, [500+]@Z
   price (ex-VAT)  OR  discount_pct (off the variant list),        -- one of; price wins if both given
   -- (carries forward price_rule's currency/tax_regime/min_qty→from_qty/version/effective semantics)
+
+rebate_scheme  (§4.4 — arbitrary time-bound rebates, attachable to an agreement or a tier)
+  id, agreement_id → price_agreement,  product_variant_id (NULL = all),  price_tier_id (NULL = agreement-wide),
+  name,
+  window ∈ { contract_year | calendar_year | fixed(from,to) | rolling(n_months) },  -- arbitrary time-binding
+  basis  ∈ { volume | spend | growth_vs_prior | flat },
+  treatment ∈ { prospective | retrospective },                   -- retrospective ⇒ the §5 accrue/settle engine
+  rebate_method ∈ { expected_value | most_likely },              -- ASC 606 estimation (§5.3) when retrospective
+  ladder (JSONB: [{from_threshold, value}])  -- per-tier rebate (% or per-unit) earned at each threshold
 ```
+
+> The **volume-rebate model of §4–§5 is one `rebate_scheme`** (basis=volume, window=contract_year,
+> treatment=retrospective). Making it a first-class, **arbitrary-time-bound** entity means a contract can carry
+> several at once — e.g. the annual volume rebate **+** a fixed-window Q1 promo **+** a growth-vs-last-year kicker —
+> each evaluated independently by the same accrue/settle engine (§5) over **its own** window. A scheme can attach to
+> the whole agreement or to a specific tier/product.
 
 `price_rule` is **retained as the tier row** — the cleanest migration is: add `price_agreement_id` to `price_rule`,
 let `min_qty`→band `from_qty` (+ an `up_to_qty`), and move the customer scope onto the agreement. An "open-list"
@@ -90,15 +107,22 @@ effective-dated (`status <> 'draft'` + the as-of window — the house pattern).
 
 ---
 
-## 4. Volume tiers — per-order vs cumulative (the crux)
+## 4. Volume tiers — base band vs rebate scheme (the crux)
 
-`price_agreement.volume_basis` decides how the band is selected and is the hinge for downstream accounting:
+Two distinct mechanics, deliberately separated so the **base price is always knowable at order time** and all
+*retrospective* economics live in an explicit, auditable **rebate scheme**:
+
+**(a) Base tier selection** — `price_agreement.base_volume_basis`:
 
 | basis | band chosen by | downstream effect |
 |---|---|---|
 | **`per_order`** | this order's line qty | none beyond the line price — the simplest case (today's stacked `min_qty` rules). |
-| **`cumulative_prospective`** | the customer's **running volume** over the agreement period; crossing a threshold improves the price **going forward only** | future orders price at the better band; no retro adjustment. Requires **cumulative tracking** but no rebate. |
-| **`cumulative_retrospective`** | as above, but the better price **applies to all volume once the threshold is hit** (a classic contract rebate) | **variable consideration** — earlier sales must be revisited; this is the ASC-606 case in §5. |
+| **`cumulative_prospective`** | the customer's **running volume** over the contract year; crossing a threshold improves the price **going forward only** | future orders price at the better band; no retro adjustment. Needs cumulative tracking (§4 below) but **no rebate**. |
+
+**(b) Rebate schemes** (§4.4) — everything *retrospective* (the better price applies to volume already invoiced → a
+rebate) is a `rebate_scheme` with `treatment = retrospective`, evaluated by the **accrue/settle engine (§5)**. This
+is the **variable-consideration / ASC-606** case (the Octopus annual volume rebate). Keeping it out of base-band
+selection means an order's invoice price is never provisional — the rebate is a separate, explicit accrual.
 
 **Cumulative tracking:** a running total of qualifying volume (ordered / dispatched — configurable; default
 **dispatched**, to align with revenue recognition) at the grain **(agreement, variant, contract_year)** — note
@@ -121,6 +145,20 @@ expected final tier — see §5.2).
 > buyer places the same order twice and the second crosses a band, the better tier applies — **prospectively** (next
 > orders cheaper) or **retrospectively** (a year-end rebate trues-up *all* the year's units) per the contract's
 > charges clause — which is the §5 ledger split.
+
+### 4.4 Generalised rebate schemes (arbitrary time-bound)
+A `rebate_scheme` (§2) is the **general, reusable concept for any time-bound rebate** — it is not limited to the
+annual volume rebate. One agreement can carry several, each with **its own window** (`contract_year` |
+`calendar_year` | `fixed(from,to)` | `rolling(n_months)`), **its own basis** (`volume` | `spend` | `growth_vs_prior`
+| `flat`), and attached to the **whole agreement or a specific tier/product**:
+- *Volume rebate* — the Octopus case (basis=volume, window=contract_year, retrospective).
+- *Promo* — a flat % over a fixed window (basis=flat, window=fixed(Q1), prospective or retrospective).
+- *Growth kicker* — basis=growth_vs_prior over the prior contract year.
+
+Every scheme is evaluated **independently by the same accrue/settle engine (§5)** over its own window — so "map an
+arbitrary time-bound rebate" = create a `rebate_scheme`; "make it part of a contract" = attach it to that
+agreement; "a standing tier rebate" = attach it to the `open_list` agreement. The engine's correctness properties
+(§5.7) hold per scheme.
 
 ---
 
@@ -212,6 +250,24 @@ Tested as ScalaCheck properties + reconciliation controls, in the M1/M13b style:
 5. **Ledger tie** — the earned-accrual projection equals the `REBATE_ACCRUAL` ledger balance (the `gl_vs_*` discipline).
 6. **No unilateral application** — no code path settles/credits a rebate without the maker-checker step.
 
+### 5.8 Term, renewal-rate & sector analytics
+The agreement is the natural home for **contract-lifecycle reporting**, which big accounts (Octopus Group) make
+material:
+- **Term & renewal.** `commencement_date + term_months` give the term end; `renewal_type` (fixed/auto/evergreen/
+  manual) and `renews_from` (predecessor → successor chain) model the lifecycle (`draft→active→expiring→
+  renewed|lapsed|terminated`). An **expiring** agreement surfaces on a renewals worklist (desk + companion); a
+  successor agreement links back via `renews_from`.
+- **Renewal rate** = a reproducible analytic over the agreement chain: in a window, *logo retention* (renewed
+  agreements ÷ those due) and *net revenue retention* (successor value ÷ predecessor value), **broken down by
+  sector** (§ below). It reads off the same immutable agreement history (no parallel store) and feeds Horizons
+  reporting (doc 21) + H6Q forward demand (doc 12).
+- **Sector dimension.** `party` gains a governed **`sector`** taxonomy (energy, automotive, …) — coarser than the
+  existing `party.segment` (segment = finer sub-classification *within* a sector/channel). Sector is a first-class
+  breakdown for: agreement/rebate **scope** (`applies_to = sector` → a sector-wide price list/rebate), **H6Q
+  rollups** (add a `sector` level to the coverage hierarchy, doc 12), and **reporting** (revenue / rebate / renewal
+  rate by sector). This is the same axis H6Q already breaks down on — promoted to a named party attribute so pricing,
+  forecasting and reporting all share one taxonomy.
+
 ---
 
 ## 6. The exception, re-stated: a governed price-tier request
@@ -240,7 +296,12 @@ never a one-order patch.
 
 ## 7. Data-model deltas (summary for the migration)
 
-- `price_agreement` (new), `price_agreement_customer` (new M:N).
+- `price_agreement` (new — incl. term/renewal: `commencement_date`, `term_months`, `renewal_type`, `renews_from`,
+  `lifecycle`), `price_agreement_customer` (new M:N).
+- `rebate_scheme` (new) — arbitrary time-bound rebates (window/basis/treatment/ladder), attached to an agreement or
+  tier/product (§4.4). The §4–5 volume rebate is one row of this.
+- `party` → gains a governed **`sector`** taxonomy (energy/automotive/…), coarser than the existing `segment`; a
+  `sector` reference table.
 - `price_rule` → gains `price_agreement_id` (FK), `up_to_qty` (band ceiling); `min_qty` reread as band `from_qty`.
   Existing single-list rules become tiers of an `open_list` agreement (back-fill) so nothing regresses.
 - `order_line` → already has `price_rule_id`; add `price_agreement_id` for the contract reference; record the
@@ -266,8 +327,12 @@ never a one-order patch.
   ladder + band + cumulative position; the tier-request endpoints; remove any price/discount input on `/orders`.
 - **doc 08 S14/S16** — order capture has **no price field** (sku+qty, tier shown); "exception" screen becomes the
   **tier-request** form.
-- **doc 20 D3–D6** — desk pricing governance manages **agreements** (validity, customer scope, bands) + approves
-  tier requests; the layer wall (inter-entity) is unchanged.
+- **doc 20 D3–D6** — desk pricing governance manages **agreements** (validity, customer scope, bands, rebate
+  schemes, term/renewal) + approves tier requests + a **renewals worklist**; the layer wall (inter-entity) is unchanged.
+- **doc 11 CRM** — `party.sector`; the agreement term/renewal lifecycle + renewal-rate analytic live alongside the
+  party/account model.
+- **doc 12 H6Q** — add a **`sector`** level to the coverage rollup hierarchy (one shared taxonomy with pricing).
+- **doc 21 reporting / Horizons** — revenue / rebate / **renewal-rate by sector** breakdowns.
 - **CLAUDE.md §8** — add a reconciliation: *pricing is contract/tier-bound; no typed prices; the ADLP "exception" is
   a governed price-tier request; volume tiers (incl. retrospective rebates) propagate to revenue/AR/commission/ledger.*
 - **doc 14 §5 (M13b)** — the rebate accrual joins the reconciled balances + a new control.
@@ -290,6 +355,11 @@ never a one-order patch.
    and the **prospective-vs-retrospective** clause from Schedule 3 (its table cells didn't survive text extraction);
    that clause decides whether this contract needs the §5 rebate-accrual path or just per-tier prospective pricing.
    Whichever, model it as one `price_agreement` (open the agreement to the Octopus Group via `price_agreement_customer`).
+6. **Sector taxonomy** — the governed `sector` value set (energy/automotive/…) and its relationship to the existing
+   `segment` (sector = coarse industry; segment = finer sub-class). Confirm whether H6Q's existing `segment` rollup
+   level should sit under a new `sector` level.
+7. **Renewal-rate definition** — logo retention vs net-revenue retention; the "due for renewal" denominator; the
+   window. (Reporting concern — doc 21.)
 
 ---
 
@@ -307,6 +377,10 @@ commission, M13 revenue, M13b close). Build order when greenlit:
    idempotent settlement** that draws the accrual down (§5.4, NOT auto-applied); `CTRL-REBATE-ACCRUAL` + the §5.7
    property suite (reproducibility, conservation, year-boundary, idempotent settlement, ledger tie); AR/commission
    propagation.
-4. Desk (agreements governance) + companion (tier-request form, ladder display) — per the design pass (doc 22/23).
+4. **Generalised `rebate_scheme`** (arbitrary windows/bases beyond the contract-year volume rebate) + **term/renewal
+   lifecycle** + the **renewal-rate analytic**; **`party.sector`** wired into agreement scope, the H6Q rollup, and
+   reporting breakdowns.
+5. Desk (agreements + rebate-scheme governance, renewals worklist) + companion (tier-request form, ladder display) —
+   per the design pass (doc 22/23).
 
 > **Not started.** This is the design of record; implementation is sequenced above and begins only when greenlit.
