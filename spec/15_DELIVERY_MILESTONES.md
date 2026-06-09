@@ -42,7 +42,8 @@ Xero invoice + revenue-recognition consumers. Pushed to `github/main`.
 | P3 | **M13** ERP/GL + P&L + Xero + documents + **tax/customs engine** | ✅ | 04§Ledger, **16**, **17** | ✓ (see below) |
 | P3 | **M13b** Period close + reconciliation + Auditability Center | ✅ | 14§5–6, **20** | ✓ |
 | P3 | **M14** Companion app + desk + Horizons + reporting + HubSpot | ◐ | 08, **20**, **21**, **23** | desk (no companion); Flutter decided |
-| P? | **M-Pricing** Contract & volume-tiered pricing (no-typed-prices; tier-request workflow; arbitrary time-bound rebate schemes; rolling contract-year accrue-vs-settle → revenue/AR/commission/ledger; term/renewal-rate; party.sector) | ⬜ spec | **24** | spec only |
+| P? | **M-Pricing** Contract & volume-tiered pricing (no-typed-prices; tier-request workflow; arbitrary time-bound rebate schemes; per-unit charger-triggered tiers via product_class; rolling contract-year accrue-vs-settle → revenue/AR/commission/ledger; term/renewal-rate; party.sector) | ⬜ spec | **24** | spec only |
+| P? | **M13-Docs.9** Associated / inbound documents (store customer PO / contract+schedules / POD; attach to order/party/agreement; PO→order provenance + price reconciliation) | ⬜ spec | **25** | spec only |
 | X | **NFR / Security / Ops-DR** (cross-cutting, P1 launch-blocker) | ◐ | **19** | DSAR crypto-shred ✓ |
 
 **M13 sub-status** (✅ complete — invalidation, Order Collection Ledger, extra document types, multi-locale fonts, the **real tax/customs engine** and the **sales-VAT-at-recognition + per-jurisdiction ledger + quote/placement** path all landed):

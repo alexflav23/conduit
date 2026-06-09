@@ -74,14 +74,21 @@ price_tier  (the base price bands; evolves price_rule)
   price (ex-VAT)  OR  discount_pct (off the variant list)
 
 rebate_scheme  (§4.4 — arbitrary time-bound rebates, attachable to an agreement or a tier)
-  id, agreement_id → price_agreement,  product_variant_id (NULL = all),  price_tier_id (NULL = agreement-wide),
+  id, agreement_id → price_agreement,  price_tier_id (NULL = agreement-wide),
   name,
   window: valid_from, valid_to (timestamps)  + optional recurrence(anchor, n_months),  -- arbitrary time-binding AS TIMESTAMPS
                                                                                        -- ("contract year" = a window anchored to the agreement's valid_from; resolved, not enumerated)
   basis  ∈ { volume | spend | growth_vs_prior | flat },          -- a genuine computation difference, so a real field
+  unit ∈ { unit | currency },                                    -- volume counted per-UNIT (chargers) or by spend
+  qualifying_filter (JSONB: product_class[] / family[] / variant[]),  -- §4.5 — WHICH products' sales TRIGGER the tier (e.g. chargers only)
+  applies_filter    (JSONB: product_class[] / family[] / variant[]),  -- §4.5 — WHICH products RECEIVE the rebate/price (often = qualifying)
   treatment ∈ { prospective | retrospective },                   -- retrospective ⇒ the §5 accrue/settle engine
-  ladder (JSONB: [{from_threshold, value}])                      -- per-threshold rebate (% or per-unit)
+  ladder (JSONB: [{from_threshold, value}])                      -- per-threshold rebate (% or per-unit), in `unit`s
 ```
+
+> `product_variant` (and/or `product_family`) gains a governed **`product_class`** (charger | accessory | cable |
+> spare | bundle) — the dimension the filters use. (Today only `is_serialised` roughly separates chargers from
+> accessories; a proper class is needed — §4.5.)
 
 > The **volume-rebate model of §4–§5 is one `rebate_scheme`** (basis=volume, a contract-year-anchored window,
 > treatment=retrospective). A contract can carry several at once — annual volume rebate **+** a fixed-window promo
@@ -131,8 +138,9 @@ rebate) is a `rebate_scheme` with `treatment = retrospective`, evaluated by the 
 is the **variable-consideration / ASC-606** case (the Octopus annual volume rebate). Keeping it out of base-band
 selection means an order's invoice price is never provisional — the rebate is a separate, explicit accrual.
 
-**Cumulative tracking:** a running total of qualifying volume (ordered / dispatched — configurable; default
-**dispatched**, to align with revenue recognition) at the grain **(agreement, variant, contract_year)** — note
+**Cumulative tracking:** a running total of **qualifying** volume (the qualifying product class — chargers, §4.5;
+ordered / dispatched — configurable, default **dispatched**, to align with revenue recognition) at the grain
+**(agreement, qualifying_class, contract_year)** — note
 **per contract year, with an annual reset** (real contracts tier on *annual* cumulative volume), and **aggregated
 across the agreement's whole customer set, not per buying party**. So resolution knows the current band and how
 close the next threshold is, and the **additivity of successive orders moves the customer up a tier** (order #2 can
@@ -141,8 +149,8 @@ expected final tier — see §5.2).
 
 > **Group aggregation.** A single agreement can name many buyers (the M:N `price_agreement_customer`) — e.g. a parent
 > and all its group/authorised-agent companies. Cumulative volume sums **across all of them under the one agreement**,
-> so the tier is reached at the **agreement level**. `contract_volume` is therefore keyed by agreement (+ variant +
-> contract_year), not by the individual ordering party.
+> so the tier is reached at the **agreement level**. `contract_volume` is therefore keyed by agreement (+ qualifying
+> class + contract_year, §4.5), not by the individual ordering party.
 
 > **Worked example — modelled on the Octopus Energy supply agreement** (the real shape; negotiated rates omitted for
 > confidentiality). Three products with list/RRP **£575 / £610 / £650**; each has a **six-tier cumulative-annual-
@@ -166,6 +174,25 @@ Every scheme is evaluated **independently by the same accrue/settle engine (§5)
 arbitrary time-bound rebate" = create a `rebate_scheme`; "make it part of a contract" = attach it to that
 agreement; "a standing tier rebate" = attach it to the `open_list` agreement. The engine's correctness properties
 (§5.7) hold per scheme.
+
+### 4.5 What TRIGGERS a tier vs what RECEIVES it — per product class (per-unit)
+Rebates are normally **per-unit**, and **the sale of EV chargers triggers the tiers — not the sale of accessories**;
+accessories run a *different regimen*. So a scheme separates two product sets (both expressed over a governed
+**`product_class`** = charger | accessory | cable | spare | bundle):
+- **`qualifying_filter`** — whose **units accumulate toward the tier** (e.g. `product_class = charger`). The
+  cumulative count (§4) is over the **qualifying** set only; accessory lines do **not** advance the charger tier.
+- **`applies_filter`** — which products **receive** the resulting price/rebate. Often the same (chargers), but it
+  can differ ("buy N chargers → accessories discounted" = qualifying:charger, applies:accessory).
+
+Patterns this expresses cleanly:
+- **Charger volume rebate** (Octopus, HK00552): qualifying=charger, applies=charger, basis=volume(unit),
+  retrospective, contract-year window — chargers accrue the tier; the per-unit rebate applies to chargers.
+- **Accessories' separate regimen** (HK00547 — covers, holsters, clamps, cables, brackets, shells, looms): their own
+  `rebate_scheme` (or just a flat `price_tier`), with their own (or no) volume basis — **independent of the charger
+  tier**. Accessory volume neither advances nor benefits from the charger ladder unless a scheme says so.
+
+`contract_volume` (§4) is therefore keyed by the **qualifying class**: `(agreement, qualifying_class, contract_year)`
+— count chargers, in units. This keeps "what counts" explicit and auditable rather than implied by `is_serialised`.
 
 ---
 
@@ -309,16 +336,21 @@ never a one-order patch.
   — lifecycle, contract-year and renewal-rate are derived projections. `renews_from` optional (a recorded link, not a
   status). `price_agreement_customer` (new M:N).
 - `rebate_scheme` (new) — arbitrary time-bound rebates: **`valid_from/valid_to` timestamps** (+ optional recurrence)
-  / basis / treatment / ladder, attached to an agreement or tier/product (§4.4). The §4–5 volume rebate is one row.
+  / basis / `unit` / treatment / ladder + **`qualifying_filter` & `applies_filter`** (§4.5 — what triggers the tier
+  vs what receives it). The §4–5 volume rebate is one row.
+- `product_variant` (and/or `product_family`) → new governed **`product_class`** (charger | accessory | cable | spare
+  | bundle) — the dimension the qualifying/applies filters and `contract_volume` use (today only `is_serialised`
+  roughly separates them).
+- `contract_volume` is keyed by the **qualifying class**: `(agreement, qualifying_class, contract_year)`, group-aggregated, annual reset.
 - `party` → gains a governed **`sector`** taxonomy (energy/automotive/…), coarser than the existing `segment`; a
   `sector` reference table.
 - `price_rule` → gains `price_agreement_id` (FK), `up_to_qty` (band ceiling); `min_qty` reread as band `from_qty`.
   Existing single-list rules become tiers of an `open_list` agreement (back-fill) so nothing regresses.
 - `order_line` → already has `price_rule_id`; add `price_agreement_id` for the contract reference; record the
   resolved band + the recognised-net vs list for rebate trace.
-- `contract_volume` (new) — cumulative position keyed by **(agreement, variant, contract_year)**, summed across the
-  agreement's whole customer set (group-level), with an annual reset (for the cumulative bases).
-- `contract_year` is **derived** from the agreement's `valid_from` + `occurred_at` (not stored) — a rolling-12mo re-projection.
+- `contract_volume` (new, for cumulative bases) — group-aggregated across the agreement's customer set, **derived**
+  as a reproducible projection (not authoritative state); `contract_year` is **derived** from the agreement's
+  `valid_from` + `occurred_at` (not stored) — a rolling-12mo re-projection.
 - Ledger: `REBATE_ACCRUAL` account role; the **earned-rebate** is a reproducible **projection** (per agreement /
   product / tier / contract_year), reconciled by `CTRL-REBATE-ACCRUAL`; `rebate_settlement` records discrete,
   governed, idempotent settlements (credit note / payment) that draw it down.
@@ -370,6 +402,9 @@ never a one-order patch.
    level should sit under a new `sector` level.
 7. **Renewal-rate definition** — logo retention vs net-revenue retention; the "due for renewal" denominator; the
    window. (Reporting concern — doc 21.)
+8. **`product_class` taxonomy** — the governed value set (charger | accessory | cable | spare | bundle …) and where
+   it lives (variant vs family); confirm chargers are the default tier-qualifying class and accessories' regimen
+   (separate scheme / flat / excluded). Replaces the `is_serialised` proxy (§4.5).
 
 ---
 
