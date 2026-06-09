@@ -31,6 +31,8 @@ object LedgerAccountCode {
   val CarriageAccrual: Int   = 16 // carriage owed to the carrier — liability, relieved when the carrier is paid
   val CommissionExpense: Int = 17 // agent commission expense → P&L (the COMM_PAYABLE counterpart)
   val InvWriteOff: Int       = 18 // inventory write-off / shrinkage / found → P&L (the INV counterpart)
+  val RebateAccrual: Int =
+    19 // retrospective volume-rebate liability (contra-revenue) — accrued, drawn down on settlement (doc 24 §5.5)
 }
 
 object LedgerTransferCode {

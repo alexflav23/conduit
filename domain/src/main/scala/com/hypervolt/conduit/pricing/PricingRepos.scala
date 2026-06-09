@@ -88,6 +88,7 @@ object PriceRuleRepo {
         UUID,
         UUID,
         String,
+        String,
         Instant,
         Option[UUID],
         Option[UUID],
@@ -107,7 +108,7 @@ object PriceRuleRepo {
       customer: Option[UUID],
       asOf: Instant
   ): ConnectionIO[List[CumulativeBand]] =
-    sql"""SELECT pr.id, pa.id, pa.applies_to, pa.valid_from,
+    sql"""SELECT pr.id, pa.id, pa.applies_to, pa.base_volume_basis, pa.valid_from,
                  pr.channel_id, pr.market_id, pr.entity_id, pr.authorised_price, pr.max_discount_pct,
                  pr.min_qty, pr.up_to_qty, pr.version, pr.tax_regime, tr.rate_percent
           FROM price_rule pr
@@ -125,8 +126,8 @@ object PriceRuleRepo {
       .query[CumBandRow]
       .to[List]
       .map(_.map {
-        case (id, agr, applies, vf, ch, mk, en, price, disc, minQ, upTo, ver, tr, rate) =>
-          CumulativeBand(id, agr, applies, vf, ch, mk, en, price, disc, minQ, upTo, ver, tr, rate)
+        case (id, agr, applies, basis, vf, ch, mk, en, price, disc, minQ, upTo, ver, tr, rate) =>
+          CumulativeBand(id, agr, applies, basis, vf, ch, mk, en, price, disc, minQ, upTo, ver, tr, rate)
       })
 
   def listRulesJson: ConnectionIO[List[Json]] =

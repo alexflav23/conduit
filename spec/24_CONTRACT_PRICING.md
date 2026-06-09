@@ -8,11 +8,27 @@
 > stamped on `order_line`). The governed **price-tier request** (`AgreementService.request`/`activate`,
 > maker-checker proposer ≠ approver; `POST /pricing/agreements` + `…/{id}/activate`; events
 > `pricing.agreement.requested|activated`). `ContractPricingSuite` + `PricingServiceSpec` green; the existing
-> pricing/order/deal-desk behaviour is unchanged. *Remaining: §3 hard no-typed-prices enforcement at placement
-> (coordinated with the DealDesk exception model); §4(b)/§5 cumulative + retrospective rebate engine (slices 2–3);
-> §4.4/§5.8 rebate schemes + renewal + sector (slice 4).*
+> pricing/order/deal-desk behaviour is unchanged.
 
-**Status:** design spec — slice 1 built (above); the rest is **spec only** (build per the milestone in §10). This deep-dive
+> **✅ Slice 2 implemented (§10.2 / §4(b)).** `cumulative_prospective`: the base band improves going forward as the
+> agreement's running cumulative qualifying volume crosses a threshold. `ContractYear` (rolling 12mo from valid_from,
+> anniversary reset, DERIVED — `ContractYearSpec`); `ContractVolumeRepo.priorCumulativeQualifying` (a projection over
+> the order stream, **group-aggregated across the whole customer set**, qualifying product_class, no stored counter);
+> `TierResolver` merges per-order + the cumulative-unlocked band, entry tier from zero. `ContractCumulativeSuite` green.
+
+> **✅ Slice 3 implemented (§10.3 / §5 — the "must be perfect" piece).** `cumulative_retrospective` = ASC-606 variable
+> consideration. The order invoices at the FIRM entry tier (`TierResolver` picks tier 1 for retrospective); the rebate
+> to the volume-achieved tier is a reproducible **earned projection** (`RebateEngine` pure math + `RebateService.
+> earnedRebate`). **ACCRUE ≠ APPLY**: `accrue` brings `REBATE_ACCRUAL:<entity>` (new ledger role 19, contra-revenue)
+> up to earned via an idempotent true-up (DR REVENUE / CR REBATE_ACCRUAL, through the `Journal` → TB + gl_entry);
+> **settlement** is a SEPARATE maker-checker (`proposeSettlement`/`approveSettlement`, proposer ≠ approver), idempotent
+> (deterministic id), drawing the accrual down (DR REBATE_ACCRUAL / CR BANK) — no code path settles unilaterally.
+> `rebate_settlement` table; events `pricing.rebate.accrued|settled`; `CTRL-REBATE-ACCRUAL` (over-settlement guard).
+> `RebateEngineSpec` (ScalaCheck: non-negative, monotonic, reproducible) + `RebateSuite` prove all six §5.7 properties.
+> *Remaining: §3 hard no-typed-prices enforcement at placement; §5.3 recognition-net-of-expected-rebate (H6Q expected
+> tier) — the earned/realised path is built, the in-year expected-revenue smoothing is the follow-on; slice 4 below.*
+
+**Status:** design spec — slices 1–3 built (above); the rest is **spec only** (build per the milestone in §10). This deep-dive
 re-states how pricing works in Conduit and **supersedes the "agent types a price → CEO approves the number"
 reading** of ADLP in doc 04 §Pricing/§ADLP and doc 08 S14/S16. It is grounded in the existing
 `price_rule`/`PricingService`/maker-checker machinery (M3) — this is an **evolution of that spine, not a parallel

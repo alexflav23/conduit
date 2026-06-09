@@ -55,10 +55,16 @@ object TierResolver {
           .toList
           .traverse {
             case (agreementId, bands) =>
-              val (start, end) = ContractYear.windowFor(bands.head.validFrom, asOf)
-              ContractVolumeRepo
-                .priorCumulativeQualifying(agreementId, qualifyingClass, start, end)
-                .map(position => selectBand(bands, position))
+              // retrospective invoices at the FIRM entry tier (position 0) — the better price is a separate accrued
+              // rebate (doc 24 §4(b)/§5), never a provisional invoice price; prospective prices at the running position.
+              if (bands.head.baseVolumeBasis == "cumulative_retrospective")
+                selectBand(bands, 0).pure[ConnectionIO]
+              else {
+                val (start, end) = ContractYear.windowFor(bands.head.validFrom, asOf)
+                ContractVolumeRepo
+                  .priorCumulativeQualifying(agreementId, qualifyingClass, start, end)
+                  .map(position => selectBand(bands, position))
+              }
           }
           .map(selected => perOrder ++ selected.flatten.map(toCandidate))
       }

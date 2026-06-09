@@ -28,6 +28,7 @@ final case class CumulativeBand(
     id: UUID,
     agreementId: UUID,
     appliesTo: String,
+    baseVolumeBasis: String,
     validFrom: java.time.Instant,
     channelId: Option[UUID],
     marketId: Option[UUID],
