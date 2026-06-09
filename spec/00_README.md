@@ -30,8 +30,9 @@ This is **not** a requirements summary. Each feature document carries field-leve
 | 19 | **NFR_SECURITY_OPS** | NFR (SLAs/RPO-RTO/scale/retention), security (secrets, encryption, GDPR DSAR crypto-shred, STRIDE threat model, SOX controls index) and ops/DR (alerting, DLQ-replay + projection-rebuild runbooks, backup/restore, CI migration-safety) — P1 launch-blockers |
 | 20 | **BACKOFFICE_DESK** | React/TS desk — screen-by-screen (pricing governance/ADLP, permission builder, Deal Desk + CEO approval, full H6Q board, finance/ledger, supply planning, admin, Auditability Center) (Phase 2–3 UI) |
 | 21 | **PLATFORM_SERVICES** | Cross-cutting services — notifications, search, reporting/exports + the Horizons units→revenue→COGS→GP feed, and localization/i18n across 15 locales (supports M14) |
+| 22 | **DESIGN_HANDOFF** | The single front-door brief for Claude Design — consolidates the design language, authors the design-system/token + component-kit contract the code only stubs, inventories built-vs-to-design, fixes the UX invariants from the access/finance model, and defines the Figma↔StyleX↔Code-Connect workflow, deliverables and acceptance (supports the UI design pass / #9) |
 
-> Documents 02–05 are the load-bearing storage/logic/access layer and are written deepest; 06/07 give the contract surface and build sequence; **15** is the living delivery register. The deep-dives (09, 11–13, 16–21) extend the spine on the same template and slot in per their milestone.
+> Documents 02–05 are the load-bearing storage/logic/access layer and are written deepest; 06/07 give the contract surface and build sequence; **15** is the living delivery register. The deep-dives (09, 11–13, 16–21) extend the spine on the same template and slot in per their milestone. **22** is the design handoff pack — the front door for the UI design pass.
 
 ## Conventions
 
