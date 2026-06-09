@@ -128,8 +128,9 @@ object DemandModel {
 
   // Damped Holt linear trend (doc 26 §4 iteration 2): level + trend with damping φ — the standard answer to
   // "level models systematically under-forecast a growing business" without naive trend explosion at horizon.
-  final class HoltDamped(alpha: BigDecimal, beta: BigDecimal, phi: BigDecimal) extends DemandModel {
-    val key     = "holt_damped"
+  final class HoltDamped(alpha: BigDecimal, beta: BigDecimal, phi: BigDecimal, keyName: String = "holt_damped")
+      extends DemandModel {
+    val key     = keyName
     val version = 1
     def predict(h: DemandHistory, horizon: Int): Vector[BigDecimal] =
       if (h.qty.length < 4) new Ewma(alpha).predict(h, horizon)
@@ -165,6 +166,15 @@ object DemandModel {
     }
   }
 
+  // Trailing 3-month run-rate — the lumpy-channel answer: recent level including any recent step-change,
+  // immune to year-old history (large-PO channels re-base quickly).
+  object RunRate3 extends DemandModel {
+    val key     = "runrate3"
+    val version = 1
+    def predict(h: DemandHistory, horizon: Int): Vector[BigDecimal] =
+      Vector.fill(horizon)(r(mean(h.qty.takeRight(3))))
+  }
+
   // The registry (doc 26 §4) — code-defined; the loop ranks these mechanically, nothing is hand-picked.
   val registry: List[DemandModel] = List(
     SeasonalNaive,
@@ -172,6 +182,8 @@ object DemandModel {
     new CrostonSba(BigDecimal("0.2")),
     new SeasonalEts(BigDecimal("0.3"), BigDecimal("0.05"), BigDecimal("0.2")),
     new HoltDamped(BigDecimal("0.3"), BigDecimal("0.1"), BigDecimal("0.9")),
+    new HoltDamped(BigDecimal("0.5"), BigDecimal("0.2"), BigDecimal("0.95"), "holt_fast"),
+    RunRate3,
     SeasonalDrift,
     Depletion
   )
