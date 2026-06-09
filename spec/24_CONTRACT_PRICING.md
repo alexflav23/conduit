@@ -100,14 +100,27 @@ effective-dated (`status <> 'draft'` + the as-of window — the house pattern).
 | **`cumulative_prospective`** | the customer's **running volume** over the agreement period; crossing a threshold improves the price **going forward only** | future orders price at the better band; no retro adjustment. Requires **cumulative tracking** but no rebate. |
 | **`cumulative_retrospective`** | as above, but the better price **applies to all volume once the threshold is hit** (a classic contract rebate) | **variable consideration** — earlier sales must be revisited; this is the ASC-606 case in §5. |
 
-**Cumulative tracking:** a per-(agreement, party, variant) running total of qualifying volume (ordered / dispatched
-— configurable; default **dispatched**, to align with revenue recognition) over the agreement period, so resolution
-knows the current band and how close the next threshold is. This ties naturally to **H6Q** (the customer's
-committed/forecast volume is the expected final tier — see §5.2).
+**Cumulative tracking:** a running total of qualifying volume (ordered / dispatched — configurable; default
+**dispatched**, to align with revenue recognition) at the grain **(agreement, variant, contract_year)** — note
+**per contract year, with an annual reset** (real contracts tier on *annual* cumulative volume), and **aggregated
+across the agreement's whole customer set, not per buying party**. So resolution knows the current band and how
+close the next threshold is, and the **additivity of successive orders moves the customer up a tier** (order #2 can
+price cheaper than order #1). This ties naturally to **H6Q** (the customer's committed/forecast annual volume is the
+expected final tier — see §5.2).
 
-> Worked example (`cumulative_retrospective`): bands [1–499]@£500, [500+]@£450. Customer ships 400 units @ £500,
-> then an order of 150 crosses 500. Going forward £450; **and** the 100 units that pushed past 500 — and, per the
-> contract, possibly the earlier 400 too — are repriced to £450, generating a **rebate** the ledgers must book (§5).
+> **Group aggregation.** A single agreement can name many buyers (the M:N `price_agreement_customer`) — e.g. a parent
+> and all its group/authorised-agent companies. Cumulative volume sums **across all of them under the one agreement**,
+> so the tier is reached at the **agreement level**. `contract_volume` is therefore keyed by agreement (+ variant +
+> contract_year), not by the individual ordering party.
+
+> **Worked example — modelled on the Octopus Energy supply agreement** (the real shape; negotiated rates omitted for
+> confidentiality). Three products with list/RRP **£575 / £610 / £650**; each has a **six-tier cumulative-annual-
+> volume** ladder stepping the unit price *down* as the year's volume grows (roughly −24% at tier 1 to −32% at tier 6
+> off list). Octopus + its group companies (the "Authorised Agent" clause) **all buy under the one agreement**, so
+> their orders **aggregate** toward the same annual tier; the ladder **resets each contract year**. So if the same
+> buyer places the same order twice and the second crosses a band, the better tier applies — **prospectively** (next
+> orders cheaper) or **retrospectively** (a year-end rebate trues-up *all* the year's units) per the contract's
+> charges clause — which is the §5 ledger split.
 
 ---
 
@@ -187,7 +200,8 @@ never a one-order patch.
   Existing single-list rules become tiers of an `open_list` agreement (back-fill) so nothing regresses.
 - `order_line` → already has `price_rule_id`; add `price_agreement_id` for the contract reference; record the
   resolved band + the recognised-net vs list for rebate trace.
-- `contract_volume` (new) — per (agreement, party, variant) cumulative position (for cumulative bases).
+- `contract_volume` (new) — cumulative position keyed by **(agreement, variant, contract_year)**, summed across the
+  agreement's whole customer set (group-level), with an annual reset (for the cumulative bases).
 - Ledger: `REBATE_ACCRUAL` account role; `rebate_accrual` projection + `CTRL-REBATE-ACCRUAL` control.
 - Events: `pricing.agreement.requested`, `pricing.agreement.activated`, `pricing.rebate.accrued`,
   `pricing.rebate.trued_up` (envelope per doc 03; on the relevant topics).
@@ -223,6 +237,10 @@ never a one-order patch.
    commitment**, constrained.
 4. **VAT on rebates** — confirm per-jurisdiction whether a retrospective rebate reduces the taxable base (credit
    note with VAT) via the tax engine (doc 16).
+5. **Octopus agreement specifics** — extract the exact **band thresholds** (the cumulative-annual-volume breakpoints)
+   and the **prospective-vs-retrospective** clause from Schedule 3 (its table cells didn't survive text extraction);
+   that clause decides whether this contract needs the §5 rebate-accrual path or just per-tier prospective pricing.
+   Whichever, model it as one `price_agreement` (open the agreement to the Octopus Group via `price_agreement_customer`).
 
 ---
 
