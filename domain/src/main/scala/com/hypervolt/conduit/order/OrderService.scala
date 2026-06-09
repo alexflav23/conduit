@@ -4,6 +4,8 @@ import cats.effect.Async
 import cats.syntax.all._
 import com.hypervolt.conduit.event.OutboxEvent
 import com.hypervolt.conduit.event.OutboxRepo
+import com.hypervolt.conduit.orgconfig.MarketRepo
+import com.hypervolt.conduit.orgconfig.SellingEntityRepo
 import com.hypervolt.conduit.pricing.PriceRuleRepo
 import com.hypervolt.conduit.pricing.PricingService
 import com.hypervolt.conduit.pricing.QuoteLine
@@ -29,21 +31,35 @@ private final case class LinePricing(variantId: UUID, line: PlaceLineInput, pric
 final class OrderService[F[_]: Async](xa: Transactor[F]) {
 
   def place(in: PlaceOrderInput, asOf: Instant): F[Either[OrderError, PlacedOrder]] =
-    priceLines(in.channelId, in.marketId, in.entityId, in.currency, in.lines, asOf)
-      .flatMap {
-        case Left(err) => err.asLeft[PlacedOrder].pure[ConnectionIO]
-        case Right(priced) =>
-          val (subtotal, vat, total) = totals(priced)
-          creditCheck(in.paymentMethod, in.billToPartyId, total).flatMap {
-            case Some(err) => err.asLeft[PlacedOrder].pure[ConnectionIO]
-            case None =>
-              val hasException = priced.exists(_.priced.adlpCategory == "exception")
-              val status       = if (hasException) "pending_ceo" else "placed"
-              val adlp         = if (hasException) "exception" else "standard"
-              insertGraph(in, priced, subtotal, vat, total, status, adlp, asOf).map(_.asRight[OrderError])
+    resolveSellingEntity(in, asOf)
+      .flatMap(resolved =>
+        priceLines(resolved.channelId, resolved.marketId, resolved.entityId, resolved.currency, resolved.lines, asOf)
+          .flatMap {
+            case Left(err) => err.asLeft[PlacedOrder].pure[ConnectionIO]
+            case Right(priced) =>
+              val (subtotal, vat, total) = totals(priced)
+              creditCheck(resolved.paymentMethod, resolved.billToPartyId, total).flatMap {
+                case Some(err) => err.asLeft[PlacedOrder].pure[ConnectionIO]
+                case None =>
+                  val hasException = priced.exists(_.priced.adlpCategory == "exception")
+                  val status       = if (hasException) "pending_ceo" else "placed"
+                  val adlp         = if (hasException) "exception" else "standard"
+                  insertGraph(resolved, priced, subtotal, vat, total, status, adlp, asOf).map(_.asRight[OrderError])
+              }
           }
-      }
+      )
       .transact(xa)
+
+  // Stamp the seller-of-record entity from the market's jurisdiction when it isn't set explicitly (doc 16 §1.3):
+  // the `selling_entity` config decides which Hypervolt entity books a sale into a market. An explicit entity wins.
+  private def resolveSellingEntity(in: PlaceOrderInput, asOf: Instant): ConnectionIO[PlaceOrderInput] =
+    if (in.entityId.isDefined) in.pure[ConnectionIO]
+    else
+      MarketRepo.jurisdiction(in.marketId).flatMap {
+        case None => in.pure[ConnectionIO]
+        case Some(jur) =>
+          SellingEntityRepo.active(jur, asOf.atZone(ZoneOffset.UTC).toLocalDate).map(e => in.copy(entityId = e))
+      }
 
   def amend(
       orderId: UUID,
