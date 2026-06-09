@@ -130,10 +130,15 @@ object ForecastRunRepo {
              $forecast, $actual, ${(forecast - actual).abs})
           ON CONFLICT DO NOTHING""".update.run
 
-  // The champion (doc 26 §5): pure argmin over the error ledger — DERIVED, never stored.
+  // The champion (doc 26 §5): pure argmin over the error ledger — DERIVED, never stored. The censored variant is
+  // the honest one for any forecast made at `origin`: selection evidence must PREDATE the origin (the same
+  // no-leakage rule the predictions obey — otherwise the scored quarter votes for its own champion).
   def champion(company: UUID): ConnectionIO[Option[(String, BigDecimal)]] =
+    championBefore(company, LocalDate.of(9999, 1, 1))
+
+  def championBefore(company: UUID, origin: LocalDate): ConnectionIO[Option[(String, BigDecimal)]] =
     sql"""SELECT model_key, SUM(abs_error) / GREATEST(SUM(actual_qty), 1) AS wape
-          FROM model_accuracy WHERE company_id = $company
+          FROM model_accuracy WHERE company_id = $company AND origin_month < $origin
           GROUP BY model_key ORDER BY wape ASC, model_key ASC LIMIT 1"""
       .query[(String, BigDecimal)]
       .option

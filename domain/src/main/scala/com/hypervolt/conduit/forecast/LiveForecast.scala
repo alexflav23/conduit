@@ -26,7 +26,7 @@ final class LiveForecastService[F[_]: Async](xa: Transactor[F]) {
     DemandSeriesRepo.forecastableKeys(origin, minOrders).transact(xa).flatMap {
       _.traverse {
         case (company, variant) =>
-          ForecastRunRepo.champion(company).transact(xa).flatMap { champ =>
+          ForecastRunRepo.championBefore(company, origin).transact(xa).flatMap { champ =>
             val model = champ
               .flatMap(c => DemandModel.registry.find(_.key == c._1))
               .getOrElse(DemandModel.SeasonalNaive)

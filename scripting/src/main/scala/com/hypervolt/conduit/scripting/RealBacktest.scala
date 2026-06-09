@@ -23,6 +23,9 @@ object RealBacktest extends IOApp.Simple {
   override def run: IO[Unit] = {
     val engine = new BacktestEngine[IO](xa)
     val origins = List(
+      LocalDate.of(2023, 4, 1),
+      LocalDate.of(2023, 7, 1),
+      LocalDate.of(2023, 10, 1),
       LocalDate.of(2024, 1, 1),
       LocalDate.of(2024, 4, 1),
       LocalDate.of(2024, 7, 1),
