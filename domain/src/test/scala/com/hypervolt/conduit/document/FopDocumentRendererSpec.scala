@@ -50,6 +50,30 @@ object FopDocumentRendererSpec extends SimpleIOSuite {
     }
   }
 
+  // M13-Docs.8 — multi-locale: the body font follows the document locale so CJK/Thai glyphs embed from the Noto
+  // fonts registered by fop.xconf; Latin markets use base-14 Helvetica.
+  pureTest("locale → font family: CJK + Thai map to their Noto families; everything else to Helvetica") {
+    expect(FopDocumentRenderer.fontFamily("th") == "Noto Sans Thai") and
+      expect(FopDocumentRenderer.fontFamily("zh-CN") == "Noto Sans CJK SC") and
+      expect(FopDocumentRenderer.fontFamily("ja") == "Noto Sans CJK JP") and
+      expect(FopDocumentRenderer.fontFamily("ko") == "Noto Sans CJK KR") and
+      expect(FopDocumentRenderer.fontFamily("en") == "Helvetica")
+  }
+
+  pureTest("a Thai-locale document requests the Thai font family in the FO") {
+    val fo = FopDocumentRenderer.foDocument(model("1200.00").deepMerge(Json.obj("locale" -> "th".asJson)))
+    expect(fo.contains("""font-family="Noto Sans Thai"""")) and expect(fo.contains("""xml:lang="th""""))
+  }
+
+  test("renders a real PDF for a Thai-locale document with non-Latin content (graceful when the font is absent)") {
+    val thai = model("1200.00").deepMerge(
+      Json.obj("locale" -> "th".asJson, "supplier_name" -> "ไฮเปอร์โวลต์".asJson, "title" -> "ใบแจ้งหนี้".asJson)
+    )
+    renderer.render("TH/th invoice template v1", thai).map { d =>
+      expect(new String(d.bytes.take(5), "US-ASCII") == "%PDF-") and expect(d.pageCount >= 1)
+    }
+  }
+
   test("tamper-evident: a different total changes the sha; a different template body changes the sha") {
     (
       renderer.render(body, model("1200.00")),

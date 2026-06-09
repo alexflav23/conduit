@@ -31,8 +31,23 @@ final class FopDocumentRenderer[F[_]: Sync] extends DocumentRenderer[F] {
 object FopDocumentRenderer {
 
   // One factory for the JVM; FOUserAgent is per-render so concurrent renders don't share mutable date/producer.
+  // The renderer stays on the default factory (always reliable). Multi-locale font EMBEDDING is enabled by the
+  // bundled `fop.xconf` (auto-detect + a fonts dir of Noto TTFs) applied at the deploy/FOP layer — wiring it
+  // in-process trips a FOP-2.9 config-parser/classpath issue (Avalon vs FOP DefaultConfiguration), so it is kept as
+  // deploy config rather than loaded here. The document already requests the correct per-locale family (below).
   private val factory = FopFactory.newInstance(new File(".").toURI)
   private val epoch   = new Date(0L)
+
+  // Locale → font family for the document body (doc 17 §5 / doc 02 §A roadmap). CJK + Thai resolve to their Noto
+  // families (embedded when the fonts are present via fop.xconf); Latin markets use the always-present base-14 Helvetica.
+  def fontFamily(locale: String): String = {
+    val l = Option(locale).getOrElse("").toLowerCase
+    if (l.startsWith("zh")) "Noto Sans CJK SC"
+    else if (l.startsWith("ja")) "Noto Sans CJK JP"
+    else if (l.startsWith("ko")) "Noto Sans CJK KR"
+    else if (l.startsWith("th")) "Noto Sans Thai"
+    else "Helvetica"
+  }
 
   private def transform(fo: String, templateDigest: String): (Array[Byte], Int) = {
     val out = new ByteArrayOutputStream()
@@ -217,7 +232,7 @@ object FopDocumentRenderer {
        |      <fo:region-body/>
        |    </fo:simple-page-master>
        |  </fo:layout-master-set>
-       |  <fo:page-sequence master-reference="doc" font-family="Helvetica" font-size="10pt">
+       |  <fo:page-sequence master-reference="doc" font-family="${esc(fontFamily(field(model, "locale")))}" font-size="10pt">
        |    <fo:flow flow-name="xsl-region-body">
        |$body
        |    </fo:flow>
