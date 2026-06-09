@@ -29,7 +29,13 @@ object PolicyTournamentReport extends IOApp.Simple {
   )
 
   private val evalOrigins =
-    List(LocalDate.of(2024, 7, 1), LocalDate.of(2024, 10, 1), LocalDate.of(2025, 1, 1), LocalDate.of(2025, 4, 1))
+    List(
+      LocalDate.of(2024, 7, 1),
+      LocalDate.of(2024, 10, 1),
+      LocalDate.of(2025, 1, 1),
+      LocalDate.of(2025, 4, 1),
+      LocalDate.of(2025, 7, 1)
+    )
 
   private val channels: ConnectionIO[List[(UUID, String)]] =
     sql"SELECT id, display_name FROM party WHERE display_name LIKE 'CH: %' ORDER BY display_name"

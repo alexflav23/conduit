@@ -31,11 +31,12 @@ object RealBacktest extends IOApp.Simple {
       LocalDate.of(2024, 7, 1),
       LocalDate.of(2024, 10, 1),
       LocalDate.of(2025, 1, 1),
-      LocalDate.of(2025, 4, 1)
+      LocalDate.of(2025, 4, 1),
+      LocalDate.of(2025, 7, 1)
     )
     origins.traverse_(o =>
       engine.runOrigin(o, horizonMonths = 3) *>
-        engine.scoreOrigin(o, asOf = LocalDate.of(2025, 7, 1)) *>
+        engine.scoreOrigin(o, asOf = LocalDate.of(2025, 10, 1)) *>
         IO.println(s"origin $o: fitted + scored")
     ) *> IO.println("real backtest complete")
   }
