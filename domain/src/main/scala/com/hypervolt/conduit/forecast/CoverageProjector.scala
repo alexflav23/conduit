@@ -146,18 +146,39 @@ final class CoverageProjector[F[_]: Async](xa: Transactor[F]) {
             FROM cur
             ORDER BY branch_company_id, product_variant_id, CASE source WHEN 'manual' THEN 0 ELSE 1 END
           )
-          SELECT r.market_id, r.channel_id, r.sub_channel_id, r.segment, r.company_id, r.branch_company_id, r.agent,
-                 r.product_variant_id, r.qty AS forecast_qty, r.source AS src,
+          SELECT r.market_id, r.channel_id, r.sub_channel_id, r.segment, pc.sector, r.company_id, r.branch_company_id,
+                 r.agent, r.product_variant_id, r.qty AS forecast_qty, r.source AS src,
                  (COALESCE((p.attributes->>'h6q_excludable') = 'true', false)
                   OR COALESCE((pp.attributes->>'h6q_excludable') = 'true', false)) AS excluded
           FROM resolved r
             JOIN party p ON p.id = r.branch_company_id
-            LEFT JOIN party pp ON pp.id = p.parent_party_id"""
-      .query[(UUID, Option[UUID], Option[UUID], Option[String], UUID, UUID, UUID, UUID, Int, String, Boolean)]
+            LEFT JOIN party pp ON pp.id = p.parent_party_id
+            LEFT JOIN party pc ON pc.id = r.company_id"""
+      .query[
+        (UUID, Option[UUID], Option[UUID], Option[String], Option[String], UUID, UUID, UUID, UUID, Int, String, Boolean)
+      ]
       .to[List]
       .map(_.map {
-        case (mkt, ch, sub, seg, co, br, ag, variant, fq, src, excluded) =>
-          Leaf(mkt, ch, sub, seg, co, Some(br), ag, variant, period, scenario, fq, BigDecimal(0), 0, 0, src, excluded)
+        case (mkt, ch, sub, seg, sector, co, br, ag, variant, fq, src, excluded) =>
+          Leaf(
+            mkt,
+            ch,
+            sub,
+            seg,
+            sector,
+            co,
+            Some(br),
+            ag,
+            variant,
+            period,
+            scenario,
+            fq,
+            BigDecimal(0),
+            0,
+            0,
+            src,
+            excluded
+          )
       })
 
   // Sell-in per (account, SKU): units dispatched to the account in the period (doc 12 §4.3).
@@ -189,10 +210,10 @@ final class CoverageProjector[F[_]: Async](xa: Transactor[F]) {
 
   private def insertRow(r: CoverageRow, period: LocalDate, scenario: UUID): ConnectionIO[Int] =
     sql"""INSERT INTO pipeline_coverage
-            (level, channel_id, sub_channel_id, segment, company_id, branch_company_id, agent_user_id, market_id,
+            (level, channel_id, sub_channel_id, segment, sector, company_id, branch_company_id, agent_user_id, market_id,
              product_variant_id, period_month, scenario_id, forecast_qty, weighted_pipeline_qty, shipped_qty,
              activated_qty, coverage_pct, forecast_qty_ex, coverage_ex_account_pct, forecast_source, wow_delta)
-          VALUES (${r.level}, ${r.channelId}, ${r.subChannelId}, ${r.segment}, ${r.companyId}, ${r.branchId},
+          VALUES (${r.level}, ${r.channelId}, ${r.subChannelId}, ${r.segment}, ${r.sector}, ${r.companyId}, ${r.branchId},
              ${r.agentUserId}, ${r.marketId}, ${r.productVariantId}, $period, $scenario, ${r.forecastQty},
              ${r.weightedPipelineQty}, ${r.shippedQty}, ${r.activatedQty}, ${r.coveragePct}, ${r.forecastQtyEx},
              ${r.coverageExAccountPct}, ${r.forecastSource}, ${r.wowDelta})""".update.run

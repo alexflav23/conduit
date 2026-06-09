@@ -1,0 +1,6 @@
+# Conduit consumer runtime image. Build with `sbt consumer/stage` FIRST (run-local.sh does this), then this image
+# copies the staged launcher into a JRE — same fast split as the API image.
+FROM eclipse-temurin:19-jre
+WORKDIR /app
+COPY consumer/target/universal/stage /app
+ENTRYPOINT ["/app/bin/conduit-consumer"]

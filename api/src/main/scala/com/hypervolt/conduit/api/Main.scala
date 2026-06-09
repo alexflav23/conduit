@@ -66,6 +66,13 @@ object Main extends IOApp.Simple {
         new ConduitMetrics[IO](xa, new MetricsBuilder(otel.getMeter("conduit"), "conduit"), dispatcher).register
       )
       _ <- Resource.eval(logger.info("Metrics exporter started (:9464)"))
+      // git-snapshot ingest (doc 26 §3a): load any NDJSON snapshots committed under INGEST_DIR — deterministic +
+      // idempotent, so checkout → docker compose up → seeded, and every re-boot converges to the same state.
+      loaded <- Resource.eval(
+        new com.hypervolt.conduit.ingest.SnapshotLoader[IO](xa)
+          .loadAll(java.nio.file.Paths.get(sys.env.getOrElse("INGEST_DIR", "ingest")))
+      )
+      _ <- Resource.eval(logger.info(s"Snapshot ingest: $loaded rows loaded"))
     } yield (cfg, xa)
 
   override def run: IO[Unit] =

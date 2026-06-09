@@ -67,6 +67,36 @@ services:
     networks:
       - conduit
 
+  conduit-api:
+    build: { context: ., dockerfile: Dockerfile }
+    container_name: conduit-api
+    depends_on: [conduit-postgres, conduit-pulsar, conduit-tigerbeetle]
+    environment:
+      HYPERVOLT_ENV: local
+      CONDUIT_DB_HOST: conduit-postgres
+      CONDUIT_DB_PORT: "5432"
+      CONDUIT_PULSAR_URL: pulsar://conduit-pulsar:6650
+      CONDUIT_TB_ADDRESSES: conduit-tigerbeetle:3000
+      INGEST_DIR: /app/ingest
+    volumes:
+      - ./ingest:/app/ingest:ro
+    ports: ["8080:8080", "9990:9990", "9464:9464"]
+    networks: [conduit]
+
+  conduit-consumer:
+    build: { context: ., dockerfile: Dockerfile.consumer }
+    container_name: conduit-consumer
+    depends_on: [conduit-api]
+    environment:
+      HYPERVOLT_ENV: local
+      CONDUIT_DB_HOST: conduit-postgres
+      CONDUIT_DB_PORT: "5432"
+      CONDUIT_PULSAR_URL: pulsar://conduit-pulsar:6650
+      CONDUIT_TB_ADDRESSES: conduit-tigerbeetle:3000
+      PROMETHEUS_PORT: "9465"
+    ports: ["9465:9465"]
+    networks: [conduit]
+
 networks:
   conduit:
     driver: bridge

@@ -14,6 +14,7 @@ final case class Leaf(
     channelId: Option[UUID],
     subChannelId: Option[UUID],
     segment: Option[String],
+    sector: Option[String], // the governed party.sector of the enclosing customer (doc 24 §5.8)
     companyId: UUID,
     branchId: Option[UUID],
     agentUserId: UUID,
@@ -37,6 +38,7 @@ final case class CoverageRow(
     channelId: Option[UUID],
     subChannelId: Option[UUID],
     segment: Option[String],
+    sector: Option[String],
     companyId: Option[UUID],
     branchId: Option[UUID],
     agentUserId: Option[UUID],
@@ -88,6 +90,9 @@ object Coverage {
       at("sub_channel", l => Key(Some(l.marketId), l.channelId, l.subChannelId, None, None, None, None)) :::
       at("channel", l => Key(Some(l.marketId), l.channelId, None, None, None, None, None)) :::
       at("market", l => Key(Some(l.marketId), None, None, None, None, None, None)) :::
+      // the SECTOR axis (doc 24 §5.8): a third grouping of the same leaves by the customer's governed sector —
+      // so Σ sector ≡ Σ branch ≡ the market row, the same reconciliation guarantee as the agent axis.
+      at("sector", l => Key(Some(l.marketId), None, None, None, None, None, None, l.sector)) :::
       at("agent", l => Key(Some(l.marketId), None, None, None, None, None, Some(l.agentUserId)))
   }
 
@@ -98,7 +103,8 @@ object Coverage {
       segment: Option[String],
       companyId: Option[UUID],
       branchId: Option[UUID],
-      agentUserId: Option[UUID]
+      agentUserId: Option[UUID],
+      sector: Option[String] = None
   )
 
   private def group(
@@ -121,6 +127,7 @@ object Coverage {
             companyId = k.companyId,
             branchId = k.branchId,
             agentUserId = k.agentUserId,
+            sector = k.sector,
             productVariantId = variant,
             periodMonth = period,
             scenarioId = scenario,
