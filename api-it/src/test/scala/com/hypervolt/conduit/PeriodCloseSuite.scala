@@ -106,7 +106,7 @@ object PeriodCloseSuite extends IOSuite {
   test("reconciliations tie out, the auditability lineage reconstructs, and a clean period locks") {
     case (xa, client) =>
       val ledger  = TigerBeetleLedger.fromClient[IO](client)
-      val recon   = new ReconciliationService[IO](xa, ledger)
+      val recon   = new ReconciliationService[IO](xa)
       val close   = new PeriodCloseService[IO](xa)
       val lineage = new LineageService[IO](xa)
       for {
@@ -114,7 +114,8 @@ object PeriodCloseSuite extends IOSuite {
         (entity, inv) = s
         period <- close.ensurePeriod(entity, "month", "2026-09", "Europe/London")
         ar     <- recon.arVsInvoices(period, entity, "GBP")
-        tb     <- recon.tbVsGl(period, entity, "GBP")
+        tb     <- recon.tbVsGl(period, "GBP")
+        glTb   <- recon.glVsTb(period, "GBP", ledger)
         lin    <- lineage.forInvoice(inv)
         closer = UUID.randomUUID()
         locker = UUID.randomUUID()
@@ -129,6 +130,7 @@ object PeriodCloseSuite extends IOSuite {
           ar.expected == BigDecimal("1200.00") && ar.actual == BigDecimal("1200.00")
         ) and
           expect(tb.status == "matched") and expect(tb.variance.signum == 0) and // ledger ties out
+          expect(glTb.status == "matched") and                                   // gl_entry mirror == TigerBeetle (0 drift)
           expect(transfers.size == 3 && hasDoc) and                              // figure → 3 transfers + the PDF
           expect(locked.isRight) and expect(!posting)                            // clean books lock; posting now barred
       }
@@ -137,7 +139,7 @@ object PeriodCloseSuite extends IOSuite {
   test("a period will not lock over an unsigned reconciliation exception; signing it off clears the gate") {
     case (xa, client) =>
       val ledger = TigerBeetleLedger.fromClient[IO](client)
-      val recon  = new ReconciliationService[IO](xa, ledger)
+      val recon  = new ReconciliationService[IO](xa)
       val close  = new PeriodCloseService[IO](xa)
       for {
         s <- soldAndDocumented(xa, ledger)

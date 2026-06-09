@@ -44,7 +44,8 @@ private final case class RecogCtx(
     shipping: BigDecimal,
     qty: Int,
     invoiceId: Option[UUID],
-    asOf: LocalDate
+    asOf: LocalDate,
+    vatRate: BigDecimal // the order's implied VAT rate — the fallback for an entity-less order (no engine)
 )
 
 // ASC 606 revenue recognition on dispatch (doc 04 §Ledger, doc 13). On delivery, control transfers and revenue is
@@ -79,6 +80,10 @@ final class RevenueRecognitionService[F[_]: Async](xa: Transactor[F], ledger: Ti
       case Right(Some(ctx)) =>
         Currency.fromCode(ctx.head.currency) match {
           case None => s"unknown currency ${ctx.head.currency}".asLeft[Unit].pure[F]
+          // The tax engine (and its immutable tax_quote) needs a real selling entity. An entity-less order
+          // (simulation/migration fixtures) recognises with no engine VAT rather than FK-crashing on the zero UUID.
+          case Some(_) if ctx.head.entityId.isEmpty =>
+            post(dispatchId, ctx, (ctx.rev * ctx.vatRate).setScale(2, RoundingMode.HALF_UP)).as(().asRight[String])
           case Some(_) =>
             tax.determine(taxRequest(ctx)).flatMap {
               case Left(e)     => s"tax determination failed: $e".asLeft[Unit].pure[F]
@@ -173,16 +178,27 @@ final class RevenueRecognitionService[F[_]: Async](xa: Transactor[F], ledger: Ti
           shippingCost(dispatchId),
           dispatchedQty(dispatchId),
           invoiceId(dispatchId),
-          asOf(dispatchId)
+          asOf(dispatchId),
+          orderVatRate(dispatchId)
         ).tupled
           .map {
-            case (None, _, _, _, _, _, _)             => "unknown dispatch".asLeft[Option[RecogCtx]]
-            case (Some(h), rev, c, ship, qty, inv, d) => Some(RecogCtx(h, rev, c, ship, qty, inv, d)).asRight[String]
+            case (None, _, _, _, _, _, _, _) => "unknown dispatch".asLeft[Option[RecogCtx]]
+            case (Some(h), rev, c, ship, qty, inv, d, vr) =>
+              Some(RecogCtx(h, rev, c, ship, qty, inv, d, vr)).asRight[String]
           }
     }
 
   private def shippingCost(dispatchId: UUID): ConnectionIO[BigDecimal] =
     sql"SELECT COALESCE(shipping_cost, 0) FROM dispatch WHERE id = $dispatchId".query[BigDecimal].unique
+
+  // The order's implied VAT rate (vat_total / subtotal_ex_vat) — used ONLY for an entity-less order, where the
+  // tax engine cannot run; real orders carry an entity and get engine-determined VAT (doc 16 §1.3, VAT.8).
+  private def orderVatRate(dispatchId: UUID): ConnectionIO[BigDecimal] =
+    sql"""SELECT CASE WHEN o.subtotal_ex_vat > 0 THEN o.vat_total / o.subtotal_ex_vat ELSE 0 END
+          FROM dispatch d JOIN "order" o ON o.id = d.order_id WHERE d.id = $dispatchId"""
+      .query[BigDecimal]
+      .option
+      .map(_.getOrElse(BigDecimal(0)))
 
   private def alreadyRecognised(dispatchId: UUID): ConnectionIO[Boolean] =
     sql"SELECT count(*) FROM revenue_recognition WHERE dispatch_id = $dispatchId".query[Int].unique.map(_ > 0)

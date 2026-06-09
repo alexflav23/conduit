@@ -27,7 +27,7 @@ object GlProjectionSuite extends IOSuite {
   override def maxParallelism: Int               = 1
   override def sharedResource: Resource[IO, Res] = (TestPostgres.transactor, TestTigerBeetle.client).tupled
 
-  private def setup(xa: HikariTransactor[IO]): IO[(UUID, UUID, UUID, List[String])] =
+  private def setup(xa: HikariTransactor[IO]): IO[(UUID, UUID, UUID, UUID, List[String])] =
     (for {
       e <-
         sql"INSERT INTO entity (name, jurisdiction, functional_currency, entity_type) VALUES ('E','GB','GBP','operating') RETURNING id"
@@ -77,17 +77,17 @@ object GlProjectionSuite extends IOSuite {
         sql"INSERT INTO order_line (order_id, product_variant_id, qty, unit_price_ex_vat, vat_amount) VALUES ($ord, $v, 2, 500.00, 200.00) RETURNING id"
           .query[UUID]
           .unique
-    } yield (e, ord, ol, serials)).transact(xa)
+    } yield (e, billTo, ord, ol, serials)).transact(xa)
 
   test("the GL trial balance reads off the ledger and ties out (debits == credits) after a recognised sale") {
     case (xa, client) =>
       val ledger = TigerBeetleLedger.fromClient[IO](client)
       val disp   = new DispatchService[IO](xa)
       val rev    = new RevenueRecognitionService[IO](xa, ledger)
-      val gl     = new GlProjectionService[IO](xa, ledger)
+      val gl     = new GlProjectionService[IO](xa)
       for {
         s <- setup(xa)
-        (entity, ord, ol, serials) = s
+        (entity, billTo, ord, ol, serials) = s
         did <- disp.dispatch(ord, None, None, None, List(DispatchLineInput(ol, 2, serials))).map(_.toOption.get)
         _   <- rev.recognize(did)
         tb  <- gl.trialBalance(entity)
@@ -97,11 +97,14 @@ object GlProjectionSuite extends IOSuite {
           accs
             .find(_.hcursor.get[String]("account").toOption.contains(label))
             .flatMap(_.hcursor.get[BigDecimal]("balance").toOption)
-        expect(tb.hcursor.get[Boolean]("balanced").toOption.contains(true)) and // ledger ties out
+        val revKey = "REVENUE:" + entity
+        val invKey = "INV:" + entity
+        val arKey  = "AR:" + billTo
+        expect(tb.hcursor.get[Boolean]("balanced").toOption.contains(true)) and // gl_entry mirror ties out
           expect(tb.hcursor.get[BigDecimal]("total_debits") == tb.hcursor.get[BigDecimal]("total_credits")) and
-          expect(bal("REVENUE").contains(BigDecimal("-1000.00"))) and // credit balance
-          expect(bal("INV").contains(BigDecimal("-600.00"))) and      // relieved at cost
-          expect(bal("AR:GL Cust").contains(BigDecimal("1200.00")))   // AR debit, inc VAT
+          expect(bal(revKey).contains(BigDecimal("-1000.00"))) and // credit balance
+          expect(bal(invKey).contains(BigDecimal("-600.00"))) and  // relieved at cost
+          expect(bal(arKey).contains(BigDecimal("1200.00")))       // AR debit, inc VAT
       }
   }
 }

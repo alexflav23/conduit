@@ -82,4 +82,34 @@ object GlEntryRepo {
     sql"SELECT DISTINCT account_key FROM gl_entry WHERE entity_id = $entity ORDER BY account_key"
       .query[String]
       .to[List]
+
+  // Every mirrored account (the gl_vs_tb mirror sweeps these against TigerBeetle).
+  def allAccounts: ConnectionIO[List[String]] =
+    sql"SELECT DISTINCT account_key FROM gl_entry WHERE posted = true ORDER BY account_key".query[String].to[List]
+
+  // Net posted balance (debits − credits, minor units) for one GL role within an entity — e.g. AR for arVsInvoices.
+  def roleNet(entity: UUID, role: Int): ConnectionIO[BigDecimal] =
+    sql"""SELECT COALESCE(SUM(CASE side WHEN 'debit' THEN amount_minor ELSE -amount_minor END), 0)
+          FROM gl_entry WHERE entity_id = $entity AND account_role = $role AND posted = true"""
+      .query[BigDecimal]
+      .unique
+
+  // The whole-ledger posted totals (Σ debits, Σ credits) — must be equal (double-entry ties by construction).
+  def globalTotals: ConnectionIO[(BigDecimal, BigDecimal)] =
+    sql"""SELECT COALESCE(SUM(amount_minor) FILTER (WHERE side = 'debit'), 0),
+                 COALESCE(SUM(amount_minor) FILTER (WHERE side = 'credit'), 0)
+          FROM gl_entry WHERE posted = true"""
+      .query[(BigDecimal, BigDecimal)]
+      .unique
+
+  // Per-account posted debits/credits for an entity — the trial-balance read-model (no TB fan-out).
+  def entityBalances(entity: UUID): ConnectionIO[List[(String, Int, String, BigDecimal, BigDecimal)]] =
+    sql"""SELECT account_key, account_role, currency,
+            COALESCE(SUM(amount_minor) FILTER (WHERE side = 'debit'), 0),
+            COALESCE(SUM(amount_minor) FILTER (WHERE side = 'credit'), 0)
+          FROM gl_entry WHERE entity_id = $entity AND posted = true
+          GROUP BY account_key, account_role, currency
+          ORDER BY account_role, account_key"""
+      .query[(String, Int, String, BigDecimal, BigDecimal)]
+      .to[List]
 }

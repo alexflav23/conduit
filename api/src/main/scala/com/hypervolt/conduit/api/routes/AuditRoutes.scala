@@ -10,10 +10,16 @@ import com.hypervolt.conduit.close.AuditQueryRepo
 import com.hypervolt.conduit.close.ControlRunner
 import com.hypervolt.conduit.close.LineageService
 import com.hypervolt.conduit.close.PeriodCloseService
+import com.hypervolt.conduit.close.ReconResult
+import com.hypervolt.conduit.close.ReconciliationService
+import com.hypervolt.conduit.gl.ConsolidationService
+import com.hypervolt.conduit.gl.GlProjectionService
 import doobie.implicits._
 import doobie.util.transactor.Transactor
 import io.circe.Json
 import io.circe.syntax._
+import java.time.Instant
+import java.time.LocalDate
 import java.util.UUID
 import org.http4s.HttpRoutes
 import scala.util.Try
@@ -31,10 +37,26 @@ final class AuditRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
   private val close   = new PeriodCloseService[F](xa)
   private val runner  = new ControlRunner[F](xa)
   private val lineage = new LineageService[F](xa)
+  private val recon   = new ReconciliationService[F](xa)
+  private val glProj  = new GlProjectionService[F](xa)
+  private val consol  = new ConsolidationService[F](xa)
+
+  private def reconJson(r: ReconResult): Json =
+    Json.obj(
+      "id"       -> r.id.toString.asJson,
+      "expected" -> r.expected.asJson,
+      "actual"   -> r.actual.asJson,
+      "variance" -> r.variance.asJson,
+      "status"   -> r.status.asJson
+    )
 
   private def err(s: StatusCode, c: String, m: String): (StatusCode, ApiError) = (s, ApiError(c, m))
   private def uuid(s: String): Either[(StatusCode, ApiError), UUID] =
     Try(UUID.fromString(s)).toEither.leftMap(_ => err(StatusCode.BadRequest, "bad_request", s"invalid id: $s"))
+  private def instant(s: String): Either[(StatusCode, ApiError), Instant] =
+    Try(Instant.parse(s)).toEither.leftMap(_ => err(StatusCode.BadRequest, "bad_request", s"invalid timestamp: $s"))
+  private def localDate(s: String): Either[(StatusCode, ApiError), LocalDate] =
+    Try(LocalDate.parse(s)).toEither.leftMap(_ => err(StatusCode.BadRequest, "bad_request", s"invalid date: $s"))
   private def gate(p: Principal, obj: String) = PolicyEngine.hasPermission(p, Action.View, obj)
   private def forbid(obj: String)             = err(StatusCode.Forbidden, "forbidden", s"requires view:$obj")
 
@@ -147,8 +169,130 @@ final class AuditRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
             }
       )
 
+  // Run the gl_entry-backed reconciliations synchronously (no TB on the request path): AR↔invoices + the
+  // trial-balance tie. The gl_vs_tb MIRROR check reads TigerBeetle and so runs in the consumer, not here.
+  private val runReconciliations =
+    base.post
+      .in("api" / "v1" / "finance" / "periods" / path[String]("id") / "reconciliations" / "run")
+      .in(query[String]("entity"))
+      .in(query[String]("currency"))
+      .out(jsonBody[Json])
+      .serverLogic(p => {
+        case (id, entityS, currency) =>
+          if (!PolicyEngine.hasPermission(p, Action.Edit, "reconciliation"))
+            Async[F].pure(Left(err(StatusCode.Forbidden, "forbidden", "requires edit:reconciliation")))
+          else
+            (uuid(id), uuid(entityS)).tupled match {
+              case Left(x) => Async[F].pure(Left(x))
+              case Right((pid, entity)) =>
+                (recon.arVsInvoices(pid, entity, currency), recon.tbVsGl(pid, currency)).tupled.map {
+                  case (ar, tb) => Right(Json.obj("ar_vs_invoices" -> reconJson(ar), "tb_vs_gl" -> reconJson(tb)))
+                }
+            }
+      })
+
+  private val signOffRecon =
+    base.post
+      .in("api" / "v1" / "finance" / "reconciliations" / path[String]("rid") / "sign-off")
+      .out(jsonBody[Json])
+      .serverLogic(p =>
+        rid =>
+          if (!PolicyEngine.hasPermission(p, Action.Edit, "reconciliation"))
+            Async[F].pure(Left(err(StatusCode.Forbidden, "forbidden", "requires edit:reconciliation")))
+          else
+            uuid(rid) match {
+              case Left(x) => Async[F].pure(Left(x))
+              case Right(r) =>
+                recon.signOff(r, p.userId).map {
+                  case 0 => Left(err(StatusCode.UnprocessableEntity, "unprocessable", "no such reconciliation"))
+                  case _ => Right(Json.obj("id" -> r.toString.asJson, "signed_off" -> true.asJson))
+                }
+            }
+      )
+
+  private val trialBalance =
+    base.get
+      .in("api" / "v1" / "finance" / "gl" / "trial-balance")
+      .in(query[String]("entity"))
+      .out(jsonBody[Json])
+      .serverLogic(p =>
+        entityS =>
+          if (!gate(p, "gl_entry")) Async[F].pure(Left(forbid("gl_entry")))
+          else
+            uuid(entityS) match {
+              case Left(x)  => Async[F].pure(Left(x))
+              case Right(e) => glProj.trialBalance(e).map(Right(_))
+            }
+      )
+
+  private val glAsOf =
+    base.get
+      .in("api" / "v1" / "finance" / "gl" / "as-of")
+      .in(query[String]("entity"))
+      .in(query[String]("as_of"))
+      .out(jsonBody[Json])
+      .serverLogic(p => {
+        case (entityS, asOfS) =>
+          if (!gate(p, "gl_entry")) Async[F].pure(Left(forbid("gl_entry")))
+          else
+            (uuid(entityS), instant(asOfS)).tupled match {
+              case Left(x)          => Async[F].pure(Left(x))
+              case Right((e, asOf)) => glProj.asOf(e, asOf).map(Right(_))
+            }
+      })
+
+  // Hedge-aware, as-of consolidation to a presentation currency — an immutable, re-derivable run (doc 14 §2.4).
+  private val runConsolidation =
+    base.post
+      .in("api" / "v1" / "finance" / "consolidation" / "run")
+      .in(query[String]("as_of"))
+      .in(query[Option[String]]("presentation"))
+      .out(jsonBody[Json])
+      .serverLogic(p => {
+        case (asOfS, presentation) =>
+          if (!PolicyEngine.hasPermission(p, Action.Edit, "consolidation"))
+            Async[F].pure(Left(err(StatusCode.Forbidden, "forbidden", "requires edit:consolidation")))
+          else
+            localDate(asOfS) match {
+              case Left(x)     => Async[F].pure(Left(x))
+              case Right(asOf) => consol.run(asOf, presentation.getOrElse("USD"), Some(p.userId)).map(Right(_))
+            }
+      })
+
+  private val consolidationLineage =
+    base.get
+      .in("api" / "v1" / "finance" / "consolidation" / path[String]("id"))
+      .out(jsonBody[Json])
+      .serverLogic(p =>
+        id =>
+          if (!gate(p, "consolidation")) Async[F].pure(Left(forbid("consolidation")))
+          else
+            uuid(id) match {
+              case Left(x) => Async[F].pure(Left(x))
+              case Right(rid) =>
+                consol.lineage(rid).map {
+                  case Some(j) => Right(j)
+                  case None    => Right(Json.obj("error" -> s"unknown consolidation run $rid".asJson))
+                }
+            }
+      )
+
   val routes: HttpRoutes[F] =
     Http4sServerInterpreter[F]().toRoutes(
-      List(periods, reconciliations, closePeriod, lockPeriod, controls, runControl, invoiceLineage)
+      List(
+        periods,
+        reconciliations,
+        closePeriod,
+        lockPeriod,
+        controls,
+        runControl,
+        invoiceLineage,
+        runReconciliations,
+        signOffRecon,
+        trialBalance,
+        glAsOf,
+        runConsolidation,
+        consolidationLineage
+      )
     )
 }
