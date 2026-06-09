@@ -24,16 +24,33 @@ object OutboxRepo {
   private type Row =
     (Long, UUID, String, Int, String, UUID, String, Option[Json], Option[UUID], Option[UUID], Json, Instant, String)
 
+  private def decode(r: Row): PendingOutbox =
+    r match {
+      case (seq, id, et, sv, at, ai, pk, sc, corr, caus, pl, occ, origin) =>
+        PendingOutbox(seq, OutboxEvent(id, et, sv, at, ai, pk, sc, corr, caus, pl, occ, origin))
+    }
+
+  private val cols =
+    fr"seq, event_id, event_type, schema_version, aggregate_type, aggregate_id, partition_key, scope, correlation_id, causation_id, payload, occurred_at, origin"
+
   def fetchPending(limit: Int): ConnectionIO[List[PendingOutbox]] =
-    sql"""SELECT seq, event_id, event_type, schema_version, aggregate_type, aggregate_id, partition_key,
-                 scope, correlation_id, causation_id, payload, occurred_at, origin
-          FROM outbox_event WHERE status = 'pending' ORDER BY seq ASC LIMIT $limit"""
+    (fr"SELECT" ++ cols ++ fr"FROM outbox_event WHERE status = 'pending' ORDER BY seq ASC LIMIT $limit")
       .query[Row]
       .to[List]
-      .map(_.map {
-        case (seq, id, et, sv, at, ai, pk, sc, corr, caus, pl, occ, origin) =>
-          PendingOutbox(seq, OutboxEvent(id, et, sv, at, ai, pk, sc, corr, caus, pl, occ, origin))
-      })
+      .map(_.map(decode))
+
+  // Replay the durable log oldest-first (any status) from a sequence cursor, optionally scoped to an aggregate
+  // type — the source path for projection-rebuild and DLQ-replay (doc 19 §C.4). The log is the truth (doc 01 §3a).
+  def fetchFrom(aggregateType: Option[String], fromSeq: Long, limit: Int): ConnectionIO[List[PendingOutbox]] = {
+    val typeFilter = aggregateType.fold(Fragment.empty)(t => fr"AND aggregate_type = $t")
+    (fr"SELECT" ++ cols ++ fr"FROM outbox_event WHERE seq >" ++ fr"$fromSeq" ++ typeFilter ++ fr"ORDER BY seq ASC LIMIT $limit")
+      .query[Row]
+      .to[List]
+      .map(_.map(decode))
+  }
+
+  def fetchOne(eventId: UUID): ConnectionIO[Option[PendingOutbox]] =
+    (fr"SELECT" ++ cols ++ fr"FROM outbox_event WHERE event_id = $eventId").query[Row].option.map(_.map(decode))
 
   def markPublished(ids: NonEmptyList[UUID]): ConnectionIO[Int] =
     (fr"UPDATE outbox_event SET status = 'published', published_at = now() WHERE" ++

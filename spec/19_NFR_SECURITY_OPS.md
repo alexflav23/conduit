@@ -327,6 +327,15 @@ Two-tier: **page** (wake someone) vs **ticket** (work next business hour). Alarm
 
 ### C.4 Runbooks
 
+> **✅ Mechanisms implemented (M-NFR.2).** The replay/rebuild/DLQ machinery these runbooks operate is built and
+> tested (`ReplayDlqSuite`): `outbox_dlq` (V1_0_47) parks poison messages; `IdempotentConsumer.processOrDlq` routes a
+> failed handler to the DLQ and releases the dedupe claim; `ReplayService.replayDlq` drains it on a fix-then-replay;
+> `ReplayService.rebuild` resets a group's dedupe and replays the immutable `outbox_event` log through the **same
+> consumer handler** (no second write path) to reconstruct a projection identically; `DedupeStore` makes both safe
+> under at-least-once. Completeness controls **CTRL-DLQ-EMPTY** + **CTRL-OUTBOX-DRAINED** are re-performable
+> (`ControlRunner`), and `CompletenessRepo` exposes the DLQ-depth / stuck-unpublished SLO reads. The prose below is
+> the operator procedure over that machinery.
+
 #### C.4.1 DLQ-replay runbook
 
 Poison messages land on `<topic>.dlq` after N retries with `MultiplierRedeliveryBackoff` (10s→1h, CLAUDE.md §3; doc 03 §3). DLQ depth > 0 pages (§C.3). Goal: diagnose, fix, replay from a checkpoint — **without** re-processing already-acked good messages (consumers are idempotent on `event_id`, so replay is safe even if some overlap).
