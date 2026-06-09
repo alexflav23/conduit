@@ -4,12 +4,13 @@ import cats.effect.Async
 import cats.syntax.all._
 import com.hypervolt.conduit.event.OutboxEvent
 import com.hypervolt.conduit.event.OutboxRepo
+import com.hypervolt.conduit.ledger.Journal
+import com.hypervolt.conduit.ledger.JournalAccount
 import com.hypervolt.conduit.ledger.LedgerAccount
 import com.hypervolt.conduit.ledger.LedgerAccountCode
-import com.hypervolt.conduit.ledger.LedgerFlags
-import com.hypervolt.conduit.ledger.LedgerTransfer
 import com.hypervolt.conduit.ledger.LedgerTransferCode
 import com.hypervolt.conduit.ledger.Ledgers
+import com.hypervolt.conduit.ledger.Posting
 import com.hypervolt.conduit.ledger.TbIds
 import com.hypervolt.conduit.ledger.TigerBeetleLedger
 import com.hypervolt.conduit.money.Currency
@@ -22,6 +23,7 @@ import io.circe.Json
 import io.circe.syntax._
 import java.time.Instant
 import java.time.LocalDate
+import java.time.ZoneOffset
 import java.util.UUID
 import scala.math.BigDecimal.RoundingMode
 
@@ -42,7 +44,7 @@ final case class MovementResult(
 )
 
 private final case class LineCalc(lot: LotRow, qty: Int, tpUnit: BigDecimal, lineLanded: BigDecimal, lineTp: BigDecimal)
-private final case class Prepared(accounts: List[LedgerAccount], transfers: List[LedgerTransfer])
+private final case class Prepared(accounts: List[LedgerAccount], postings: List[Posting])
 
 // The intercompany movement (doc 13 §3): one hop, a set of specific lots → a sell leg + buy leg linked by
 // intercompany_link, two (or three, cross-currency) LINKED TigerBeetle transfers, a reproducible tp_document per
@@ -51,6 +53,7 @@ private final case class Prepared(accounts: List[LedgerAccount], transfers: List
 final class IntercompanyService[F[_]: Async](xa: Transactor[F], ledger: TigerBeetleLedger[F], tax: TaxEngine) {
 
   private val rounding = RoundingPolicy.HalfUp
+  private val journal  = new Journal[F](xa, ledger)
 
   private def minor(amount: BigDecimal, ccy: Currency): BigInt =
     (amount.setScale(ccy.minorUnits, RoundingMode.HALF_UP) * BigDecimal(10).pow(ccy.minorUnits)).toBigInt
@@ -67,7 +70,7 @@ final class IntercompanyService[F[_]: Async](xa: Transactor[F], ledger: TigerBee
       case Left(e) => e.asLeft[MovementResult].pure[F]
       case Right((prep, res)) =>
         ledger.createAccounts(prep.accounts) *>
-          ledger.postTransfers(prep.transfers) *>
+          journal.post(asOf.atStartOfDay(ZoneOffset.UTC).toInstant, prep.postings) *>
           res.asRight[String].pure[F]
     }
 
@@ -187,28 +190,36 @@ final class IntercompanyService[F[_]: Async](xa: Transactor[F], ledger: TigerBee
         val tpSellM = minor(tpSell, sellCcy)
         val tpBuyM  = minor(tpBuy, buyCcy)
 
-        def tf(leg: Int, dr: BigInt, cr: BigInt, amt: BigInt, led: Int) =
-          LedgerTransfer(TbIds.transferId(eventId, leg), dr, cr, amt, led, LedgerTransferCode.Intercompany)
+        val icFromToA = JournalAccount(s"IC:${fe.id}:${te.id}", LedgerAccountCode.Intercompany, Some(fe.id))
+        val icToFromA = JournalAccount(s"IC:${te.id}:${fe.id}", LedgerAccountCode.Intercompany, Some(te.id))
+        val invFromA  = JournalAccount(s"INV:${fe.id}", LedgerAccountCode.Inv, Some(fe.id))
+        val invToA    = JournalAccount(s"INV:${te.id}", LedgerAccountCode.Inv, Some(te.id))
+        val marginAA  = JournalAccount(s"IC_MARGIN:${fe.id}", LedgerAccountCode.IcMargin, Some(fe.id))
+        val fxSellA   = JournalAccount(s"FX_CLEARING:${sellCcy.code}", LedgerAccountCode.FxClearing, None)
+        val fxBuyA    = JournalAccount(s"FX_CLEARING:${buyCcy.code}", LedgerAccountCode.FxClearing, None)
+
+        def leg(l: Int, dr: JournalAccount, cr: JournalAccount, amt: BigInt, ccy: Currency) =
+          Posting(eventId, l, dr, cr, ccy, amt, transferCode = LedgerTransferCode.Intercompany)
 
         val sameCcy = sellCcy.code == buyCcy.code
         val rawLegs =
           if (sameCcy)
             List(
-              tf(0, icFromTo, invFrom, landedM, sellLedger),
-              tf(1, icFromTo, marginA, marginM, sellLedger),
-              tf(2, invTo, icToFrom, tpSellM, buyLedger)
+              leg(0, icFromToA, invFromA, landedM, sellCcy),
+              leg(1, icFromToA, marginAA, marginM, sellCcy),
+              leg(2, invToA, icToFromA, tpSellM, buyCcy)
             )
           else
             List(
-              tf(0, icFromTo, invFrom, landedM, sellLedger),
-              tf(1, icFromTo, marginA, marginM, sellLedger),
-              tf(2, fxSell, icFromTo, tpSellM, sellLedger),
-              tf(3, invTo, fxBuy, tpBuyM, buyLedger)
+              leg(0, icFromToA, invFromA, landedM, sellCcy),
+              leg(1, icFromToA, marginAA, marginM, sellCcy),
+              leg(2, fxSellA, icFromToA, tpSellM, sellCcy),
+              leg(3, invToA, fxBuyA, tpBuyM, buyCcy)
             )
-        val nonZero = rawLegs.filter(_.amount > 0)
+        val nonZero = rawLegs.filter(_.amountMinor > 0)
         // TB linked chain: every leg but the LAST carries the Linked flag (commit all-or-none).
         val legs = nonZero.zipWithIndex.map {
-          case (t, i) => if (i < nonZero.size - 1) t.copy(flags = LedgerFlags.Linked) else t
+          case (p, i) => if (i < nonZero.size - 1) p.copy(linkedToNext = true) else p
         }
 
         val accounts = {

@@ -8,6 +8,7 @@ import doobie._
 import doobie.implicits._
 import doobie.postgres.implicits._
 import doobie.util.transactor.Transactor
+import java.time.Instant
 import java.util.UUID
 import scala.math.BigDecimal.RoundingMode
 
@@ -16,10 +17,14 @@ import scala.math.BigDecimal.RoundingMode
 // cost, fully reconstructable. Cycle count, transfer (in-transit), and write-off/adjustment.
 final class StockOpsService[F[_]: Async](xa: Transactor[F], ledger: TigerBeetleLedger[F]) {
 
-  private val gbpLedger = Ledgers.forCurrency(Currency.GBP)
+  private val journal = new Journal[F](xa, ledger)
 
   def invAccount(entity: UUID): BigInt      = TbIds.accountId(s"INV:$entity")
   def writeOffAccount(entity: UUID): BigInt = TbIds.accountId(s"INV_WRITEOFF:$entity")
+
+  private def invLeg(entity: UUID): JournalAccount = JournalAccount(s"INV:$entity", LedgerAccountCode.Inv, Some(entity))
+  private def writeOffLeg(entity: UUID): JournalAccount =
+    JournalAccount(s"INV_WRITEOFF:$entity", LedgerAccountCode.InvWriteOff, Some(entity))
 
   private def minor(amount: BigDecimal): BigInt = (amount.setScale(2, RoundingMode.HALF_UP) * 100).toBigInt
 
@@ -49,17 +54,9 @@ final class StockOpsService[F[_]: Async](xa: Transactor[F], ledger: TigerBeetleL
         else if (approver == requestedBy) "maker cannot be checker (self-approval rejected)".asLeft[Unit].pure[F]
         else
           costOf(serials, variant, qty).flatMap { cost =>
-            ledger.postTransfers(
-              List(
-                LedgerTransfer(
-                  id = TbIds.transferId(adjustmentId, 0),
-                  debitAccountId = writeOffAccount(entity),
-                  creditAccountId = invAccount(entity),
-                  amount = minor(cost),
-                  ledger = gbpLedger,
-                  code = LedgerTransferCode.Generic
-                )
-              )
+            journal.postOne(
+              Instant.now(),
+              Posting(adjustmentId, 0, writeOffLeg(entity), invLeg(entity), Currency.GBP, minor(cost))
             ) *> postAdjustment(adjustmentId, entity, location, variant, serials, qty, approver)
               .transact(xa)
               .as(().asRight[String])
@@ -128,20 +125,9 @@ final class StockOpsService[F[_]: Async](xa: Transactor[F], ledger: TigerBeetleL
         val amount = minor(BigDecimal(math.abs(variance)) * unit)
         // shrinkage (variance<0): CR INV; found (variance>0): DR INV
         val (debit, credit) =
-          if (variance < 0) (writeOffAccount(entity), invAccount(entity))
-          else (invAccount(entity), writeOffAccount(entity))
-        ledger.postTransfers(
-          List(
-            LedgerTransfer(
-              TbIds.transferId(UUID.randomUUID(), 0),
-              debit,
-              credit,
-              amount,
-              gbpLedger,
-              LedgerTransferCode.Generic
-            )
-          )
-        )
+          if (variance < 0) (writeOffLeg(entity), invLeg(entity))
+          else (invLeg(entity), writeOffLeg(entity))
+        journal.postOne(Instant.now(), Posting(UUID.randomUUID(), 0, debit, credit, Currency.GBP, amount))
       }
 
   private def postCount(countId: UUID, location: UUID, entity: UUID, approver: UUID): ConnectionIO[Unit] =

@@ -109,7 +109,7 @@ object MigrationCutoverSuite extends IOSuite {
         }
         _ <- svc.ensureAccounts(e, gbp, List((svc.invAccount(e), LedgerAccountCode.Inv)))
         lines = allocated.toList.map(a =>
-          OpeningLine(a.lot.variantId.toString, svc.invAccount(e), debitNormal = true, a.minorAmount)
+          OpeningLine(a.lot.variantId.toString, s"INV:$e", LedgerAccountCode.Inv, debitNormal = true, a.minorAmount)
         )
         _        <- svc.postOpeningBalances("mrpeasy", "lot_batch", e, gbp, lines)
         invBal   <- ledger.balance(svc.invAccount(e))
@@ -132,7 +132,8 @@ object MigrationCutoverSuite extends IOSuite {
         ep <- entityWithPeriod(xa)
         (e, _) = ep
         _ <- svc.ensureAccounts(e, gbp, List((svc.invAccount(e), LedgerAccountCode.Inv)))
-        line = OpeningLine(s"L-${UUID.randomUUID()}", svc.invAccount(e), debitNormal = true, BigInt(25000))
+        line =
+          OpeningLine(s"L-${UUID.randomUUID()}", s"INV:$e", LedgerAccountCode.Inv, debitNormal = true, BigInt(25000))
         _   <- svc.postOpeningBalances("mrpeasy", "lot_batch", e, gbp, List(line))
         _   <- svc.postOpeningBalances("mrpeasy", "lot_batch", e, gbp, List(line)) // replay — must be a no-op
         bal <- ledger.balance(svc.invAccount(e))
@@ -182,7 +183,9 @@ object MigrationCutoverSuite extends IOSuite {
           "lot_batch",
           e,
           gbp,
-          List(OpeningLine(s"L-${UUID.randomUUID()}", svc.invAccount(e), debitNormal = true, BigInt(50000)))
+          List(
+            OpeningLine(s"L-${UUID.randomUUID()}", s"INV:$e", LedgerAccountCode.Inv, debitNormal = true, BigInt(50000))
+          )
         )
         res <- svc.cutoverStockValidation(
           e,

@@ -4,11 +4,12 @@ import cats.effect.Async
 import cats.syntax.all._
 import com.hypervolt.conduit.event.OutboxEvent
 import com.hypervolt.conduit.event.OutboxRepo
+import com.hypervolt.conduit.ledger.Journal
+import com.hypervolt.conduit.ledger.JournalAccount
 import com.hypervolt.conduit.ledger.LedgerAccount
 import com.hypervolt.conduit.ledger.LedgerAccountCode
-import com.hypervolt.conduit.ledger.LedgerTransfer
-import com.hypervolt.conduit.ledger.LedgerTransferCode
 import com.hypervolt.conduit.ledger.Ledgers
+import com.hypervolt.conduit.ledger.Posting
 import com.hypervolt.conduit.ledger.TbIds
 import com.hypervolt.conduit.ledger.TigerBeetleLedger
 import com.hypervolt.conduit.money.Currency
@@ -25,6 +26,7 @@ import io.circe.Json
 import io.circe.syntax._
 import java.time.Instant
 import java.time.LocalDate
+import java.time.ZoneOffset
 import java.util.UUID
 import scala.math.BigDecimal.RoundingMode
 
@@ -52,8 +54,9 @@ private final case class RecogCtx(
 // SPECIFIC batch landed cost. Deterministic transfer ids + UNIQUE(dispatch_id) make redelivery a no-op.
 final class RevenueRecognitionService[F[_]: Async](xa: Transactor[F], ledger: TigerBeetleLedger[F]) {
 
-  private val zero = new UUID(0L, 0L)
-  private val tax  = new TaxDeterminationService[F](xa, Map(RateTableProvider.name -> RateTableProvider))
+  private val zero    = new UUID(0L, 0L)
+  private val tax     = new TaxDeterminationService[F](xa, Map(RateTableProvider.name -> RateTableProvider))
+  private val journal = new Journal[F](xa, ledger)
 
   def ar(party: UUID): BigInt       = TbIds.accountId(s"AR:$party")
   def revenue(entity: UUID): BigInt = TbIds.accountId(s"REVENUE:$entity")
@@ -96,44 +99,47 @@ final class RevenueRecognitionService[F[_]: Async](xa: Transactor[F], ledger: Ti
       LedgerAccount(carriageExp(entity), ledgerId, LedgerAccountCode.CarriageExpense),
       LedgerAccount(carriageAccr(entity), ledgerId, LedgerAccountCode.CarriageAccrual)
     )
+    val ccy        = Currency.fromCode(ctx.head.currency).get
+    val occurredAt = ctx.asOf.atStartOfDay(ZoneOffset.UTC).toInstant
+    val e          = Some(entity)
     // leg 3 = outbound carriage (DR expense / CR accrual). Recorded like the others so the void path reverses the
     // FULL set — adding this cost category needed no change to the reversal logic (per-event reversal, doc 04 §Ledger).
-    val transfers = List(
-      LedgerTransfer(
-        TbIds.transferId(dispatchId, 0),
-        ar(ctx.head.billTo),
-        revenue(entity),
-        minor(ctx.rev),
-        ledgerId,
-        LedgerTransferCode.Generic
+    val postings = List(
+      Posting(
+        dispatchId,
+        0,
+        JournalAccount(s"AR:${ctx.head.billTo}", LedgerAccountCode.Ar, e),
+        JournalAccount(s"REVENUE:$entity", LedgerAccountCode.Revenue, e),
+        ccy,
+        minor(ctx.rev)
       ),
-      LedgerTransfer(
-        TbIds.transferId(dispatchId, 1),
-        ar(ctx.head.billTo),
-        vatAcc(entity, ctx.head.jurisdiction),
-        minor(vatAmt),
-        ledgerId,
-        LedgerTransferCode.Generic
+      Posting(
+        dispatchId,
+        1,
+        JournalAccount(s"AR:${ctx.head.billTo}", LedgerAccountCode.Ar, e),
+        JournalAccount(s"VAT:$entity:${ctx.head.jurisdiction}", LedgerAccountCode.Vat, e),
+        ccy,
+        minor(vatAmt)
       ),
-      LedgerTransfer(
-        TbIds.transferId(dispatchId, 2),
-        cogsAcc(entity),
-        inv(entity),
-        minor(ctx.cogs),
-        ledgerId,
-        LedgerTransferCode.Generic
+      Posting(
+        dispatchId,
+        2,
+        JournalAccount(s"COGS:$entity", LedgerAccountCode.CosClearing, e),
+        JournalAccount(s"INV:$entity", LedgerAccountCode.Inv, e),
+        ccy,
+        minor(ctx.cogs)
       ),
-      LedgerTransfer(
-        TbIds.transferId(dispatchId, 3),
-        carriageExp(entity),
-        carriageAccr(entity),
-        minor(ctx.shipping),
-        ledgerId,
-        LedgerTransferCode.Generic
+      Posting(
+        dispatchId,
+        3,
+        JournalAccount(s"CARRIAGE_EXPENSE:$entity", LedgerAccountCode.CarriageExpense, e),
+        JournalAccount(s"CARRIAGE_ACCRUAL:$entity", LedgerAccountCode.CarriageAccrual, e),
+        ccy,
+        minor(ctx.shipping)
       )
-    ).filter(_.amount > 0)
-    ledger.createAccounts(accounts) *> ledger
-      .postTransfers(transfers) *> record(dispatchId, ctx, vatAmt).transact(xa).void
+    )
+    ledger.createAccounts(accounts) *> journal.post(occurredAt, postings) *>
+      record(dispatchId, ctx, vatAmt).transact(xa).void
   }
 
   // The authoritative invoice quote (doc 16 §6): the place of supply is the selling entity's jurisdiction for a

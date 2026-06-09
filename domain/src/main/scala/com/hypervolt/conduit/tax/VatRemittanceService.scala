@@ -4,11 +4,13 @@ import cats.effect.Async
 import cats.syntax.all._
 import com.hypervolt.conduit.event.OutboxEvent
 import com.hypervolt.conduit.event.OutboxRepo
+import com.hypervolt.conduit.ledger.Journal
+import com.hypervolt.conduit.ledger.JournalAccount
 import com.hypervolt.conduit.ledger.LedgerAccount
 import com.hypervolt.conduit.ledger.LedgerAccountCode
-import com.hypervolt.conduit.ledger.LedgerTransfer
 import com.hypervolt.conduit.ledger.LedgerTransferCode
 import com.hypervolt.conduit.ledger.Ledgers
+import com.hypervolt.conduit.ledger.Posting
 import com.hypervolt.conduit.ledger.TbIds
 import com.hypervolt.conduit.ledger.TigerBeetleLedger
 import com.hypervolt.conduit.money.Currency
@@ -30,6 +32,8 @@ final class VatRemittanceService[F[_]: Async](xa: Transactor[F], ledger: TigerBe
 
   def vatAcc(entity: UUID, jurisdiction: String): BigInt = TbIds.accountId(s"VAT:$entity:$jurisdiction")
   def bank(entity: UUID): BigInt                         = TbIds.accountId(s"BANK:$entity")
+
+  private val journal = new Journal[F](xa, ledger)
 
   private def minor(amount: BigDecimal): BigInt = (amount.setScale(2, RoundingMode.HALF_UP) * 100).toBigInt
 
@@ -64,18 +68,18 @@ final class VatRemittanceService[F[_]: Async](xa: Transactor[F], ledger: TigerBe
           LedgerAccount(vatAcc(entity, jurisdiction), ledgerId, LedgerAccountCode.Vat),
           LedgerAccount(bank(entity), ledgerId, LedgerAccountCode.Bank)
         )
-        // DR VAT (reduce the liability) / CR BANK (cash out) — debit_account, credit_account.
-        val transfer =
-          LedgerTransfer(
-            TbIds.transferId(id, 0),
-            vatAcc(entity, jurisdiction),
-            bank(entity),
-            minor(amount),
-            ledgerId,
-            LedgerTransferCode.Payment
-          )
+        // DR VAT (reduce the liability) / CR BANK (cash out).
+        val posting = Posting(
+          id,
+          0,
+          JournalAccount(s"VAT:$entity:$jurisdiction", LedgerAccountCode.Vat, Some(entity)),
+          JournalAccount(s"BANK:$entity", LedgerAccountCode.Bank, Some(entity)),
+          ccy,
+          minor(amount),
+          transferCode = LedgerTransferCode.Payment
+        )
         ledger.createAccounts(accounts) *>
-          ledger.postTransfers(List(transfer).filter(_.amount > 0)) *>
+          journal.postOne(Instant.now(), posting) *>
           record(id, entity, jurisdiction, periodKey, amount, currency, reference, actor)
             .transact(xa)
             .as(id.asRight[String])

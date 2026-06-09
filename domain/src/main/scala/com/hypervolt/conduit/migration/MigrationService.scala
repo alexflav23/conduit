@@ -4,10 +4,12 @@ import cats.effect.Async
 import cats.syntax.all._
 import com.hypervolt.conduit.event.OutboxEvent
 import com.hypervolt.conduit.event.OutboxRepo
+import com.hypervolt.conduit.ledger.Journal
+import com.hypervolt.conduit.ledger.JournalAccount
 import com.hypervolt.conduit.ledger.LedgerAccountCode
-import com.hypervolt.conduit.ledger.LedgerTransfer
 import com.hypervolt.conduit.ledger.LedgerTransferCode
 import com.hypervolt.conduit.ledger.Ledgers
+import com.hypervolt.conduit.ledger.Posting
 import com.hypervolt.conduit.ledger.TbIds
 import com.hypervolt.conduit.ledger.TigerBeetleLedger
 import com.hypervolt.conduit.money.Currency
@@ -28,7 +30,13 @@ final case class BackfillResult(conduitId: UUID, eventId: UUID, migrated: Boolea
 
 // An opening balance to post against OPENING_BALANCE_EQUITY (doc 18 §2). `account` is the asset/liability side;
 // `debitNormal` says whether it is debit-normal (asset, e.g. INV/AR) or credit-normal (liability, e.g. AP).
-final case class OpeningLine(sourceId: String, account: BigInt, debitNormal: Boolean, minorAmount: BigInt)
+final case class OpeningLine(
+    sourceId: String,
+    accountKey: String,
+    accountRole: Int,
+    debitNormal: Boolean,
+    minorAmount: BigInt
+)
 
 // The migration/cutover subsystem (doc 18). This is NOT a bespoke importer — it is a backfill *emitter* that
 // produces the same domain events the live API would (pushed through the outbox -> Pulsar -> the normal
@@ -37,6 +45,8 @@ final case class OpeningLine(sourceId: String, account: BigInt, debitNormal: Boo
 // OPENING_BALANCE_EQUITY so the books balance by construction. Every identity is deterministic, so re-running
 // is a no-op at three independent layers (migration_record dedupe, event_id dedupe, transfer-exists).
 final class MigrationService[F[_]: Async](xa: Transactor[F], ledger: TigerBeetleLedger[F]) {
+
+  private val journal = new Journal[F](xa, ledger)
 
   def openingEquity(entity: UUID): BigInt = TbIds.accountId(s"OPENING_BALANCE_EQUITY:$entity")
   def invAccount(entity: UUID): BigInt    = TbIds.accountId(s"INV:$entity")
@@ -109,16 +119,22 @@ final class MigrationService[F[_]: Async](xa: Transactor[F], ledger: TigerBeetle
       currency: Currency,
       lines: List[OpeningLine]
   ): F[Unit] = {
-    val ledgerId = Ledgers.forCurrency(currency)
-    val equity   = openingEquity(entity)
-    val transfers = lines.map { l =>
-      val id = MigIds.transferId(source, entityType, l.sourceId, 0)
-      if (l.debitNormal)
-        LedgerTransfer(id, l.account, equity, l.minorAmount, ledgerId, LedgerTransferCode.Opening)
-      else
-        LedgerTransfer(id, equity, l.account, l.minorAmount, ledgerId, LedgerTransferCode.Opening)
+    val equityLeg = JournalAccount(s"OPENING_BALANCE_EQUITY:$entity", LedgerAccountCode.OpeningEquity, Some(entity))
+    val postings = lines.map { l =>
+      val acct     = JournalAccount(l.accountKey, l.accountRole, Some(entity))
+      val (dr, cr) = if (l.debitNormal) (acct, equityLeg) else (equityLeg, acct)
+      Posting(
+        MigIds.eventId(source, entityType, l.sourceId),
+        0,
+        dr,
+        cr,
+        currency,
+        l.minorAmount,
+        transferCode = LedgerTransferCode.Opening,
+        id = Some(MigIds.transferId(source, entityType, l.sourceId, 0))
+      )
     }
-    ledger.postTransfers(transfers) *>
+    journal.post(Instant.now(), postings) *>
       lines.traverse_(l =>
         MigrationRepo
           .setTransfer(source, entityType, l.sourceId, MigIds.transferId(source, entityType, l.sourceId, 0))

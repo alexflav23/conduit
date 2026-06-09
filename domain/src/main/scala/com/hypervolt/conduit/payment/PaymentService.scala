@@ -4,11 +4,13 @@ import cats.effect.Async
 import cats.syntax.all._
 import com.hypervolt.conduit.event.OutboxEvent
 import com.hypervolt.conduit.event.OutboxRepo
+import com.hypervolt.conduit.ledger.Journal
+import com.hypervolt.conduit.ledger.JournalAccount
 import com.hypervolt.conduit.ledger.LedgerAccount
 import com.hypervolt.conduit.ledger.LedgerAccountCode
-import com.hypervolt.conduit.ledger.LedgerTransfer
 import com.hypervolt.conduit.ledger.LedgerTransferCode
 import com.hypervolt.conduit.ledger.Ledgers
+import com.hypervolt.conduit.ledger.Posting
 import com.hypervolt.conduit.ledger.TbIds
 import com.hypervolt.conduit.ledger.TigerBeetleLedger
 import com.hypervolt.conduit.money.Currency
@@ -48,9 +50,12 @@ private final case class InvHead(
 // double-credits AR. Stripe is one source feeding `apply`; bank/manual use the same path.
 final class PaymentService[F[_]: Async](xa: Transactor[F], ledger: TigerBeetleLedger[F]) {
 
-  private val zero = new UUID(0L, 0L)
+  private val zero    = new UUID(0L, 0L)
+  private val journal = new Journal[F](xa, ledger)
 
   private def minor(a: BigDecimal): BigInt = (a.setScale(2, RoundingMode.HALF_UP) * 100).toBigInt
+  private def cashKey(kind: String, entity: UUID): String =
+    if (kind == "stripe_clearing") s"STRIPE_CLEARING:$entity" else s"BANK:$entity"
   private def paymentId(externalRef: Option[String]): UUID =
     externalRef
       .map(r => UUID.nameUUIDFromBytes(s"payment:$r".getBytes(StandardCharsets.UTF_8)))
@@ -91,9 +96,17 @@ final class PaymentService[F[_]: Async](xa: Transactor[F], ledger: TigerBeetleLe
                   LedgerAccount(cashAcc, ledgerId, cashCode(kind)),
                   LedgerAccount(arAcc, ledgerId, LedgerAccountCode.Ar)
                 )
-                val transfer = LedgerTransfer(tId, cashAcc, arAcc, minor(amount), ledgerId, LedgerTransferCode.Payment)
+                val posting = Posting(
+                  pid,
+                  0,
+                  JournalAccount(cashKey(kind, entity), cashCode(kind), Some(entity)),
+                  JournalAccount(s"AR:${h.billTo}", LedgerAccountCode.Ar, Some(entity)),
+                  ccy,
+                  minor(amount),
+                  transferCode = LedgerTransferCode.Payment
+                )
                 ledger.createAccounts(accounts) *>
-                  ledger.postTransfers(List(transfer)) *>
+                  journal.postOne(Instant.now(), posting) *>
                   record(pid, invoiceNo, h, amount, method, kind, externalRef, tId).transact(xa)
             }
         }
@@ -121,18 +134,28 @@ final class PaymentService[F[_]: Async](xa: Transactor[F], ledger: TigerBeetleLe
           LedgerAccount(bank, ledgerId, LedgerAccountCode.Bank),
           LedgerAccount(feeAcc, ledgerId, LedgerAccountCode.FeeExpense)
         )
-        val transfers = List(
-          LedgerTransfer(
-            TbIds.transferId(ev, 0),
-            bank,
-            clearing,
+        val clearingLeg = JournalAccount(s"STRIPE_CLEARING:$entity", LedgerAccountCode.StripeClearing, Some(entity))
+        val postings = List(
+          Posting(
+            ev,
+            0,
+            JournalAccount(s"BANK:$entity", LedgerAccountCode.Bank, Some(entity)),
+            clearingLeg,
+            ccy,
             minor(gross - fee),
-            ledgerId,
-            LedgerTransferCode.Payment
+            transferCode = LedgerTransferCode.Payment
           ),
-          LedgerTransfer(TbIds.transferId(ev, 1), feeAcc, clearing, minor(fee), ledgerId, LedgerTransferCode.Payment)
-        ).filter(_.amount > 0)
-        ledger.createAccounts(accounts) *> ledger.postTransfers(transfers).as(().asRight[String])
+          Posting(
+            ev,
+            1,
+            JournalAccount(s"FEE_EXPENSE:$entity", LedgerAccountCode.FeeExpense, Some(entity)),
+            clearingLeg,
+            ccy,
+            minor(fee),
+            transferCode = LedgerTransferCode.Payment
+          )
+        )
+        ledger.createAccounts(accounts) *> journal.post(Instant.now(), postings).as(().asRight[String])
     }
 
   // Refund (doc 13 §void): money goes back to the customer — the reverse of a settlement. DR AR:<bill_to> /
@@ -168,9 +191,17 @@ final class PaymentService[F[_]: Async](xa: Transactor[F], ledger: TigerBeetleLe
                   LedgerAccount(arAcc, ledgerId, LedgerAccountCode.Ar)
                 )
                 // reverse of settlement: DR AR / CR cash
-                val transfer = LedgerTransfer(tId, arAcc, cashAcc, minor(amount), ledgerId, LedgerTransferCode.Reversal)
+                val posting = Posting(
+                  pid,
+                  0,
+                  JournalAccount(s"AR:${h.billTo}", LedgerAccountCode.Ar, Some(entity)),
+                  JournalAccount(cashKey(kind, entity), cashCode(kind), Some(entity)),
+                  ccy,
+                  minor(amount),
+                  transferCode = LedgerTransferCode.Reversal
+                )
                 ledger.createAccounts(accounts) *>
-                  ledger.postTransfers(List(transfer)) *>
+                  journal.postOne(Instant.now(), posting) *>
                   recordRefund(pid, invoiceNo, h, amount, kind, externalRef, tId, correlationId, causationId)
                     .transact(xa)
             }

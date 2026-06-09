@@ -23,7 +23,7 @@ final case class RaiseLine(orderLineId: UUID, serialNo: Option[String], componen
 // reversing transfers at the unit's specific batch cost; serials never silently re-enter sellable stock.
 final class ReturnService[F[_]: Async](xa: Transactor[F], ledger: TigerBeetleLedger[F]) {
 
-  private val gbpLedger = Ledgers.forCurrency(Currency.GBP)
+  private val journal = new Journal[F](xa, ledger)
 
   def arAccount(party: UUID): BigInt                         = TbIds.accountId(s"AR:$party")
   def revenueAccount(entity: UUID): BigInt                   = TbIds.accountId(s"REVENUE:$entity")
@@ -220,16 +220,15 @@ final class ReturnService[F[_]: Async](xa: Transactor[F], ledger: TigerBeetleLed
             val cost = line.unitLandedCost.getOrElse(BigDecimal(0))
             val invLeg = choice match {
               case "restock" | "refurbish" if line.entityId.isDefined && cost > 0 =>
-                ledger.postTransfers(
-                  List(
-                    LedgerTransfer(
-                      TbIds.transferId(lineId, 1),
-                      invAccount(line.entityId.get),
-                      cosClearing(line.entityId.get),
-                      minor(cost),
-                      gbpLedger,
-                      LedgerTransferCode.Generic
-                    )
+                journal.postOne(
+                  Instant.now(),
+                  Posting(
+                    lineId,
+                    1,
+                    JournalAccount(s"INV:${line.entityId.get}", LedgerAccountCode.Inv, line.entityId),
+                    JournalAccount(s"COS_CLEARING:${line.entityId.get}", LedgerAccountCode.CosClearing, line.entityId),
+                    Currency.GBP,
+                    minor(cost)
                   )
                 )
               case _ => Async[F].unit
@@ -304,25 +303,27 @@ final class ReturnService[F[_]: Async](xa: Transactor[F], ledger: TigerBeetleLed
               vat    = (refund * vatRate / 100).setScale(2, RoundingMode.HALF_UP)
               entity = h.entityId.getOrElse(new UUID(0L, 0L))
               // AR/VAT/revenue reversal (only if a refund is due)
+              ar = JournalAccount(s"AR:${h.billTo}", LedgerAccountCode.Ar, Some(entity))
               _ <-
                 if (refund > 0)
-                  ledger.postTransfers(
+                  journal.post(
+                    Instant.now(),
                     List(
-                      LedgerTransfer(
-                        TbIds.transferId(rmaId, 10),
-                        revenueAccount(entity),
-                        arAccount(h.billTo),
-                        minor(refund),
-                        gbpLedger,
-                        LedgerTransferCode.Generic
+                      Posting(
+                        rmaId,
+                        10,
+                        JournalAccount(s"REVENUE:$entity", LedgerAccountCode.Revenue, Some(entity)),
+                        ar,
+                        Currency.GBP,
+                        minor(refund)
                       ),
-                      LedgerTransfer(
-                        TbIds.transferId(rmaId, 11),
-                        vatAccount(entity, vatJur),
-                        arAccount(h.billTo),
-                        minor(vat),
-                        gbpLedger,
-                        LedgerTransferCode.Generic
+                      Posting(
+                        rmaId,
+                        11,
+                        JournalAccount(s"VAT:$entity:$vatJur", LedgerAccountCode.Vat, Some(entity)),
+                        ar,
+                        Currency.GBP,
+                        minor(vat)
                       )
                     )
                   )
@@ -373,16 +374,16 @@ final class ReturnService[F[_]: Async](xa: Transactor[F], ledger: TigerBeetleLed
   private def effectClaw(claw: Option[(UUID, UUID, BigDecimal)]): F[Unit] =
     claw.fold(Async[F].unit) {
       case (entryId, agentId, amount) =>
-        ledger.postTransfers(
-          List(
-            LedgerTransfer(
-              TbIds.transferId(entryId, 9),
-              commPayable(agentId),
-              commExpense(agentId),
-              minor(amount),
-              gbpLedger,
-              LedgerTransferCode.Commission
-            )
+        journal.postOne(
+          Instant.now(),
+          Posting(
+            entryId,
+            9,
+            JournalAccount(s"COMM_PAYABLE:$agentId:GBP", LedgerAccountCode.CommPayable, None),
+            JournalAccount(s"COMM_EXPENSE:$agentId:GBP", LedgerAccountCode.CommissionExpense, None),
+            Currency.GBP,
+            minor(amount),
+            transferCode = LedgerTransferCode.Commission
           )
         ) *>
           sql"""INSERT INTO commission_entry (agent_id, scheme_id, order_id, basis_amount, rate_applied, amount, currency, kind, status, tb_transfer_id)

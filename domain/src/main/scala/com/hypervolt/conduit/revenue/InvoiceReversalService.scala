@@ -4,11 +4,13 @@ import cats.effect.Async
 import cats.syntax.all._
 import com.hypervolt.conduit.event.OutboxEvent
 import com.hypervolt.conduit.event.OutboxRepo
+import com.hypervolt.conduit.ledger.Journal
+import com.hypervolt.conduit.ledger.JournalAccount
 import com.hypervolt.conduit.ledger.LedgerAccount
 import com.hypervolt.conduit.ledger.LedgerAccountCode
-import com.hypervolt.conduit.ledger.LedgerTransfer
 import com.hypervolt.conduit.ledger.LedgerTransferCode
 import com.hypervolt.conduit.ledger.Ledgers
+import com.hypervolt.conduit.ledger.Posting
 import com.hypervolt.conduit.ledger.TbIds
 import com.hypervolt.conduit.ledger.TigerBeetleLedger
 import com.hypervolt.conduit.money.Currency
@@ -53,8 +55,9 @@ private final case class ReversalHead(
 // emitted `invoice.voided` event fans out to the document (credit note) and accounting (Xero) consumers.
 final class InvoiceReversalService[F[_]: Async](xa: Transactor[F], ledger: TigerBeetleLedger[F]) {
 
-  private val zero  = new UUID(0L, 0L)
-  private val kinds = Set("mistake", "cancellation", "refund", "correction")
+  private val zero    = new UUID(0L, 0L)
+  private val kinds   = Set("mistake", "cancellation", "refund", "correction")
+  private val journal = new Journal[F](xa, ledger)
 
   private def minor(a: BigDecimal): BigInt = (a.setScale(2, RoundingMode.HALF_UP) * 100).toBigInt
   // The reversal id IS the cycle correlation id (and the invoice.voided event id) — one deterministic thread.
@@ -99,44 +102,23 @@ final class InvoiceReversalService[F[_]: Async](xa: Transactor[F], ledger: Tiger
                     LedgerAccount(carExpAcc, ledgerId, LedgerAccountCode.CarriageExpense),
                     LedgerAccount(carAccrAcc, ledgerId, LedgerAccountCode.CarriageAccrual)
                   )
-                  // Negate recognition: swap debit/credit of each original leg.
-                  val transfers = List(
-                    LedgerTransfer(
-                      TbIds.transferId(rid, 0),
-                      revAcc,
-                      arAcc,
-                      minor(h.revenueExVat),
-                      ledgerId,
-                      LedgerTransferCode.Reversal
-                    ),
-                    LedgerTransfer(
-                      TbIds.transferId(rid, 1),
-                      vatAcc,
-                      arAcc,
-                      minor(h.vat),
-                      ledgerId,
-                      LedgerTransferCode.Reversal
-                    ),
-                    LedgerTransfer(
-                      TbIds.transferId(rid, 2),
-                      invAcc,
-                      cogsAcc,
-                      minor(h.cogs),
-                      ledgerId,
-                      LedgerTransferCode.Reversal
-                    ),
-                    // recall outbound carriage too — the full per-event set (DR accrual / CR expense)
-                    LedgerTransfer(
-                      TbIds.transferId(rid, 3),
-                      carAccrAcc,
-                      carExpAcc,
-                      minor(h.shipping),
-                      ledgerId,
-                      LedgerTransferCode.Reversal
-                    )
-                  ).filter(_.amount > 0)
+                  val e = Some(entity)
+                  // Negate recognition: swap debit/credit of each original leg (incl. recalled carriage — the full set).
+                  val rev  = JournalAccount(s"REVENUE:$entity", LedgerAccountCode.Revenue, e)
+                  val ar   = JournalAccount(s"AR:${h.billTo}", LedgerAccountCode.Ar, e)
+                  val vat  = JournalAccount(s"VAT:$entity:${h.vatJurisdiction}", LedgerAccountCode.Vat, e)
+                  val inv  = JournalAccount(s"INV:$entity", LedgerAccountCode.Inv, e)
+                  val cogs = JournalAccount(s"COGS:$entity", LedgerAccountCode.CosClearing, e)
+                  val cAcc = JournalAccount(s"CARRIAGE_ACCRUAL:$entity", LedgerAccountCode.CarriageAccrual, e)
+                  val cExp = JournalAccount(s"CARRIAGE_EXPENSE:$entity", LedgerAccountCode.CarriageExpense, e)
+                  val postings = List(
+                    Posting(rid, 0, rev, ar, ccy, minor(h.revenueExVat), transferCode = LedgerTransferCode.Reversal),
+                    Posting(rid, 1, vat, ar, ccy, minor(h.vat), transferCode = LedgerTransferCode.Reversal),
+                    Posting(rid, 2, inv, cogs, ccy, minor(h.cogs), transferCode = LedgerTransferCode.Reversal),
+                    Posting(rid, 3, cAcc, cExp, ccy, minor(h.shipping), transferCode = LedgerTransferCode.Reversal)
+                  )
                   ledger.createAccounts(accounts) *>
-                    ledger.postTransfers(transfers) *>
+                    journal.post(Instant.now(), postings) *>
                     record(rid, orderInvoiceId, h, kind, reason, actor, causedBy).transact(xa)
               }
           }
