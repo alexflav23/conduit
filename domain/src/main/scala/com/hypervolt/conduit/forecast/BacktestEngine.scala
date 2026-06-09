@@ -214,57 +214,92 @@ object ForecastRunRepo {
 // is a no-op, exactly like event redelivery.
 final class BacktestEngine[F[_]: Async](xa: Transactor[F]) {
 
+  // Each key's censored history (and deal/depletion context) is fetched ONCE per origin and shared by every
+  // registry model — with thousands of real accounts a per-model fetch multiplies the dominant cost twelvefold.
   def runOrigin(origin: LocalDate, horizonMonths: Int, minOrders: Int = 3): F[Int] =
     DemandSeriesRepo
       .forecastableKeys(origin, minOrders)
       .transact(xa)
-      .flatMap(keys => DemandModel.registry.traverse(m => runModel(m, origin, horizonMonths, keys)).map(_.sum))
-
-  private def runModel(model: DemandModel, origin: LocalDate, horizon: Int, keys: List[(UUID, UUID)]): F[Int] = {
-    val program = ForecastRunRepo.insertRun(origin, horizon, model, "backtest").flatMap {
-      case None => 0.pure[ConnectionIO] // this (origin, model) already ran — idempotent
-      case Some(runId) =>
-        keys
-          .traverse {
-            case (company, variant) =>
-              DemandSeriesRepo.history(company, variant, origin).flatMap { h =>
-                val preds = model.predict(h, horizon)
-                preds.zipWithIndex.toList.traverse_ {
-                  case (qty, i) =>
-                    ForecastRunRepo.insertPrediction(runId, company, variant, origin.plusMonths(i.toLong), qty)
-                }
-              }
+      .flatMap { keys =>
+        DemandModel.registry
+          .traverse(m => ForecastRunRepo.insertRun(origin, horizonMonths, m, "backtest").map(m -> _))
+          .transact(xa)
+          .flatMap { runs =>
+            val live = runs.collect { case (m, Some(runId)) => (m, runId) }
+            if (live.isEmpty) 0.pure[F] // every (origin, model) already ran — idempotent
+            else
+              keys
+                .traverse(key => predictKey(key, origin, horizonMonths, live))
+                .map(_ => keys.size * live.size)
           }
-          .as(keys.size)
+      }
+
+  private def predictKey(
+      key: (UUID, UUID),
+      origin: LocalDate,
+      horizon: Int,
+      runs: List[(DemandModel, UUID)]
+  ): F[Unit] = {
+    val (company, variant) = key
+    val program = DemandSeriesRepo.history(company, variant, origin).flatMap { h =>
+      runs.traverse_ {
+        case (model, runId) =>
+          model.predict(h, horizon).zipWithIndex.toList.traverse_ {
+            case (qty, i) =>
+              ForecastRunRepo.insertPrediction(runId, company, variant, origin.plusMonths(i.toLong), qty)
+          }
+      }
     }
     program.transact(xa)
   }
 
   // Score every unscored prediction of runs whose horizon has (partly) elapsed — called as quarters close;
-  // adding actuals automatically extends the learning (doc 26 §5).
-  def scoreOrigin(origin: LocalDate, asOf: LocalDate): F[Int] = {
-    val program = runsAt(origin).flatMap(
-      _.traverse {
-        case (runId, modelKey) =>
-          predictionsOf(runId).flatMap(
-            _.filter { case (_, _, period, _) => period.plusMonths(1).compareTo(asOf) <= 0 }
-              .traverse {
-                case (company, variant, period, forecast) =>
-                  DemandSeriesRepo
-                    .actuals(company, variant, period, period.plusMonths(1))
-                    .flatMap { act =>
-                      val actual  = act.getOrElse(period, BigDecimal(0))
-                      val horizon = java.time.Period.between(origin, period).toTotalMonths.toInt + 1
-                      ForecastRunRepo
-                        .score(runId, company, variant, modelKey, origin, period, horizon, forecast, actual)
-                    }
-              }
-              .map(_.sum)
-          )
-      }.map(_.sum)
-    )
-    program.transact(xa)
-  }
+  // adding actuals automatically extends the learning (doc 26 §5). Actuals are fetched ONCE per
+  // (company, variant) and shared across every model's predictions — they are the same numbers, and at real
+  // account counts a per-prediction fetch is two orders of magnitude more queries.
+  def scoreOrigin(origin: LocalDate, asOf: LocalDate): F[Int] =
+    runsAt(origin).transact(xa).flatMap { runs =>
+      val modelOf = runs.toMap
+      runs
+        .traverse(r => predictionsOf(r._1).map(_.map(p => (r._1, p))).transact(xa))
+        .map(_.flatten.filter { case (_, (_, _, period, _)) => period.plusMonths(1).compareTo(asOf) <= 0 })
+        .flatMap(
+          _.groupBy { case (_, (company, variant, _, _)) => (company, variant) }.toList
+            .traverse {
+              case ((company, variant), preds) =>
+                val program = DemandSeriesRepo
+                  .actuals(company, variant, origin, origin.plusMonths(horizonOf(preds, origin)))
+                  .flatMap(act =>
+                    preds
+                      .traverse {
+                        case (runId, (_, _, period, forecast)) =>
+                          val actual  = act.getOrElse(period, BigDecimal(0))
+                          val horizon = java.time.Period.between(origin, period).toTotalMonths.toInt + 1
+                          ForecastRunRepo.score(
+                            runId,
+                            company,
+                            variant,
+                            modelOf.getOrElse(runId, "?"),
+                            origin,
+                            period,
+                            horizon,
+                            forecast,
+                            actual
+                          )
+                      }
+                      .map(_.sum)
+                  )
+                program.transact(xa)
+            }
+            .map(_.sum)
+        )
+    }
+
+  private def horizonOf(preds: List[(UUID, (UUID, UUID, LocalDate, BigDecimal))], origin: LocalDate): Long =
+    preds
+      .map { case (_, (_, _, period, _)) => java.time.Period.between(origin, period).toTotalMonths + 1 }
+      .maxOption
+      .getOrElse(0L)
 
   def champion(company: UUID): F[Option[(String, BigDecimal)]] = ForecastRunRepo.champion(company).transact(xa)
 

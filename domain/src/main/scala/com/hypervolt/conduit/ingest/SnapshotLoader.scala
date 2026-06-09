@@ -13,6 +13,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.time.Instant
 import java.time.LocalDate
+import java.util.UUID
 import scala.jdk.CollectionConverters._
 
 // The git-snapshot ingest (doc 26 §3a): external history lives as NDJSON files committed to the repo
@@ -60,7 +61,8 @@ object SnapshotLoader {
   // dataset family → (dataset name, one parsed NDJSON row) → rows written (0 on conflict = idempotent re-load).
   private[ingest] val handlers: Map[String, (String, Json) => ConnectionIO[Int]] = Map(
     "exogenous" -> exogenous,
-    "hubspot"   -> hubspot
+    "hubspot"   -> hubspot,
+    "mrpeasy"   -> mrpeasy
   )
 
   // ingest/exogenous/<series_key>.ndjson — {"period_month":"2024-01-01","value":123456,"known_at":"2024-02-05T00:00:00Z"}
@@ -108,4 +110,137 @@ object SnapshotLoader {
                   payment_method = EXCLUDED.payment_method""".update.run
       }
     }
+
+  // ingest/mrpeasy/*.ndjson — the B2B system of record (doc 26 §3a): real customer orders (units, real SKUs,
+  // real accounts) and shipments (with serial numbers). HubSpot stopped being the deal record in Oct'25;
+  // MRPeasy carries the 2021→today trade history. Orders load before shipments (lexical file order).
+  private def mrpeasy(dataset: String, row: Json): ConnectionIO[Int] =
+    dataset match {
+      case "customer_orders" => mrpOrder(row)
+      case "shipments"       => mrpShipment(row)
+      case _                 => 0.pure[ConnectionIO]
+    }
+
+  private def str(c: io.circe.ACursor, k: String): Option[String] =
+    c.downField(k).focus.flatMap(j => j.asString.orElse(j.asNumber.map(_.toString))).filter(_.nonEmpty)
+
+  private def num(c: io.circe.ACursor, k: String): Option[BigDecimal] =
+    str(c, k).flatMap(s => scala.util.Try(BigDecimal(s)).toOption)
+
+  private def epoch(c: io.circe.ACursor, k: String): Option[java.time.LocalDateTime] =
+    str(c, k)
+      .flatMap(s => scala.util.Try(s.toLong).toOption)
+      .map(t => java.time.LocalDateTime.ofInstant(java.time.Instant.ofEpochSecond(t), java.time.ZoneOffset.UTC))
+
+  private def skippableSku(code: String): Boolean =
+    code.contains("DELIVERY") || code.contains("DONOTUSE")
+
+  private def mrpParty(name: String): ConnectionIO[UUID] =
+    sql"SELECT id FROM party WHERE display_name = ${"MRP: " + name}".query[UUID].option.flatMap {
+      case Some(id) => id.pure[ConnectionIO]
+      case None =>
+        sql"""INSERT INTO party (display_name, party_type, is_organization)
+              VALUES (${"MRP: " + name}, 'wholesaler', true) RETURNING id""".query[UUID].unique
+    }
+
+  private def mrpVariant(sku: String): ConnectionIO[UUID] =
+    sql"SELECT id FROM product_variant WHERE sku = $sku".query[UUID].option.flatMap {
+      case Some(id) => id.pure[ConnectionIO]
+      case None =>
+        sql"SELECT id FROM product_family WHERE code = 'MRP'"
+          .query[UUID]
+          .option
+          .flatMap {
+            case Some(f) => f.pure[ConnectionIO]
+            case None =>
+              sql"INSERT INTO product_family (code, name) VALUES ('MRP', 'MRPeasy import') RETURNING id"
+                .query[UUID]
+                .unique
+          }
+          .flatMap(fam => sql"""INSERT INTO product_variant (family_id, sku, generation, product_class)
+                VALUES ($fam, $sku, 'mrp', 'charger') RETURNING id""".query[UUID].unique)
+    }
+
+  private def mrpOrder(row: Json): ConnectionIO[Int] = {
+    val c = row.hcursor
+    (str(c, "code"), str(c, "customer_name"), epoch(c, "created")).tupled match {
+      case None => 0.pure[ConnectionIO]
+      case Some((code, customer, created)) =>
+        val status = if (str(c, "status").exists(_.toLowerCase.contains("cancel"))) "cancelled" else "placed"
+        val total  = num(c, "total_price_cur").orElse(num(c, "total_price")).getOrElse(BigDecimal(0))
+        mrpParty(customer).flatMap { party =>
+          sql"""INSERT INTO "order" (order_no, type, sold_to_party_id, bill_to_party_id, status, txn_currency,
+                                     payment_method, subtotal_ex_vat, vat_total, total_inc_vat)
+                VALUES (${"MRP-" + code}, 'trade', $party, $party, $status, 'GBP', 'invoice', $total, 0, $total)
+                ON CONFLICT (order_no) DO NOTHING RETURNING id""".query[UUID].option.flatMap {
+            case None => 0.pure[ConnectionIO] // already loaded — idempotent
+            case Some(orderId) =>
+              val lines = c.downField("lines").focus.flatMap(_.asArray).getOrElse(Vector.empty)
+              lines.toList.traverse_ { l =>
+                val lc = l.hcursor
+                (str(lc, "item_code").filterNot(skippableSku), num(lc, "qty").filter(_ > 0)).tupled match {
+                  case None => 0.pure[ConnectionIO].void
+                  case Some((sku, qty)) =>
+                    mrpVariant(sku).flatMap(variant =>
+                      sql"""INSERT INTO order_line (order_id, product_variant_id, qty, unit_price_ex_vat,
+                                                    vat_amount, line_total_inc_vat)
+                            VALUES ($orderId, $variant, $qty, ${num(lc, "price").getOrElse(BigDecimal(0))}, 0,
+                                    ${num(lc, "total").getOrElse(BigDecimal(0))})""".update.run.void
+                    )
+                }
+              } *> sql"""UPDATE "order" SET created_at = $created WHERE id = $orderId""".update.run
+          }
+        }
+    }
+  }
+
+  private def mrpShipment(row: Json): ConnectionIO[Int] = {
+    val c     = row.hcursor
+    val isRma = str(c, "rma_order_id").isDefined
+    (str(c, "code"), str(c, "order_code"), epoch(c, "created")).tupled match {
+      case None                                                 => 0.pure[ConnectionIO]
+      case Some((code, _, _)) if isRma || code.contains("-rtn") => 0.pure[ConnectionIO]
+      case Some((code, orderCode, created)) =>
+        sql"""SELECT id, sold_to_party_id FROM "order" WHERE order_no = ${"MRP-" + orderCode}"""
+          .query[(UUID, UUID)]
+          .option
+          .flatMap {
+            case None => 0.pure[ConnectionIO] // shipment without a loaded order — skip, never fail
+            case Some((orderId, company)) =>
+              sql"""INSERT INTO dispatch (dispatch_no, order_id, date, delivered_at)
+                    VALUES (${"MRP-" + code}, $orderId, $created, ${epoch(c, "delivery_date")})
+                    ON CONFLICT (dispatch_no) DO NOTHING RETURNING id""".query[UUID].option.flatMap {
+                case None => 0.pure[ConnectionIO]
+                case Some(dispatchId) =>
+                  val lines = c.downField("lines").focus.flatMap(_.asArray).getOrElse(Vector.empty)
+                  lines.toList
+                    .traverse { l =>
+                      val lc = l.hcursor
+                      str(lc, "item_code").filterNot(skippableSku) match {
+                        case None => 0.pure[ConnectionIO]
+                        case Some(sku) =>
+                          val serials = lc
+                            .downField("serials")
+                            .focus
+                            .flatMap(_.asArray)
+                            .getOrElse(Vector.empty)
+                            .flatMap(_.asString)
+                            .filter(_.startsWith("0301"))
+                          mrpVariant(sku).flatMap(variant =>
+                            serials.toList
+                              .traverse { s =>
+                                sql"""INSERT INTO serial_unit (serial_no, generation, product_variant_id,
+                                                             dispatch_id, company_id, status)
+                                    VALUES ($s, 'v3', $variant, $dispatchId, $company, 'dispatched')
+                                    ON CONFLICT (serial_no) DO NOTHING""".update.run
+                              }
+                              .map(_.sum)
+                          )
+                      }
+                    }
+                    .map(_.sum + 1)
+              }
+          }
+    }
+  }
 }
