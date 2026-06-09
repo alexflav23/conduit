@@ -361,3 +361,43 @@ After the hypercare window closes with green reconciliations and decommission (P
 - **Rollback:** within hypercare, rollback re-opens read-only legacy, reverses Conduit's opening/transacted transfers with deterministic reversing transfers (no edits), and replays the freeze-window delta into legacy from the retained log — no data loss either direction; everything is audited and retained; the point-of-no-return after decommission is explicit.
 
 > Supports **M10** (doc 07). This is the **biggest practical go-live risk** (doc 10 §B) — Conduit cannot go live until this runbook executes green end-to-end.
+
+---
+
+## Real-system ground truth (validated by `precision`)
+
+The COO's read-only tool **`precision`** (`gitlab.com/hypervolt/gtm-eng/precision`) reverse-engineered and *validated*
+the live data flows across **Rhenus** (3PL), **HubSpot** (CRM/deals), **MRPeasy** (the ERP we migrate from) and
+**Volex** (the contract manufacturer). It is a **ground-truth source + the dual-run reconciliation partner** for this
+migration (it already three-way-reconciles shipped units). Concrete facts the backfill/mapping must honour:
+
+- **Id schemes & the join cascade.** A HubSpot deal → Rhenus order via a 6-path cascade (priority): `erp_link`→CO,
+  `tracking_link`→CO, `order_id` (CO **or** 18-digit Athena), `jumptech_link` (bare CO), **HubSpot `deal_id` used as
+  the Rhenus `ORDER_ID`** (11-digit, ~25% since 2026-05-17 — adding it took matching 73.8%→99.1%), and the **MRPeasy
+  bridge** (deal_id pulled from MRP order *notes* via `/deal/N`, `/record/0-3/N`, or a bare 7–13-digit line). Rhenus
+  `ORDER_ID` formats: `CO-XXXXX`, `CO-XXXXX-N` (split suffix), 18-digit (Athena retail), 11-digit (HS deal id). The
+  source→target mapping must accept all of these.
+- **Cross-system lag is real; Rhenus is physical truth.** Order Placed (HS `first_won_date`) → Confirmed (MRP) →
+  loaded Rhenus → Ready → **Shipped (Rhenus — physical, FIRST)** → Shipped (MRP, +1–3 business days) → Shipped (HS
+  `shipped_date`, same lag). The dispatch/recognition event is the **Rhenus** ship; MRP/HS reflect it 0–3 days later.
+  Dual-run reconciliation must tolerate a 0–3d skew (not flag it as a break).
+- **Split deals → Conduit tranches.** A single HubSpot deal can be a bulk PO shipped in **multiple tranches on
+  different dates** (e.g. Octopus `HK00502`, £833k → 728u/19-Mar + 48u/30-Mar + 552u/16-Apr), but HS pins all units to
+  one `shipped_date` → distortion they patch by splitting the deal. **Conduit already models this correctly** (order
+  tranches/call-off + per-dispatch recognition, doc 04 M4); migrating a split deal = **one Conduit order with
+  per-tranche dispatches**, each its own ship date + recognition. precision's split-QA rules (a child with its own
+  `first_won_date` double-counts revenue; children must sum to the parent ±£1) are exactly what Conduit's per-tranche
+  model avoids by construction.
+- **MRP covers only ~60% of shipped units** — Athena direct-checkout (retail) bypasses MRPeasy. Source retail orders
+  from **Athena/checkout**, not MRP; Conduit's unified order model *closes* this structural gap.
+- **Failure modes → dual-run exception classes:** missing CO/tracking cross-refs on shipped deals; orders stuck in a
+  stage >72h; split-shipment mismatches; Volex→Rhenus pre-advice gaps; orphan Rhenus orders; Amazon-FBA on a separate
+  pipeline.
+- **Adapter data-quality gotchas:** Rhenus CSVs are **latin-1** with an Excel leading-`'` prefix + a few malformed
+  rows; HubSpot dates are **epoch-ms** (not ISO) and batch reads return **HTTP 207**; a line item's SKU lives on the
+  **Product** (`hs_product_id`), not the line item; MRPeasy rate-limits hard (filter by CO/date/status) and
+  `actual_delivery_date` is per-product-line.
+- **Charger classification is real & SKU-pattern-driven today** — chargers = SKU containing **`hv3`** (real:
+  `HV3PROAA…`), `-DEMO` excluded, no-line-item deals kept. This is the fragile version of Conduit's governed
+  **`product_class`** (doc 24 §4.5), and it confirms **no system computes the volume rebates today** (precision does
+  the *classification*; rebate tracking "belongs in a separate accounting system" → that's Conduit, doc 24).

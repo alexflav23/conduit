@@ -404,7 +404,10 @@ never a one-order patch.
    window. (Reporting concern — doc 21.)
 8. **`product_class` taxonomy** — the governed value set (charger | accessory | cable | spare | bundle …) and where
    it lives (variant vs family); confirm chargers are the default tier-qualifying class and accessories' regimen
-   (separate scheme / flat / excluded). Replaces the `is_serialised` proxy (§4.5).
+   (separate scheme / flat / excluded). Replaces the `is_serialised` proxy (§4.5). *(Real classification today, per
+   the `precision` tool: charger = SKU containing `hv3` — e.g. `HV3PROAA…`; `-DEMO` excluded. And precision confirms
+   **no system computes these volume rebates today** — it does only the charger classification — so this engine is
+   genuinely net-new, doc 18 "Real-system ground truth".)*
 
 ---
 
