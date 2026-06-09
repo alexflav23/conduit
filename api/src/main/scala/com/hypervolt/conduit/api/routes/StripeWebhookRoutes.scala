@@ -11,6 +11,7 @@ import doobie.util.transactor.Transactor
 import org.http4s.HttpRoutes
 import sttp.model.StatusCode
 import sttp.tapir._
+import com.hypervolt.conduit.api.ApiMetrics
 import sttp.tapir.server.http4s.Http4sServerInterpreter
 
 // The PUBLIC Stripe webhook (doc 13 §payments). Verifies the signature (when a secret is configured), then
@@ -40,5 +41,5 @@ final class StripeWebhookRoutes[F[_]: Async](xa: Transactor[F], verifier: Option
     }
 
   val routes: HttpRoutes[F] =
-    Http4sServerInterpreter[F]().toRoutes(endpointDef.serverLogic(t => logic(t._1, t._2)))
+    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(endpointDef.serverLogic(t => logic(t._1, t._2)))
 }

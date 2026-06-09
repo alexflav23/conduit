@@ -27,6 +27,7 @@ import scala.util.Try
 import sttp.model.StatusCode
 import sttp.tapir._
 import sttp.tapir.json.circe._
+import com.hypervolt.conduit.api.ApiMetrics
 import sttp.tapir.server.http4s.Http4sServerInterpreter
 
 // Auditability Center surface (doc 14 §6): the period close board, reconciliation results, the control register
@@ -309,7 +310,7 @@ final class AuditRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
       )
 
   val routes: HttpRoutes[F] =
-    Http4sServerInterpreter[F]().toRoutes(
+    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(
       List(
         periods,
         reconciliations,

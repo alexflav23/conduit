@@ -21,6 +21,7 @@ import sttp.model.StatusCode
 import sttp.tapir._
 import sttp.tapir.generic.auto._
 import sttp.tapir.json.circe._
+import com.hypervolt.conduit.api.ApiMetrics
 import sttp.tapir.server.http4s.Http4sServerInterpreter
 
 final case class SubmitNarrativeReq(
@@ -152,5 +153,5 @@ final class DealDeskRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F])
       })
 
   val routes: HttpRoutes[F] =
-    Http4sServerInterpreter[F]().toRoutes(List(list, get, submit, decision))
+    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(List(list, get, submit, decision))
 }

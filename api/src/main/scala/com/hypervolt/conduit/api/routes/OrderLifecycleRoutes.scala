@@ -17,6 +17,7 @@ import scala.util.Try
 import sttp.model.StatusCode
 import sttp.tapir._
 import sttp.tapir.json.circe._
+import com.hypervolt.conduit.api.ApiMetrics
 import sttp.tapir.server.http4s.Http4sServerInterpreter
 
 // The Order Collection Ledger surface (doc 13 §void / order→cash). Replays the immutable event stream for one
@@ -61,5 +62,5 @@ final class OrderLifecycleRoutes[F[_]: Async](xa: Transactor[F], auth: AuthServi
             }
       )
 
-  val routes: HttpRoutes[F] = Http4sServerInterpreter[F]().toRoutes(lifecycle)
+  val routes: HttpRoutes[F] = Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(lifecycle)
 }

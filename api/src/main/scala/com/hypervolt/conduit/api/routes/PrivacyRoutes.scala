@@ -18,6 +18,7 @@ import scala.util.Try
 import sttp.model.StatusCode
 import sttp.tapir._
 import sttp.tapir.json.circe._
+import com.hypervolt.conduit.api.ApiMetrics
 import sttp.tapir.server.http4s.Http4sServerInterpreter
 
 // GDPR DSAR surface (doc 19 §B.3.3): request erasure, then a SEPARATE Data-Protection approver decides — the
@@ -91,5 +92,5 @@ final class PrivacyRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F], 
       })
 
   val routes: HttpRoutes[F] =
-    Http4sServerInterpreter[F]().toRoutes(List(requestErasure, approveErasure, readPii))
+    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(List(requestErasure, approveErasure, readPii))
 }

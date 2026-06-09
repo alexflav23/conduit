@@ -11,6 +11,12 @@ lazy val scala213 = "2.13.16"
 // doc 14 §1.1 — no Double/Float in financial modules. CI gate (`sbt noFloatCheck`).
 lazy val noFloatCheck = taskKey[Unit]("Reject Double/Float in financial modules (money, ledger)")
 
+// doc 19 §B.1/§C.6 — no committed credential. CI gate (`sbt secretScan`), runs in the lint stage.
+lazy val secretScan = taskKey[Unit]("Reject committed credential patterns (AWS/JWT/private-key/Stripe/DB-URL)")
+
+// doc 19 §C.6 — forward-only migrations. CI gate (`sbt migrationCheck`): reject data-destroying DDL.
+lazy val migrationCheck = taskKey[Unit]("Reject data-destroying DDL in Flyway migrations (forward-only)")
+
 ThisBuild / scalaVersion := scala213
 
 // Versions pinned to the house stack (Athena). See CLAUDE.md §2.
@@ -29,8 +35,10 @@ lazy val Versions = new {
   val log4cats       = "2.7.0"
   val auth0JwksRsa   = "0.22.1"
   val auth0JavaJwt   = "4.4.0"
-  val otel           = "1.35.0"
-  val otelPromExport = "1.35.0-alpha"
+  val otel           = "1.40.0"
+  val otelPromExport = "1.40.0-alpha"
+  val otelRuntime    = "2.6.0-alpha"
+  val otelSemconv    = "1.26.0-alpha"
   val tigerBeetle    = "0.16.46"
   val jackson        = "2.20.0"
   val pulsar         = "4.0.4"
@@ -92,6 +100,57 @@ lazy val conduit = (project in file("."))
       }
       if (offenders.nonEmpty) sys.error(s"no-float rule violated in financial modules:\n${offenders.mkString("\n")}")
       else log.info(s"no-float check passed (${roots.size} financial module roots clean)")
+    },
+    secretScan := {
+      val log  = streams.value.log
+      val root = (ThisBuild / baseDirectory).value
+      // scan code + config (not prose docs); never the build artefacts or VCS internals
+      val exts    = Set("scala", "sql", "conf", "yml", "yaml", "sh", "nix", "properties", "env", "json")
+      val skipDir = Set("target", ".git", ".bsp", ".metals", ".bloop", ".idea")
+      // patterns are crafted not to self-match this task's own source (no literal credential here triggers them)
+      val patterns: Seq[(String, scala.util.matching.Regex)] = Seq(
+        "AWS access key id"    -> "AKIA[0-9A-Z]{16}".r,
+        "private key block"    -> "BEGIN (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY".r,
+        "JWT"                  -> raw"eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}".r,
+        "Stripe live key"      -> "(?:sk|rk)_live_[0-9A-Za-z]{16,}".r,
+        "DB URL with password" -> raw"[a-z][a-z0-9+.\-]*://[^:@/\s]+:[^@/\s]+@[^/\s]+".r
+      )
+      def skipped(f: File): Boolean = {
+        val rel = f.relativeTo(root).map(_.getPath).getOrElse(f.getName)
+        skipDir.exists(d => rel == d || rel.startsWith(d + "/") || rel.contains("/" + d + "/"))
+      }
+      val files = (root ** "*").get
+        .filter(f => f.isFile && exts.contains(f.getName.split('.').lastOption.getOrElse("")) && !skipped(f))
+      val offenders = files.flatMap(f =>
+        IO.readLines(f).zipWithIndex.flatMap { case (line, idx) =>
+          patterns.collect { case (label, re) if re.findFirstIn(line).isDefined => s"${f.getName}:${idx + 1}: $label" }
+        }
+      )
+      if (offenders.nonEmpty) sys.error(s"secretScan: committed credential(s) detected:\n${offenders.mkString("\n")}")
+      else log.info(s"secretScan passed (${files.size} files, ${patterns.size} patterns, no credentials)")
+    },
+    migrationCheck := {
+      val log = streams.value.log
+      val dir = (ThisBuild / baseDirectory).value / "api" / "src" / "main" / "resources" / "db" / "migration"
+      // data-destroying DDL is forbidden (forward-only); safe object drops (INDEX/CONSTRAINT/TRIGGER/VIEW/TYPE) are fine
+      val banned: Seq[(String, scala.util.matching.Regex)] = Seq(
+        "DROP TABLE"    -> "(?i)\\bDROP\\s+TABLE\\b".r,
+        "DROP COLUMN"   -> "(?i)\\bDROP\\s+COLUMN\\b".r,
+        "TRUNCATE"      -> "(?i)\\bTRUNCATE\\b".r,
+        "DROP SCHEMA"   -> "(?i)\\bDROP\\s+SCHEMA\\b".r,
+        "DROP DATABASE" -> "(?i)\\bDROP\\s+DATABASE\\b".r,
+        "DELETE FROM"   -> "(?i)\\bDELETE\\s+FROM\\b".r
+      )
+      val files = (dir ** "*.sql").get
+      val offenders = files.flatMap(f =>
+        IO.readLines(f).zipWithIndex.flatMap { case (line, idx) =>
+          val code = line.split("--", 2).headOption.getOrElse("")
+          banned.collect { case (label, re) if re.findFirstIn(code).isDefined => s"${f.getName}:${idx + 1}: $label" }
+        }
+      )
+      if (offenders.nonEmpty)
+        sys.error(s"migrationCheck: forward-only rule violated (data-destroying DDL):\n${offenders.mkString("\n")}")
+      else log.info(s"migrationCheck passed (${files.size} migrations, forward-only)")
     }
   )
   .aggregate(domain, api, apiIt, consumer, scripting)
@@ -130,6 +189,8 @@ lazy val domain = (project in file("domain"))
       "org.tpolecat"                %% "doobie-hikari"                % Versions.doobie,
       "io.opentelemetry"             % "opentelemetry-sdk"            % Versions.otel,
       "io.opentelemetry"             % "opentelemetry-exporter-prometheus" % Versions.otelPromExport,
+      "io.opentelemetry.instrumentation" % "opentelemetry-runtime-telemetry-java17" % Versions.otelRuntime,
+      "io.opentelemetry.semconv"     % "opentelemetry-semconv"        % Versions.otelSemconv,
       "com.tigerbeetle"              % "tigerbeetle-java"             % Versions.tigerBeetle,
       "com.fasterxml.jackson.core"   % "jackson-core"                 % Versions.jackson,
       "com.fasterxml.jackson.core"   % "jackson-databind"             % Versions.jackson,

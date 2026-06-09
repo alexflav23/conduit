@@ -15,13 +15,14 @@ scalafmt:
   script:
     - nix-shell --run "sbt 'scalafmtCheck;Test/scalafmtCheck'"
 
-# doc 14 §1.1 no-float gate + doc 03 §2 Avro BACKWARD-compat gate.
+# doc 14 §1.1 no-float gate + doc 03 §2 Avro BACKWARD-compat gate
+# + doc 19 §B.1 secretScan + doc 19 §C.6 forward-only migration gate.
 financial-gates:
   stage: lint
   tags:
     - x86_64-nix-24.11
   script:
-    - nix-shell --run "sbt noFloatCheck schemaCheck"
+    - nix-shell --run "sbt noFloatCheck schemaCheck secretScan migrationCheck"
 
 compile-test:
   stage: test

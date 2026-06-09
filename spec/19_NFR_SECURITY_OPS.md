@@ -104,7 +104,7 @@ Conduit conforms to doc 01 §6.1: **runtime config via Consul KV; secrets via th
 
 - **Source of truth:** AWS Secrets Manager (per CLAUDE.md §6) — `<env>/conduit/rds-db-credentials/*`, `<env>/keycloak-configuration/conduit-api/*`, plus Conduit-specific secrets: TigerBeetle cluster credentials, Pulsar auth token, Stripe/Xero/HubSpot integration keys, the **PII master-key-encryption-key reference** (§B.3), and reseller-API signing material.
 - **Delivery:** secrets are injected at deploy via the Terraform-provisioned IAM role (`…/rbac/<env>-conduit-operator`) and surfaced to the process as env overrides into the typesafe-config HOCON (`${ENV_VAR}`), exactly as Athena does. **No secret is in `application.conf`, in the repo, in a Docker image layer, or in Consul KV in plaintext.** Non-secret config (endpoints, ports, feature-flag defaults) lives in HOCON/Consul KV.
-- **CI gate (net-new, additive to the house gates):** a `secretScan` lint stage (gitleaks-style) fails the build on any committed credential pattern (DB URL with password, AWS key, JWT, private key, Stripe/Xero token). This runs in the **lint** stage alongside `schemaCheck` and the no-float lint (CLAUDE.md §6).
+- **CI gate (net-new, additive to the house gates):** a `secretScan` lint stage (gitleaks-style) fails the build on any committed credential pattern (DB URL with password, AWS key, JWT, private key, Stripe/Xero token). This runs in the **lint** stage alongside `schemaCheck` and the no-float lint (CLAUDE.md §6). **✅ Implemented** as the `sbt secretScan` task (patterns: `AKIA…` AWS key, `BEGIN … PRIVATE KEY`, three-part JWT, `sk_live_/rk_live_` Stripe, `scheme://user:pass@host` DB URL), wired into the `financial-gates` lint job; scans code+config, skips prose/build artefacts; fails a planted secret.
 - **Rotation:** DB and integration credentials rotate via Secrets Manager rotation; the app re-reads on the documented rotation cadence (≥ quarterly, and immediately on suspected compromise). Keycloak JWKS rotation is handled by the cached JWKS client (re-fetch on unknown `kid`).
 - **Least privilege:** the `conduit-operator` IAM role reads only its own secret prefixes; no shared/estate-wide secret access.
 - **Logs carry no secrets and no PII:** log4cats appender scrubs known secret keys and PII fields; structured-log fields are an allowlist, not the whole object.
@@ -130,9 +130,17 @@ Key management is AWS KMS for infrastructure-level keys; **application-level PII
 > (put/get/shred, `«erased»` tombstone), `privacy.DsarService` (maker-checker erasure → shred → `pii.shredded`
 > event carrying **no PII**). REST: `POST /api/v1/privacy/dsar/erasure`, `…/dsar/{id}/approve`, `GET …/privacy/pii`.
 > Control **CTRL-PII-SHRED** (a shredded key must have no wrapped DEK). `DsarSuite` proves erasure tombstones PII
-> + destroys the DEK while the financial skeleton + invoice amounts survive and re-perform. *Follow-on: migrate the
-> existing plaintext PII columns on `party`/`contact` through the vault (mechanical), and a consumer that propagates
-> the tombstone to projections/HubSpot (§B.3.3 step 5).*
+> + destroys the DEK while the financial skeleton + invoice amounts survive and re-perform.
+>
+> **✅ Tombstone propagation now implemented (steps 5–6).** `privacy.PiiTombstoneService.propagate(subject)` overwrites
+> the subject's served projection columns (`party` person-name, `contact` name/email/phone, `address`, `billing_profile`)
+> with the `«erased»` tombstone in one transaction; `consumer.PiiShreddedConsumer` performs it off `conduit.crm` on the
+> `pii.shredded` event (own subscription `conduit-pii-tombstone-1`, Shared+Earliest, idempotent → at-least-once-safe).
+> `PiiTombstoneSuite` proves: after a governed erasure, **every** served PII column reads `«erased»`, the vault DEK is
+> destroyed, and the order/`Money` skeleton is intact. *Note: the per-write column→vault encryption binds to the M4 CRM
+> write endpoints when built — today `party`/`contact` are test-seeded (no production write path), so the vault is the
+> proven encrypted store (`DsarSuite`) and the tombstone consumer governs the served columns. HubSpot anonymise rides
+> the same `pii.shredded` event when the HubSpot adapter lands (doc 01 §2).*
 
 This is the procedure doc 01 §3a and doc 14 §5.3 flag but do not write. It resolves the tension between **GDPR erasure** (a data subject can require their personal data be deleted) and **indefinite, immutable financial/audit retention** (SOX/PCAOB, doc 14). The mechanism is **crypto-shredding**: PII is encrypted with a per-subject key; erasure destroys the key, rendering the ciphertext permanently unrecoverable, while the **non-personal financial skeleton** (amounts, dates, IDs, ledger transfers) is retained intact and still reconciles.
 
@@ -285,17 +293,32 @@ This is the index that ties the operational/security controls to the SOX `contro
 
 ### C.1 Metrics, logs, traces (the house pattern)
 
-Conduit reuses the Athena observability shape (CLAUDE.md §2, §6; doc 01 §6) — nothing parallel.
+> **✅ Mechanisms implemented (M-NFR.3).** The exporter, the operational gauges, JVM runtime metrics, the
+> per-endpoint HTTP metrics interceptor, the log-level counter appender, and the Vector JSON log encoder are
+> built and proven end-to-end (`MetricsSuite` scrapes `:PORT/metrics` and asserts the gauges carry live DB
+> values). Code: `metrics/{GlobalMetrics,MetricsBuilder,ConduitMetrics}`, `logging/{OtelAppender,VectorLogEncoder}`,
+> `api/ApiMetrics`, wired in both `Main`s. The per-instrument DB/business timers (`metricsBuilder.time(...)`) and the
+> latency/lag *histograms* below are the remaining increment (the gauge + HTTP-metrics spine they hang off is done).
 
-- **Metrics — Prometheus.** OpenTelemetry SDK + Prometheus exporter (`opentelemetry-sdk` + `exporter-prometheus`, pinned in CLAUDE.md §2), scraped on `PROMETHEUS_PORT` (**9464**). The `MetricsBuilder` (Athena's) wraps DB calls (`metricsBuilder.time(...)`) and the API records `http_server_request_duration_seconds`. Conduit-specific instruments:
-  - `conduit_order_capture_duration_seconds` (histogram) — the §A.1 budget.
-  - `conduit_outbox_relay_lag_seconds`, `conduit_outbox_unpublished_count` (gauge) — relay health.
-  - `conduit_ledger_post_lag_seconds`, `conduit_consumer_lag` per subscription.
-  - `conduit_dlq_depth` per `<topic>.dlq` (doc 03 §3).
-  - `conduit_event_sequence_gap_total` (counter) — completeness detective control (doc 14 §4.7).
-  - `conduit_reconciliation_exception_count` (gauge) — open recon exceptions (doc 14 §5.2).
-- **Logs — log4cats / logback** (pinned). Structured JSON, keyed by `correlation_id` (doc 01 §6); **no PII, no secrets** (allowlisted fields, scrubbed appender — §B.1). Ship to the house log sink; 30-day hot retention (§A.5).
-- **Traces — OpenTelemetry**, keyed by `correlation_id` (doc 01 §6), propagated from the API through the policy layer, domain service, outbox write, and — via the event envelope `correlation_id`/`causation_id` (doc 03 §1) — across the async hop into consumers and the ledger poster. This is what makes an order traceable API → event → ledger → projection in one trace tree.
+Conduit reuses the **hypervolt-backend** observability shape (`libs/utils/{metrics,logging}` — the estate's richest
+Scala-service standard; Athena is the same pattern, leaner). **Metrics-only, no distributed tracing** — there is no
+span/tracer/context-propagation anywhere in hypervolt-backend or Athena, so building it would be a parallel mechanism
+(against the golden rule). Cross-process correlation is via the log `correlation_id`, not a trace tree.
+
+- **Metrics — Prometheus.** OpenTelemetry SDK (`opentelemetry-sdk` 1.40.0 + `exporter-prometheus`) whose meter
+  provider carries the `service.name` resource attribute (`conduit` / `conduit_consumer`) and is read by a
+  `PrometheusHttpServer` on `PROMETHEUS_PORT` (**API 9464, consumer 9465** — both already registered as scrape
+  sources in Conduit's Terraform). A non-global SDK (not `buildAndRegisterGlobal`) so suites can stand up exporters
+  without the JVM-singleton conflict. Instruments:
+  - **JVM runtime metrics** — heap/GC/threads via `opentelemetry-runtime-telemetry-java17` (`RuntimeMetrics`), as in hypervolt-backend.
+  - **Per-endpoint HTTP metrics** — tapir's `OpenTelemetryMetrics` interceptor on the `tapir` meter (request count / duration / active), wired through `ApiMetrics` into every route interpreter. Serves `http_server_request_duration_seconds` (the §A.1 / §C.2 budget).
+  - `conduit_outbox_unpublished_count`, `conduit_dlq_depth`, `conduit_reconciliation_exception_count` (gauges) — the operational signals the alarms defend (§C.3), read live from Postgres on each scrape via the dispatcher.
+  - **Log-level counters** — `logs_count_conduit{level=…}` / `logs_count_conduit_consumer{level=…}` via `OtelAppender` on the logback root (levels seeded at 0 so the series always exists); the WARN/ERROR-rate alarms fire on these.
+  - *(remaining)* `conduit_order_capture_duration_seconds`, `conduit_outbox_relay_lag_seconds`, `conduit_ledger_post_lag_seconds`, `conduit_consumer_lag`, `conduit_event_sequence_gap_total` — the latency/lag histograms (doc 14 §4.7).
+- **Logs — log4cats / logback** (pinned). Production selects `logback-prod.xml` → `VectorLogEncoder` (one structured
+  JSON line per event to stdout, copied from hypervolt-backend), tailed by the estate's Vector sidecar; dev keeps the
+  human console pattern. SLF4J key-value pairs carry `correlation_id` (doc 01 §6); **no PII, no secrets** (allowlisted
+  fields — §B.1). 30-day hot retention (§A.5).
 - **Health/admin** on **:9990** (`GET /health` → `OK`, CLAUDE.md §2), Consul health check target (doc 01 §6.1).
 
 ### C.2 SLOs (the targets the alarms defend)
@@ -403,7 +426,7 @@ Projections (read models / materialised views: H6Q coverage, account history, st
 **Feature flags:** runtime flags in Consul KV (non-secret config, §B.1), read by the app; used to dark-launch consumers/modules and to gate market rollout (UK-first, then the 23-market roadmap, CLAUDE.md §8.7) without redeploy. Flags default off; flipping a flag is config, audited where it affects a controlled surface (e.g. enabling a new pricing market).
 
 **CI migration-safety (the three gates that protect financial integrity):**
-1. **Flyway forward-only.** Migrations are `V{maj}_{min}_{patch}__desc.sql` (CLAUDE.md §2), **forward-only** — no destructive down-migrations in prod; a mistake is corrected by a new forward migration, never a rollback that could drop financial data. Migrations run on startup; an out-of-order or checksum-mismatched migration fails the boot (Flyway validate).
+1. **Flyway forward-only.** Migrations are `V{maj}_{min}_{patch}__desc.sql` (CLAUDE.md §2), **forward-only** — no destructive down-migrations in prod; a mistake is corrected by a new forward migration, never a rollback that could drop financial data. Migrations run on startup; an out-of-order or checksum-mismatched migration fails the boot (Flyway validate). **✅ Enforced in CI** by the `sbt migrationCheck` task (in `financial-gates`): it rejects data-destroying DDL — `DROP TABLE`/`DROP COLUMN`/`TRUNCATE`/`DROP SCHEMA`/`DROP DATABASE`/`DELETE FROM` — in any migration, while permitting safe object drops (`DROP INDEX`/`CONSTRAINT`/`TRIGGER`/`VIEW`/`TYPE`).
 2. **Avro `schemaCheck` BACKWARD gate.** `sbt schemaCheck` validates every changed Avro schema against the registry's latest under **BACKWARD** (doc 03 §2); a breaking change fails the build. Breaking changes ship as a new `event_type`/version in parallel, never an in-place break — this is what keeps the event spine and every consumer safe across deploys.
 3. **No-float gate.** The money lint rejects `Double`/`Float` in financial paths (doc 14 §1.1, CLAUDE.md §6) — a binary-float representation error can never reach a stored money value.
 
@@ -422,7 +445,7 @@ These three gates are themselves SOX change-management evidence (§B.6, doc 14 �
 - **GDPR erasure:** a verified erasure request crypto-shreds the subject's DEK, after which **a decrypt of every PII store fails** while the financial skeleton (orders, transfers, amounts) is intact and **still re-performs**; projections and HubSpot show the `«erased»` tombstone; the whole DSAR is maker-checker and audited; a restored backup re-applies the shred-list so erased stays erased.
 - **Rate limiting:** a reseller token over quota gets `429 + Retry-After`; saturation alarms; the core tier is unaffected when the reseller tier throttles.
 - **Threat model:** each of the five flows (order capture, pricing/ADLP, ledger posting, reseller API, auth) has its STRIDE mitigations realised by the cited controls and covered by tests (authz allow/deny/layer-strip per endpoint, doc 05 §6; idempotent-redelivery and balance tests for the ledger, doc 14 §5.4).
-- **Observability:** every order traces API → event → ledger → projection in one `correlation_id` trace tree; the Conduit-specific metrics (`outbox_relay_lag`, `dlq_depth`, `consumer_lag`, `event_sequence_gap`) are exported on :9464 and alarmed per §C.3; logs carry no PII/secrets.
+- **Observability:** every order is followable API → event → ledger → projection by its `correlation_id` across the structured JSON logs (the estate is metrics-only — no trace tree, §C.1); the operational metrics (`outbox_unpublished_count`, `dlq_depth`, `reconciliation_exception_count`, `logs_count{level}`) plus JVM and per-endpoint HTTP metrics are exported on :9464 / :9465 and alarmed per §C.3; logs carry no PII/secrets.
 - **DLQ-replay:** a deliberately poisoned message lands on `<topic>.dlq`, pages on depth > 0; after the fix, scoped replay drains it to 0 with no double-effect (idempotent on `event_id`).
 - **Projection-rebuild:** a projection truncated and rebuilt from `Earliest` (hot log + S3 offload) reconstructs **identically** (GL projection ties TB↔GL to the penny) via the same consumer code — no second write path.
 - **CI migration-safety:** Flyway is forward-only and validates on boot; `schemaCheck` fails a BACKWARD-breaking Avro change; the no-float lint fails a `Double` in a money path; the ScalaCheck financial property suite is green — and each is recorded as a SOX change-management control artifact (doc 14 §4.4, §B.6).

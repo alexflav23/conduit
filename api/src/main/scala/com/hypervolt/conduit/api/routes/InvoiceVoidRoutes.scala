@@ -19,6 +19,7 @@ import org.http4s.HttpRoutes
 import sttp.model.StatusCode
 import sttp.tapir._
 import sttp.tapir.json.circe._
+import com.hypervolt.conduit.api.ApiMetrics
 import sttp.tapir.server.http4s.Http4sServerInterpreter
 
 // The invoice-invalidation entry point (doc 13 §void). The API CANNOT post the reversal — it has no TigerBeetle
@@ -93,5 +94,5 @@ final class InvoiceVoidRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[
       s"user:$actor" // origin: the finance user who requested the void
     )
 
-  val routes: HttpRoutes[F] = Http4sServerInterpreter[F]().toRoutes(voidInvoice)
+  val routes: HttpRoutes[F] = Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(voidInvoice)
 }

@@ -17,6 +17,7 @@ import scala.util.Try
 import sttp.model.StatusCode
 import sttp.tapir._
 import sttp.tapir.json.circe._
+import com.hypervolt.conduit.api.ApiMetrics
 import sttp.tapir.server.http4s.Http4sServerInterpreter
 
 // The documents surface (doc 17 §6/§9): list the legal artefacts for an order/invoice, fetch one's metadata, and
@@ -105,5 +106,5 @@ final class DocumentRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F],
       )
 
   val routes: HttpRoutes[F] =
-    Http4sServerInterpreter[F]().toRoutes(List(list, byId, pdf))
+    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(List(list, byId, pdf))
 }

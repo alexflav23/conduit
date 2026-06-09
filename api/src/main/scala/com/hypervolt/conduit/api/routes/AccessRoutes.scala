@@ -16,6 +16,7 @@ import sttp.model.StatusCode
 import sttp.tapir._
 import sttp.tapir.generic.auto._
 import sttp.tapir.json.circe._
+import com.hypervolt.conduit.api.ApiMetrics
 import sttp.tapir.server.http4s.Http4sServerInterpreter
 
 final case class WhoAmI(userId: String, permissions: List[String])
@@ -138,5 +139,5 @@ final class AccessRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
       })
 
   val routes: HttpRoutes[F] =
-    Http4sServerInterpreter[F]().toRoutes(List(whoami, listRoles, createRole, assign))
+    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(List(whoami, listRoles, createRole, assign))
 }

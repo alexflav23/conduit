@@ -3,6 +3,7 @@ package com.hypervolt.conduit.api
 import cats.effect.IO
 import cats.effect.IOApp
 import cats.effect.Resource
+import cats.effect.std.Dispatcher
 import cats.syntax.all._
 import com.comcast.ip4s._
 import com.hypervolt.conduit.api.auth.AuthService
@@ -23,6 +24,10 @@ import com.hypervolt.conduit.config.AppConfig
 import com.hypervolt.conduit.document.S3DocumentStorage
 import com.hypervolt.conduit.config.EnvironmentConfig
 import com.hypervolt.conduit.db.Transactor
+import com.hypervolt.conduit.logging.OtelAppender
+import com.hypervolt.conduit.metrics.ConduitMetrics
+import com.hypervolt.conduit.metrics.GlobalMetrics
+import com.hypervolt.conduit.metrics.MetricsBuilder
 import doobie.hikari.HikariTransactor
 import org.http4s.HttpApp
 import org.http4s.ember.server.EmberServerBuilder
@@ -46,11 +51,22 @@ object Main extends IOApp.Simple {
 
   private val resources: Resource[IO, (AppConfig, HikariTransactor[IO])] =
     for {
-      cfg <- Resource.eval(EnvironmentConfig.load[IO])
-      _   <- Resource.eval(logger.info(s"Conduit API starting (env=${cfg.env})"))
-      _   <- Resource.eval(FlywayInit.run[IO](cfg.db))
-      _   <- Resource.eval(logger.info("Flyway migrations applied"))
-      xa  <- Transactor.build[IO](cfg.db)
+      cfg        <- Resource.eval(EnvironmentConfig.load[IO])
+      _          <- Resource.eval(logger.info(s"Conduit API starting (env=${cfg.env})"))
+      _          <- Resource.eval(FlywayInit.run[IO](cfg.db))
+      _          <- Resource.eval(logger.info("Flyway migrations applied"))
+      xa         <- Transactor.build[IO](cfg.db)
+      dispatcher <- Dispatcher.parallel[IO]
+      otel <-
+        GlobalMetrics.buildResource[IO](
+          "conduit"
+        ) // Prometheus exporter on :9464 (PROMETHEUS_PORT) — the estate scrapes it
+      _ <- Resource.eval(IO.delay(ApiMetrics.install(otel.getMeter("tapir")))) // per-endpoint HTTP metrics
+      _ <- Resource.eval(IO.delay(OtelAppender.register(otel.getMeterProvider(), "logs_count_conduit")))
+      _ <- Resource.eval(
+        new ConduitMetrics[IO](xa, new MetricsBuilder(otel.getMeter("conduit"), "conduit"), dispatcher).register
+      )
+      _ <- Resource.eval(logger.info("Metrics exporter started (:9464)"))
     } yield (cfg, xa)
 
   override def run: IO[Unit] =

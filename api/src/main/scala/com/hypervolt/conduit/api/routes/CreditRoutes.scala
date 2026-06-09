@@ -24,6 +24,7 @@ import sttp.model.StatusCode
 import sttp.tapir._
 import sttp.tapir.generic.auto._
 import sttp.tapir.json.circe._
+import com.hypervolt.conduit.api.ApiMetrics
 import sttp.tapir.server.http4s.Http4sServerInterpreter
 
 final case class CreditTermsReq(payment_terms_days: Int, credit_limit: Option[BigDecimal], currency: Option[String])
@@ -142,5 +143,6 @@ final class CreditRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
       )
 
   val routes: HttpRoutes[F] =
-    Http4sServerInterpreter[F]().toRoutes(List(getTerms, setTerms, cashWaterfall, pnl, arAging))
+    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F])
+      .toRoutes(List(getTerms, setTerms, cashWaterfall, pnl, arAging))
 }

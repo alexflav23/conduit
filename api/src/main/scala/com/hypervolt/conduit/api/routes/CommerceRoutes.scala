@@ -23,6 +23,7 @@ import sttp.model.StatusCode
 import sttp.tapir._
 import sttp.tapir.generic.auto._
 import sttp.tapir.json.circe._
+import com.hypervolt.conduit.api.ApiMetrics
 import sttp.tapir.server.http4s.Http4sServerInterpreter
 
 final case class CreatePartyReq(
@@ -272,7 +273,7 @@ final class CommerceRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F])
     )
 
   val routes: HttpRoutes[F] =
-    Http4sServerInterpreter[F]().toRoutes(
+    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(
       List(createParty, billingProfile, creditProfile, placeOrder, amendOrder, getOrder)
     )
 }

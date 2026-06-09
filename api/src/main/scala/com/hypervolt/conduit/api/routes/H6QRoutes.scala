@@ -31,6 +31,7 @@ import sttp.model.StatusCode
 import sttp.tapir._
 import sttp.tapir.generic.auto._
 import sttp.tapir.json.circe._
+import com.hypervolt.conduit.api.ApiMetrics
 import sttp.tapir.server.http4s.Http4sServerInterpreter
 
 final case class SubmitLineReq(variant: String, period: String, scenario: String, qty: Int)
@@ -570,7 +571,7 @@ final class H6QRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
   private def normaliseMonth(s: String): String = if (s.length == 7) s + "-01" else s
 
   val routes: HttpRoutes[F] =
-    Http4sServerInterpreter[F]().toRoutes(
+    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(
       List(
         scenarios,
         variants,
