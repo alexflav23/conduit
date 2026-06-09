@@ -43,44 +43,51 @@ contract (§5 — the substantial part).
 
 ## 2. The model
 
+> **Modelling discipline (the Conduit grain): persist immutable FACTS; DERIVE interpretations.** The persisted core
+> holds only what you cannot compute — **validity windows as begin/end timestamps**, the **governed economic
+> definitions** (tier ladder, rebate scheme), the **customer links**, and (already) the **immutable order/volume/
+> event stream**. Everything interpretive — *lifecycle* (active/expiring/renewed/lapsed), the *contract year N*,
+> *renewal / renewal-rate / retention*, the *rebate accrual* — is a **derived projection** over those facts, exactly
+> like fiscal-period assignment, coverage and VAT-exposure already are (doc 14 §2). No stored status field to
+> reconcile; the journal never goes stale. Rich states (badges, "expiring soon", renewal dashboards) live in the UI,
+> computed from the timestamps.
+
 ```
-price_agreement                          -- the contract / governed tier set
+price_agreement                          -- the contract / governed tier set (FACTS only)
   id, name, surface(customer|inter_entity), currency,
   scope: applies_to ∈ { open_list | customer_set | segment | sector },  -- "open_list" = the standard ADLP everyone gets
   base_volume_basis ∈ { per_order | cumulative_prospective },    -- how the BASE tier price is picked (always knowable at order time)
-  effective_from, effective_to,                                  -- validity window (immutable; supersession, not edit)
-  -- term & renewal lifecycle (§5.8) — track renewals for big accounts (e.g. Octopus Group):
-  commencement_date, term_months, renewal_type ∈ { fixed | auto | evergreen | manual },
-  renews_from (→ price_agreement, the predecessor),  lifecycle ∈ { draft|active|expiring|renewed|lapsed|terminated },
-  terms (JSONB: min_commitment_units, notes),
-  status(draft|active|superseded), version,
+  valid_from, valid_to (timestamps),                             -- THE validity window — begin/end. lifecycle is DERIVED from these + successors, never stored.
+  terms (JSONB: min_commitment_units, term_months/renewal_type as descriptive INPUTS — expectations, not reconciled state),
+  status(draft|active|superseded), version,                      -- governance state of the row itself (maker-checker), not a "contract lifecycle"
   proposed_by, approved_by, approved_at                          -- maker-checker (doc 05 §4)
+  -- NOTE: no `lifecycle`, no `commencement_date` separate from valid_from, no stored renewal status. A "renewal" is
+  --       simply the next agreement whose valid_from continues this customer+products; the link is DERIVED (or, if
+  --       the business wants certainty, optionally recorded as a `renews_from` fact at creation — but never a status).
 
 price_agreement_customer  (M:N)          -- which parties this agreement is valid for (group aggregation, §4)
   agreement_id → price_agreement, party_id → party
-  -- empty set + applies_to=open_list ⇒ the standard list (today's behaviour); a non-empty set ⇒ a customer contract
 
 price_tier  (the base price bands; evolves price_rule)
   agreement_id → price_agreement, product_variant_id,
   from_qty (band threshold), up_to_qty (NULL = open-ended),       -- the ladder: [1–99]@X, [100–499]@Y, [500+]@Z
-  price (ex-VAT)  OR  discount_pct (off the variant list),        -- one of; price wins if both given
-  -- (carries forward price_rule's currency/tax_regime/min_qty→from_qty/version/effective semantics)
+  price (ex-VAT)  OR  discount_pct (off the variant list)
 
 rebate_scheme  (§4.4 — arbitrary time-bound rebates, attachable to an agreement or a tier)
   id, agreement_id → price_agreement,  product_variant_id (NULL = all),  price_tier_id (NULL = agreement-wide),
   name,
-  window ∈ { contract_year | calendar_year | fixed(from,to) | rolling(n_months) },  -- arbitrary time-binding
-  basis  ∈ { volume | spend | growth_vs_prior | flat },
+  window: valid_from, valid_to (timestamps)  + optional recurrence(anchor, n_months),  -- arbitrary time-binding AS TIMESTAMPS
+                                                                                       -- ("contract year" = a window anchored to the agreement's valid_from; resolved, not enumerated)
+  basis  ∈ { volume | spend | growth_vs_prior | flat },          -- a genuine computation difference, so a real field
   treatment ∈ { prospective | retrospective },                   -- retrospective ⇒ the §5 accrue/settle engine
-  rebate_method ∈ { expected_value | most_likely },              -- ASC 606 estimation (§5.3) when retrospective
-  ladder (JSONB: [{from_threshold, value}])  -- per-tier rebate (% or per-unit) earned at each threshold
+  ladder (JSONB: [{from_threshold, value}])                      -- per-threshold rebate (% or per-unit)
 ```
 
-> The **volume-rebate model of §4–§5 is one `rebate_scheme`** (basis=volume, window=contract_year,
-> treatment=retrospective). Making it a first-class, **arbitrary-time-bound** entity means a contract can carry
-> several at once — e.g. the annual volume rebate **+** a fixed-window Q1 promo **+** a growth-vs-last-year kicker —
-> each evaluated independently by the same accrue/settle engine (§5) over **its own** window. A scheme can attach to
-> the whole agreement or to a specific tier/product.
+> The **volume-rebate model of §4–§5 is one `rebate_scheme`** (basis=volume, a contract-year-anchored window,
+> treatment=retrospective). A contract can carry several at once — annual volume rebate **+** a fixed-window promo
+> **+** a growth kicker — each over **its own begin/end window**, evaluated by the same accrue/settle engine (§5).
+> Note the window is **timestamps**, not an enumerated "year type" the engine must interpret: a UI convenience picks
+> a `contract_year`/`rolling(n)` shape and *resolves it to begin/end* on creation.
 
 `price_rule` is **retained as the tier row** — the cleanest migration is: add `price_agreement_id` to `price_rule`,
 let `min_qty`→band `from_qty` (+ an `up_to_qty`), and move the customer scope onto the agreement. An "open-list"
@@ -177,12 +184,12 @@ structure of a contract"* — and this **must be perfect** (it's critical infras
 > game — conflating them is the classic way rebate accounting goes wrong.
 
 ### 5.1 The contract year (rolling, anchored to commencement)
-The cumulative window is **12 months from the agreement's `commencement_date`**, rolling — *not* a calendar or
-fiscal year. Year *N* = `[commencement + N·12mo, commencement + (N+1)·12mo)`; cumulative volume and the rebate
-accrual are **scoped to the current contract year and reset at each anniversary** (no carry-over across years). Each
-agreement has its own anchor, so many contracts run on different year boundaries simultaneously. `contract_year` is
-derived from `commencement_date` + the order's `occurred_at` (a UTC-instant re-projection, exactly like fiscal-period
-assignment, doc 14 §2 — never baked into rows). The fiscal/accounting period (doc 14) is a *separate* axis: a single
+The cumulative window is **12 months from the agreement's `valid_from`** (its commencement), rolling — *not* a
+calendar or fiscal year. Year *N* = `[valid_from + N·12mo, valid_from + (N+1)·12mo)`; cumulative volume and the
+rebate accrual are **scoped to the current contract year and reset at each anniversary** (no carry-over across
+years). Each agreement has its own anchor, so many contracts run on different year boundaries simultaneously.
+`contract_year` is **derived** from `valid_from` + the order's `occurred_at` (a UTC-instant re-projection, exactly
+like fiscal-period assignment, doc 14 §2 — never baked into rows). The fiscal/accounting period (doc 14) is a *separate* axis: a single
 contract year spans several accounting periods, and the accrual is carried/closed within each (§5.6).
 
 ### 5.2 Accrual — track & CALCULATE, per tier (continuous, reproducible)
@@ -250,23 +257,24 @@ Tested as ScalaCheck properties + reconciliation controls, in the M1/M13b style:
 5. **Ledger tie** — the earned-accrual projection equals the `REBATE_ACCRUAL` ledger balance (the `gl_vs_*` discipline).
 6. **No unilateral application** — no code path settles/credits a rebate without the maker-checker step.
 
-### 5.8 Term, renewal-rate & sector analytics
-The agreement is the natural home for **contract-lifecycle reporting**, which big accounts (Octopus Group) make
-material:
-- **Term & renewal.** `commencement_date + term_months` give the term end; `renewal_type` (fixed/auto/evergreen/
-  manual) and `renews_from` (predecessor → successor chain) model the lifecycle (`draft→active→expiring→
-  renewed|lapsed|terminated`). An **expiring** agreement surfaces on a renewals worklist (desk + companion); a
-  successor agreement links back via `renews_from`.
-- **Renewal rate** = a reproducible analytic over the agreement chain: in a window, *logo retention* (renewed
-  agreements ÷ those due) and *net revenue retention* (successor value ÷ predecessor value), **broken down by
-  sector** (§ below). It reads off the same immutable agreement history (no parallel store) and feeds Horizons
-  reporting (doc 21) + H6Q forward demand (doc 12).
-- **Sector dimension.** `party` gains a governed **`sector`** taxonomy (energy, automotive, …) — coarser than the
-  existing `party.segment` (segment = finer sub-classification *within* a sector/channel). Sector is a first-class
-  breakdown for: agreement/rebate **scope** (`applies_to = sector` → a sector-wide price list/rebate), **H6Q
-  rollups** (add a `sector` level to the coverage hierarchy, doc 12), and **reporting** (revenue / rebate / renewal
-  rate by sector). This is the same axis H6Q already breaks down on — promoted to a named party attribute so pricing,
-  forecasting and reporting all share one taxonomy.
+### 5.8 Term, renewal-rate & sector — all DERIVED (not stored state)
+Contract-lifecycle reporting matters for big accounts (Octopus Group) — but it is **computed from the validity
+timestamps + the agreement history, not maintained as persisted status**:
+- **Lifecycle & term.** `valid_from/valid_to` are the only stored dates; `term_months`/`renewal_type` are
+  descriptive **inputs** in `terms`. Whether an agreement is *active / expiring-soon / lapsed* is a pure function of
+  `now` vs `valid_to` (± a notice window) — **derived on read**, so it can never be a stale "active" row that's
+  actually expired.
+- **Renewal & renewal-rate.** A "renewal" is just the **next agreement whose `valid_from` continues the same
+  customer+products** — derivable from the immutable agreement set (optionally pinned by a recorded `renews_from`
+  fact at creation, never a status). **Renewal rate** is then a reproducible analytic over that set — *logo
+  retention* (renewed ÷ due) and *net revenue retention* (successor value ÷ predecessor) — in a window, **by
+  sector**. No parallel store; feeds Horizons (doc 21) + H6Q forward demand (doc 12). The desk's "renewals worklist"
+  is this projection, not a table of statuses.
+- **Sector** (the one genuine *fact* here). `party` gains a governed **`sector`** taxonomy (energy, automotive, …) —
+  coarser than the existing `party.segment` (segment = finer sub-class within a sector/channel). It persists **on the
+  party** (you can't derive it) and is a join-away dimension for: agreement/rebate **scope** (`applies_to = sector`),
+  **H6Q rollups** (add a `sector` level to the coverage hierarchy, doc 12), and **reporting** breakdowns. The pricing
+  journal never encodes sector — it references parties, and sector is read through the join.
 
 ---
 
@@ -296,10 +304,12 @@ never a one-order patch.
 
 ## 7. Data-model deltas (summary for the migration)
 
-- `price_agreement` (new — incl. term/renewal: `commencement_date`, `term_months`, `renewal_type`, `renews_from`,
-  `lifecycle`), `price_agreement_customer` (new M:N).
-- `rebate_scheme` (new) — arbitrary time-bound rebates (window/basis/treatment/ladder), attached to an agreement or
-  tier/product (§4.4). The §4–5 volume rebate is one row of this.
+- `price_agreement` (new) — stores **facts only**: `valid_from/valid_to` (timestamps), scope, `base_volume_basis`,
+  `terms` JSONB (term_months/renewal_type as descriptive inputs), governance. **No `lifecycle`/renewal status column**
+  — lifecycle, contract-year and renewal-rate are derived projections. `renews_from` optional (a recorded link, not a
+  status). `price_agreement_customer` (new M:N).
+- `rebate_scheme` (new) — arbitrary time-bound rebates: **`valid_from/valid_to` timestamps** (+ optional recurrence)
+  / basis / treatment / ladder, attached to an agreement or tier/product (§4.4). The §4–5 volume rebate is one row.
 - `party` → gains a governed **`sector`** taxonomy (energy/automotive/…), coarser than the existing `segment`; a
   `sector` reference table.
 - `price_rule` → gains `price_agreement_id` (FK), `up_to_qty` (band ceiling); `min_qty` reread as band `from_qty`.
@@ -308,7 +318,7 @@ never a one-order patch.
   resolved band + the recognised-net vs list for rebate trace.
 - `contract_volume` (new) — cumulative position keyed by **(agreement, variant, contract_year)**, summed across the
   agreement's whole customer set (group-level), with an annual reset (for the cumulative bases).
-- `contract_year` is **derived** from `commencement_date` + `occurred_at` (not stored) — a rolling-12mo re-projection.
+- `contract_year` is **derived** from the agreement's `valid_from` + `occurred_at` (not stored) — a rolling-12mo re-projection.
 - Ledger: `REBATE_ACCRUAL` account role; the **earned-rebate** is a reproducible **projection** (per agreement /
   product / tier / contract_year), reconciled by `CTRL-REBATE-ACCRUAL`; `rebate_settlement` records discrete,
   governed, idempotent settlements (credit note / payment) that draw it down.
