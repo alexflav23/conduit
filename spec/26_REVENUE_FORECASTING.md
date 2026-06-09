@@ -113,6 +113,21 @@ B2B ordering is lumpy; a single continuous curve is the classic mistake. Decompo
   weighted blend) — selected mechanically by the loop, per §5. Humans (`manual`) and `hyperview` remain sources in
   `forecast_entry`; the accuracy ledger scores **humans and models on identical terms**.
 
+### 4a. Structural calibrations (product-owner steer, iteration 6) — beyond curve-fitting
+
+- **Order-book conditioning (B2B).** Incoming/open POs are near-certain near-term revenue: the forecast conditions
+  on the **open deal/PO book as it stood at the origin** — honestly reconstructible (a deal with `createdate <
+  origin` and not closed by the origin was open at the origin), converted via **stage/age conversion rates fitted
+  on pre-origin cohorts only**. Live: the book = HubSpot open deals + Conduit orders placed-not-dispatched.
+- **Stock-depletion calibration (B2B).** The shelf runway (shipped − activated) gates reorder *timing* — the
+  depletion family exists; calibrate per account on the real serial telemetry.
+- **Retail funnel decomposition (D2C).** Each component estimated **singly**, then **cumulated**:
+  the sheer passage of time (conversion-by-age curves), conversion per payment channel (pay_later vs card —
+  fitted, not hardcoded), refund rates per fulfilment type (direct_buy vs paid_install), and the abandoned-cart
+  recovery rate. Composed: `created volume × conv(payment mix, age) − refunds + recovery × abandoned`.
+- All three enter the same tournament and are scored by the same rolling-origin ledger — structure competes with
+  statistics on measured error, never by assertion.
+
 ## 5. The learning loop — rolling-origin backtesting (the core mechanism)
 
 ```
