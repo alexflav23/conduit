@@ -55,6 +55,16 @@
 > `RebateExpectedSuite` proves expected>earned under commitment, convergence as volume lands, and the downward release
 > on a cancellation.
 
+> **✅ Continuous accrual VERIFIED + wired (§5.2).** A verification pass found the engine had no production trigger —
+> closed: `pricing.RebateAccrualService.accrueForOrder` (the buyer's active retrospective agreements — customer_set/
+> segment/sector-scoped — each trued up via `accrueExpected`) + `consumer.RebateAccrualConsumer` on `conduit.orders`
+> (subscription `conduit-rebate-accrual-1`; triggers `order.placed|amended|cancelled`, `invoice.voided`). Because the
+> true-up is state-keyed to a reproducible projection, the trigger only needs to be sufficient, never precise —
+> redelivery and over-triggering are no-ops. `RebateAccrualVerificationSuite` proves the audit set: the REAL
+> `order.placed` outbox event drives the expected liability onto the ledger (invoice firm at entry tier); accessory
+> volume neither advances nor earns the charger tier (§4.5); a unit never counts toward two contract years (§5.7.3);
+> conservation across a mid-year settlement (`settled + outstanding == expected`) with `CTRL-REBATE-ACCRUAL` green.
+
 **Status:** **the M-Pricing backend is COMPLETE** (slices 1–4 + the §3/§5.3 tail, above); only step-5 UI (desk +
 companion, the design pass) remains. This deep-dive
 re-states how pricing works in Conduit and **supersedes the "agent types a price → CEO approves the number"

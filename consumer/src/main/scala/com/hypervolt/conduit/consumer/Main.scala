@@ -98,6 +98,11 @@ object Main extends IOApp.Simple {
             new VatRemittanceConsumer[IO](pulsar, new com.hypervolt.conduit.tax.VatRemittanceService[IO](xa, ledger))
           val piiTombstoneConsumer =
             new PiiShreddedConsumer[IO](pulsar, new com.hypervolt.conduit.privacy.PiiTombstoneService[IO](xa))
+          val rebateAccrualConsumer =
+            new RebateAccrualConsumer[IO](
+              pulsar,
+              new com.hypervolt.conduit.pricing.RebateAccrualService[IO](xa, ledger)
+            )
           PulsarEventPublisher.create[IO](pulsar).flatMap { publisher =>
             val relay     = new OutboxRelay[IO](xa, publisher)
             val relayLoop = (relay.runOnce() *> IO.sleep(1.second)).foreverM
@@ -112,7 +117,8 @@ object Main extends IOApp.Simple {
                 docConsumer.runForever,
                 voidConsumer.runForever,
                 vatRemitConsumer.runForever,
-                piiTombstoneConsumer.runForever
+                piiTombstoneConsumer.runForever,
+                rebateAccrualConsumer.runForever
               ).parSequence_
           }
         }
