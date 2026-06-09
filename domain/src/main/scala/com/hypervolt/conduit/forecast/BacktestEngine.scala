@@ -33,7 +33,34 @@ object DemandSeriesRepo {
           GROUP BY 1 ORDER BY 1"""
       .query[(LocalDate, BigDecimal)]
       .to[List]
-      .flatMap(raw => depletionContext(company, variant, origin).map(ctx => zeroFill(raw, origin, ctx)))
+      .flatMap(raw =>
+        depletionContext(company, variant, origin).flatMap(ctx =>
+          orderBookContext(company, origin).map(book => zeroFill(raw, origin, ctx, book))
+        )
+      )
+
+  // The censored deal view behind the order-book model (doc 26 §4a): closures at-or-after the origin are
+  // INVISIBLE — the deal appears open, exactly as the forecaster would have seen it. Series map to a pipeline
+  // through the channel-party convention ('CH: <pipeline>'); accounts without one carry no book context.
+  private def orderBookContext(
+      company: UUID,
+      origin: LocalDate
+  ): ConnectionIO[(Option[BigDecimal], Option[BigDecimal], Option[BigDecimal])] =
+    sql"SELECT display_name FROM party WHERE id = $company AND display_name LIKE 'CH: %'"
+      .query[String]
+      .option
+      .flatMap {
+        case None => (Option.empty[BigDecimal], Option.empty[BigDecimal], Option.empty[BigDecimal]).pure[ConnectionIO]
+        case Some(name) =>
+          sql"""SELECT created_at,
+                       CASE WHEN is_closed AND closed_at < $origin THEN closed_at END,
+                       is_won AND is_closed AND closed_at < $origin,
+                       amount
+                FROM deal_snapshot WHERE pipeline = ${name.stripPrefix("CH: ")} AND created_at < $origin"""
+            .query[DealRow]
+            .to[List]
+            .map(OrderBookCalc.context(_, origin))
+      }
 
   // Shelf stock + activation velocity as-of the origin (the doc 26 §4 edge), from the serial/activation log.
   // Velocity = activations over the trailing 6 months / 6.
@@ -57,17 +84,26 @@ object DemandSeriesRepo {
   private def zeroFill(
       raw: List[(LocalDate, BigDecimal)],
       origin: LocalDate,
-      ctx: (Option[BigDecimal], Option[BigDecimal])
+      ctx: (Option[BigDecimal], Option[BigDecimal]),
+      book: (Option[BigDecimal], Option[BigDecimal], Option[BigDecimal])
   ): DemandHistory =
     raw.headOption match {
-      case None => DemandHistory(Vector.empty, Vector.empty, ctx._1, ctx._2)
+      case None => DemandHistory(Vector.empty, Vector.empty, ctx._1, ctx._2, book._1, book._2, book._3)
       case Some((first, _)) =>
         val byMonth = raw.toMap
         val months = Iterator
           .iterate(first.withDayOfMonth(1))(_.plusMonths(1))
           .takeWhile(_.isBefore(origin.withDayOfMonth(1)))
           .toVector
-        DemandHistory(months, months.map(m => byMonth.getOrElse(m, BigDecimal(0))), ctx._1, ctx._2)
+        DemandHistory(
+          months,
+          months.map(m => byMonth.getOrElse(m, BigDecimal(0))),
+          ctx._1,
+          ctx._2,
+          book._1,
+          book._2,
+          book._3
+        )
     }
 
   // Actuals for scoring a horizon (the same demand definition, after the origin).

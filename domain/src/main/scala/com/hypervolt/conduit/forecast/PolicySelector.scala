@@ -63,10 +63,11 @@ object PolicyRepo {
 // worst origin still blew up to the robust run-rate — the thin-channel (Automotive) failure mode.
 object PolicySelector {
 
-  private val Fallback         = DemandModel.RunRate3.key
-  private val StabilityBand    = BigDecimal("1.1") // near-ties: within 10% of the best pooled WAPE
-  private val GuardWape        = BigDecimal("1.5") // a worst origin past 150% error = unstable series
-  private val DefaultMinOrigin = 3
+  private val Fallback           = DemandModel.RunRate3.key
+  private val StabilityBand      = BigDecimal("1.1") // near-ties: within 10% of the best pooled WAPE
+  private val GuardWape          = BigDecimal("1.5") // a worst origin past 150% error = unstable series
+  private val UnforecastableWape = BigDecimal("0.5") // even the winner pools >50% = nothing here extrapolates
+  private val DefaultMinOrigin   = 3
 
   private final case class Scored(policy: Policy, pooled: BigDecimal, worstOrigin: BigDecimal)
 
@@ -81,12 +82,43 @@ object PolicySelector {
       .toList
 
     if (cells.isEmpty || complete.isEmpty) Policy.single(DemandModel.SeasonalNaive.key)
+    else if (origins.size < minOrigins)
+      complete.map(k => score(Policy.single(k), cells)).minBy(s => (s.pooled, s.policy.key)).policy
     else {
-      val singles = complete.map(k => score(Policy.single(k), cells)).sortBy(s => (s.pooled, s.policy.key))
-      if (origins.size < minOrigins) singles.head.policy
-      else tournament(singles, cells)
+      // an origin even the BEST single missed by >150% is an anomaly quarter (a one-off collapse, a data
+      // artifact) — it punishes every candidate and drowns the regular-quarter signal, so it is dropped
+      // from the selection evidence, provided enough origins remain to select on.
+      val anomalous = origins.filter(o =>
+        complete.map(k => perOriginRel(Policy.single(k), cells).getOrElse(o, BigDecimal(0))).min > GuardWape
+      )
+      val effective =
+        if (origins.size - anomalous.size >= minOrigins)
+          cells.view.filterKeys { case (o, _) => !anomalous(o) }.toMap
+        else cells
+      val singles = complete.map(k => score(Policy.single(k), effective)).sortBy(s => (s.pooled, s.policy.key))
+      tournament(singles, effective)
     }
   }
+
+  private def perOriginRel(
+      policy: Policy,
+      cells: Map[(LocalDate, LocalDate), (BigDecimal, Map[String, BigDecimal])]
+  ): Map[LocalDate, BigDecimal] =
+    cells.toList
+      .map {
+        case ((origin, _), (actual, forecasts)) =>
+          val blended = policy.weights.toList
+            .map { case (k, w) => forecasts.getOrElse(k, BigDecimal(0)) * w }
+            .foldLeft(BigDecimal(0))(_ + _)
+          (origin, blended, actual)
+      }
+      .groupBy(_._1)
+      .map {
+        case (o, months) =>
+          val f = months.map(_._2).foldLeft(BigDecimal(0))(_ + _)
+          val a = months.map(_._3).foldLeft(BigDecimal(0))(_ + _)
+          o -> (f - a).abs / a.max(BigDecimal(1))
+      }
 
   private def tournament(
       singles: List[Scored],
@@ -95,12 +127,22 @@ object PolicySelector {
     val blends = List(2, 3)
       .filter(_ <= singles.size)
       .map(n => score(inverseWapeBlend(singles.take(n)), cells))
-    val candidates = singles ++ blends
+    // the structural hedge: the order-book model paired with each top-2 statistical — a book that explains
+    // PART of a channel earns PART of the weight, even when it can't win the pooled score alone
+    val hedges = singles
+      .find(_.policy.key == DemandModel.OrderBook.key)
+      .filterNot(s => singles.take(3).contains(s))
+      .toList
+      .flatMap(s => singles.take(2).map(st => score(inverseWapeBlend(List(st, s)), cells)))
+    val candidates = singles ++ blends ++ hedges
     val best       = candidates.map(_.pooled).min
     val winner = candidates
       .filter(_.pooled <= best * StabilityBand)
       .minBy(s => (s.worstOrigin, s.policy.weights.size, s.policy.key))
-    if (winner.worstOrigin > GuardWape) Policy.single(Fallback) else winner.policy
+    // unstable winner OR an unforecastable series: a trend model fit on noise extrapolates the noise —
+    // the bounded-badness answer is the level run-rate, which re-bases as fast as the channel does.
+    if (winner.worstOrigin > GuardWape || winner.pooled > UnforecastableWape) Policy.single(Fallback)
+    else winner.policy
   }
 
   private def inverseWapeBlend(top: List[Scored]): Policy = {

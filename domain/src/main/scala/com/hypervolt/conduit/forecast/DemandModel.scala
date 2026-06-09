@@ -9,8 +9,12 @@ final case class DemandHistory(
     months: Vector[LocalDate], // month starts, ascending, contiguous
     qty: Vector[BigDecimal],   // same length; zero-filled where no demand
     // the depletion context (doc 26 §4) — present when the account has activation telemetry, as-of the origin
-    shelfStock: Option[BigDecimal] = None,        // shipped − activated, at origin
-    activationVelocity: Option[BigDecimal] = None // units activated / month (seasonally adjustable), at origin
+    shelfStock: Option[BigDecimal] = None,         // shipped − activated, at origin
+    activationVelocity: Option[BigDecimal] = None, // units activated / month (seasonally adjustable), at origin
+    // the order-book context (doc 26 §4a) — present when the series maps to a deal pipeline, as-of the origin
+    openBook: Option[BigDecimal] = None,       // open deal amount at the origin
+    bookConversion: Option[BigDecimal] = None, // share of an open book won within a quarter (pre-origin cohorts)
+    newBusinessQ: Option[BigDecimal] = None    // created-and-won-within-quarter run-rate (pre-origin quarters)
 ) {
   def nonEmpty: Boolean = qty.exists(_ > 0)
 }
@@ -174,6 +178,21 @@ object DemandModel {
       Vector.fill(horizon)(r(mean(h.qty.takeRight(3))))
   }
 
+  // The order-book structural model (doc 26 §4a — the user-specified PO calibration): the quarter ahead is the
+  // open book at the origin × the conversion measured on PRE-origin cohorts, plus the created-and-won-in-quarter
+  // run-rate. Incoming POs are near-certain near-term revenue — statistics can't see them, the book can. Without
+  // a book it degrades to the run-rate (never fails, never peeks).
+  object OrderBook extends DemandModel {
+    val key     = "order_book"
+    val version = 1
+    def predict(h: DemandHistory, horizon: Int): Vector[BigDecimal] =
+      (h.openBook, h.bookConversion, h.newBusinessQ) match {
+        case (Some(book), Some(conv), Some(newBiz)) =>
+          Vector.fill(horizon)(r((book * conv + newBiz) / horizon))
+        case _ => RunRate3.predict(h, horizon)
+      }
+  }
+
   // The registry (doc 26 §4) — code-defined; the loop ranks these mechanically, nothing is hand-picked.
   val registry: List[DemandModel] = List(
     SeasonalNaive,
@@ -184,6 +203,7 @@ object DemandModel {
     new HoltDamped(BigDecimal("0.5"), BigDecimal("0.2"), BigDecimal("0.95"), "holt_fast"),
     RunRate3,
     SeasonalDrift,
-    Depletion
+    Depletion,
+    OrderBook
   )
 }
