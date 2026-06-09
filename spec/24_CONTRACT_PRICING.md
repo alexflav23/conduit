@@ -28,7 +28,17 @@
 > *Remaining: §3 hard no-typed-prices enforcement at placement; §5.3 recognition-net-of-expected-rebate (H6Q expected
 > tier) — the earned/realised path is built, the in-year expected-revenue smoothing is the follow-on; slice 4 below.*
 
-**Status:** design spec — slices 1–3 built (above); the rest is **spec only** (build per the milestone in §10). This deep-dive
+> **✅ Slice 4 implemented (§10.4 / §4.4 / §5.8).** Generalised `rebate_scheme` (V1_0_50: any time-bound rebate over its
+> own begin/end window; basis volume|flat; `qualifying_filter`/`applies_filter` by product_class) — `RebateSchemeEngine`
+> (pure) + `RebateSchemeService.earnedSchemes` sums every active scheme over its own window. `party.sector` (the one
+> genuine FACT) + a `sector` ref table + `price_agreement.scope_value`, with **sector/segment-scoped resolution** wired
+> into both candidate queries (completing customer_set ≻ segment ≻ sector ≻ open_list). `RenewalAnalytics` — logo
+> retention derived from `valid_to` + `renews_from`, overall and **by sector** (no stored lifecycle). `RebateScheme-
+> RenewalSuite` green. *Remaining for M-Pricing: §3 hard no-typed-prices enforcement; §5.3 recognition-net-of-expected;
+> step 5 — desk + companion UI (the design pass).*
+
+**Status:** design spec — **slices 1–4 (the backend) built** (above); only the §3 enforcement tightening, §5.3
+expected-revenue smoothing, and step-5 UI remain. This deep-dive
 re-states how pricing works in Conduit and **supersedes the "agent types a price → CEO approves the number"
 reading** of ADLP in doc 04 §Pricing/§ADLP and doc 08 S14/S16. It is grounded in the existing
 `price_rule`/`PricingService`/maker-checker machinery (M3) — this is an **evolution of that spine, not a parallel

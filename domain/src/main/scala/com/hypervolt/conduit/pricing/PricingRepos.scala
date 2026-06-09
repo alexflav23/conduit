@@ -72,7 +72,11 @@ object PriceRuleRepo {
                  OR pa.applies_to = 'open_list'
                  OR (pa.applies_to = 'customer_set' AND $customer IS NOT NULL
                      AND EXISTS (SELECT 1 FROM price_agreement_customer pac
-                                 WHERE pac.agreement_id = pa.id AND pac.party_id = $customer)))"""
+                                 WHERE pac.agreement_id = pa.id AND pac.party_id = $customer))
+                 OR (pa.applies_to = 'segment' AND $customer IS NOT NULL
+                     AND EXISTS (SELECT 1 FROM party p WHERE p.id = $customer AND p.segment = pa.scope_value))
+                 OR (pa.applies_to = 'sector' AND $customer IS NOT NULL
+                     AND EXISTS (SELECT 1 FROM party p WHERE p.id = $customer AND p.sector = pa.scope_value)))"""
       .query[CandidateRow]
       .to[List]
       .map(_.map {
@@ -122,7 +126,11 @@ object PriceRuleRepo {
             AND (pa.applies_to = 'open_list'
                  OR (pa.applies_to = 'customer_set' AND $customer IS NOT NULL
                      AND EXISTS (SELECT 1 FROM price_agreement_customer pac
-                                 WHERE pac.agreement_id = pa.id AND pac.party_id = $customer)))"""
+                                 WHERE pac.agreement_id = pa.id AND pac.party_id = $customer))
+                 OR (pa.applies_to = 'segment' AND $customer IS NOT NULL
+                     AND EXISTS (SELECT 1 FROM party p WHERE p.id = $customer AND p.segment = pa.scope_value))
+                 OR (pa.applies_to = 'sector' AND $customer IS NOT NULL
+                     AND EXISTS (SELECT 1 FROM party p WHERE p.id = $customer AND p.sector = pa.scope_value)))"""
       .query[CumBandRow]
       .to[List]
       .map(_.map {
