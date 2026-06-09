@@ -196,6 +196,13 @@ A **DSAR** (Data Subject Access Request) and a **right-to-erasure** request are 
 
 Rate limits are a **preventive control**: they bound the blast radius of a compromised reseller token, a runaway client, and credential-stuffing. `429`s are emitted as a metric and alarmed if a single principal saturates (possible compromise — §B.5 Spoofing).
 
+> **DEFERRED (not built; spec only).** This is fairness/isolation + admission control among *authenticated* principals
+> — not perimeter/DDoS defence (everything is behind Keycloak; volumetric defence is the load-balancer/WAF's job, and
+> login brute-force is Keycloak's). The app-side pieces — a per-`sub` token bucket + bulk/export **job-admission
+> concurrency control** — are deferred: the per-tier reseller quota only matters once the **reseller API exists**
+> (not yet built), and the job-admission gate lands with the bulk-export/reporting surface. Until then the edge limit
+> + Keycloak cover the real exposure. Revisit when the reseller API or heavy async exports ship.
+
 ### B.5 STRIDE threat model (key flows)
 
 Per-flow STRIDE (Spoofing / Tampering / Repudiation / Information disclosure / Denial of service / Elevation of privilege). Mitigations reference the spec's existing controls; net-new items are flagged.
