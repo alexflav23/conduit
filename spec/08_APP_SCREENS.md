@@ -179,6 +179,11 @@ Tabs shown are role-gated (e.g. an agent sees Home/Forecast/Accounts/Orders/Comm
 - **Actions:** "+" create (S14); tap → S15.
 - **States:** empty, offline cache.
 
+> **Pricing model update ([doc 24](./24_CONTRACT_PRICING.md)):** nobody types a price. The "discount slider" below
+> is **superseded** — an order line is `(sku, qty)`; the price is the resolved **authorized tier** for the customer
+> (volume band shown). The S16 "exception" is **a governed request to create a new price tier** (valid for that
+> customer + terms), not an ad-hoc number. Build to doc 24 when M-Pricing lands.
+
 ### S14 · Create order (quote → place)
 - **Purpose:** build and place an order; surface ADLP & commission in real time.
 - **Role:** agents (CS limited). **Entry:** Orders "+", Account, or Deal-win.

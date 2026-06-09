@@ -205,6 +205,13 @@ Stack = **hyperstore**, replicated exactly:
 5. **Companion app Flutter vs React** — OPEN, §5 above; non-blocking until M14.
 6. Stale spec text to ignore: doc 04 §FX "presentation currency likely USD — confirm" (USD **is** confirmed everywhere else).
 7. Year-1 seed = **UK only** (GBP, VAT 20, en), buying from Luxshare-UK; the 23-market table is the configured roadmap.
+8. **Pricing is contract/tier-bound — nobody types a price** (doc 24). Every price is a governed **tier** inside a
+   `price_agreement` (validity window, one-or-more-customer scope, volume bands); the order line binds to a tier and
+   the server rejects any non-tier price. The ADLP **"exception" is a governed price-tier *request*** (maker-checker →
+   admin/CEO), not an ad-hoc number on an order. **Volume tiers** (per-order / cumulative-prospective /
+   cumulative-**retrospective**) are first-class, and the retrospective case is **ASC-606 variable consideration**:
+   the full contract structure (validity, bands, rebates) **must propagate to revenue/AR/commission/ledger** (rebate
+   accrual + true-up). Spec-only today → new milestone **M-Pricing** (evolves `price_rule`; doc 24 §10).
 
 ---
 

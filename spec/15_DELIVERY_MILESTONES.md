@@ -41,7 +41,8 @@ Xero invoice + revenue-recognition consumers. Pushed to `github/main`.
 | P3 | **M12** Intercompany + transfer pricing + tax/customs + hedges | ✅ | 02§A/§I, **13**, **16** | ✓ |
 | P3 | **M13** ERP/GL + P&L + Xero + documents + **tax/customs engine** | ✅ | 04§Ledger, **16**, **17** | ✓ (see below) |
 | P3 | **M13b** Period close + reconciliation + Auditability Center | ✅ | 14§5–6, **20** | ✓ |
-| P3 | **M14** Companion app + desk + Horizons + reporting + HubSpot | ◐ | 08, **20**, **21** | desk (no companion) |
+| P3 | **M14** Companion app + desk + Horizons + reporting + HubSpot | ◐ | 08, **20**, **21**, **23** | desk (no companion); Flutter decided |
+| P? | **M-Pricing** Contract & volume-tiered pricing (no-typed-prices; tier-request workflow; cumulative/retrospective rebates → revenue/AR/commission/ledger) | ⬜ spec | **24** | spec only |
 | X | **NFR / Security / Ops-DR** (cross-cutting, P1 launch-blocker) | ◐ | **19** | DSAR crypto-shred ✓ |
 
 **M13 sub-status** (✅ complete — invalidation, Order Collection Ledger, extra document types, multi-locale fonts, the **real tax/customs engine** and the **sales-VAT-at-recognition + per-jurisdiction ledger + quote/placement** path all landed):
