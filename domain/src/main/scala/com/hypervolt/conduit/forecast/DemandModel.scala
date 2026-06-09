@@ -125,12 +125,54 @@ object DemandModel {
       }
   }
 
+
+  // Damped Holt linear trend (doc 26 §4 iteration 2): level + trend with damping φ — the standard answer to
+  // "level models systematically under-forecast a growing business" without naive trend explosion at horizon.
+  final class HoltDamped(alpha: BigDecimal, beta: BigDecimal, phi: BigDecimal) extends DemandModel {
+    val key     = "holt_damped"
+    val version = 1
+    def predict(h: DemandHistory, horizon: Int): Vector[BigDecimal] =
+      if (h.qty.length < 4) new Ewma(alpha).predict(h, horizon)
+      else {
+        final case class S(level: BigDecimal, trend: BigDecimal)
+        val init = S(h.qty.head, (h.qty(1) - h.qty.head))
+        val s = h.qty.drop(1).foldLeft(init) { (s, x) =>
+          val level = alpha * x + (1 - alpha) * (s.level + phi * s.trend)
+          val trend = beta * (level - s.level) + (1 - beta) * phi * s.trend
+          S(level, trend)
+        }
+        Vector.tabulate(horizon) { i =>
+          val dampSum = (1 to (i + 1)).map(k => phi.pow(k)).foldLeft(BigDecimal(0))(_ + _)
+          r(s.level + dampSum * s.trend)
+        }
+      }
+  }
+
+  // Seasonal drift: same-month-last-year scaled by the trailing year-over-year growth ratio — seasonality AND
+  // growth from two numbers, robust on short noisy series (capped ratio so one spike can't triple a forecast).
+  object SeasonalDrift extends DemandModel {
+    val key     = "seasonal_drift"
+    val version = 1
+    def predict(h: DemandHistory, horizon: Int): Vector[BigDecimal] = {
+      val base = SeasonalNaive.predict(h, horizon)
+      if (h.qty.length < 18) base
+      else {
+        val recent = h.qty.takeRight(6).sum
+        val prior  = h.qty.dropRight(12).takeRight(6).sum
+        val ratio  = if (prior > 0) (recent / prior).min(BigDecimal(2)).max(BigDecimal("0.5")) else BigDecimal(1)
+        base.map(x => r(x * ratio))
+      }
+    }
+  }
+
   // The registry (doc 26 §4) — code-defined; the loop ranks these mechanically, nothing is hand-picked.
   val registry: List[DemandModel] = List(
     SeasonalNaive,
     new Ewma(BigDecimal("0.3")),
     new CrostonSba(BigDecimal("0.2")),
     new SeasonalEts(BigDecimal("0.3"), BigDecimal("0.05"), BigDecimal("0.2")),
+    new HoltDamped(BigDecimal("0.3"), BigDecimal("0.1"), BigDecimal("0.9")),
+    SeasonalDrift,
     Depletion
   )
 }

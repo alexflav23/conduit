@@ -50,6 +50,21 @@ object DemandModelSpec extends SimpleIOSuite with Checkers {
     expect(preds.map(_.toInt) == Vector(0, 0, 50, 50))
   }
 
+  pureTest("holt_damped recovers linear growth that level models miss; seasonal_drift scales last year by growth") {
+    val grow  = Vector.tabulate(24)(i => BigDecimal(100 + 10 * i)) // +10/month
+    val holt  = new DemandModel.HoltDamped(BigDecimal("0.3"), BigDecimal("0.1"), BigDecimal("0.9"))
+    val hPred = holt.predict(hist(grow), 3)
+    val ePred = new DemandModel.Ewma(BigDecimal("0.3")).predict(hist(grow), 3)
+    // a yearly-repeating shape that doubled vs the prior year
+    val season = Vector(100, 100, 200, 100, 100, 100, 100, 100, 100, 100, 100, 100).map(BigDecimal(_))
+    val grown  = season ++ season.map(_ * 2)
+    val sd     = DemandModel.SeasonalDrift.predict(hist(grown), 3)
+    expect(hPred.head > ePred.head) and                      // trend captured, level model lags
+      expect(hPred.head > BigDecimal(300)) and               // near the series head (~330), not the mean
+      expect(sd.head == BigDecimal(400).setScale(4)) and     // 200 (last year's Jan×2 pattern) × growth 2 → capped path
+      expect(sd.forall(_ >= 0))
+  }
+
   pureTest("seasonal_ets tracks a trending seasonal series within tolerance (and degrades gracefully under 24m)") {
     val grow  = Vector.tabulate(36)(i => BigDecimal((100 + i) * (if (i % 12 >= 5 && i % 12 <= 7) 2 else 1)))
     val ets   = new DemandModel.SeasonalEts(BigDecimal("0.3"), BigDecimal("0.05"), BigDecimal("0.2"))
