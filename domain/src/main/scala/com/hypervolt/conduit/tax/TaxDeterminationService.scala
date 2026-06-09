@@ -20,7 +20,12 @@ final class TaxDeterminationService[F[_]: Async](xa: Transactor[F], providers: M
 
   private val bindingContexts = Set("order_placed", "invoice", "intercompany_import")
 
-  def determine(req: TaxQuoteRequest): F[Either[String, TaxQuoteResponse]] = {
+  def determine(req: TaxQuoteRequest): F[Either[String, TaxQuoteResponse]] =
+    determineC(req).transact(xa)
+
+  // The determination as a ConnectionIO — so callers already inside a transaction (order placement, recognition)
+  // can run it atomically with their own writes rather than across two transactions.
+  def determineC(req: TaxQuoteRequest): ConnectionIO[Either[String, TaxQuoteResponse]] = {
     val facts = TaxClassifier.classify(req)
     TaxQuoteRepo
       .provider(req.shipTo.jurisdiction, facts.taxType, req.asOf)
@@ -35,7 +40,6 @@ final class TaxDeterminationService[F[_]: Async](xa: Transactor[F], providers: M
               .pure[ConnectionIO]
         }
       )
-      .transact(xa)
   }
 
   private def runAndPersist(

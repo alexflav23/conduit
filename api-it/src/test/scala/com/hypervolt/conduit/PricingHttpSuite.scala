@@ -59,9 +59,18 @@ object PricingHttpSuite extends IOSuite {
         sql"INSERT INTO product_family (code, name) VALUES (${s"fam-${UUID.randomUUID()}"}, 'Home 3 Pro') RETURNING id"
           .query[UUID]
           .unique
-      _           <- sql"""INSERT INTO product_variant (family_id, sku, generation, is_serialised)
+      _         <- sql"""INSERT INTO product_variant (family_id, sku, generation, is_serialised)
                  VALUES ($famId, $sku, 'v3', true) ON CONFLICT (sku) DO NOTHING""".update.run
-      variantId   <- sql"SELECT id FROM product_variant WHERE sku = $sku".query[UUID].unique
+      variantId <- sql"SELECT id FROM product_variant WHERE sku = $sku".query[UUID].unique
+      // a GB market + its seller-of-record entity, so the quote preview can run the tax engine for the jurisdiction
+      _ <- sql"INSERT INTO market (id, code, name, jurisdiction, currency) VALUES ($market, ${s"M-${UUID.randomUUID()}"
+        .take(12)}, 'M', 'GB', 'GBP') ON CONFLICT (id) DO NOTHING".update.run
+      ent <-
+        sql"INSERT INTO entity (name, jurisdiction, functional_currency, entity_type) VALUES ('HV UK','GB','GBP','operating') RETURNING id"
+          .query[UUID]
+          .unique
+      _ <-
+        sql"INSERT INTO selling_entity (jurisdiction, entity_id, status) VALUES ('GB', $ent, 'active') ON CONFLICT DO NOTHING".update.run
       _           <- sql"""INSERT INTO price_rule (surface, product_variant_id, channel_id, market_id, currency, tax_regime,
                    authorised_price, max_discount_pct, min_qty, status)
                  VALUES ('customer', $variantId, $channel, $market, 'GBP', 'GB_STANDARD', 587.50, 10.00, 1, 'active')""".update.run
@@ -103,6 +112,20 @@ object PricingHttpSuite extends IOSuite {
         expect(c.get[String]("totalIncVat").contains("1410.00")) and
         expect(c.get[Boolean]("requiresException").contains(false)) and
         expect(c.downField("lines").downArray.get[String]("adlpCategory").contains("standard"))
+    }
+  }
+
+  test("the quote preview also runs the tax engine for the market's jurisdiction (supply_kind + engine VAT)") { xa =>
+    for {
+      kcs <- seed(xa)
+      body = quoteBody(Json.arr(Json.obj("sku" -> "HV-310".asJson, "qty" -> 2.asJson)))
+      resp <- post(xa, "/api/v1/pricing/quote", s"dev:${kcs._1}", body)
+      json <- resp.as[Json]
+    } yield {
+      val c = json.hcursor
+      expect(resp.status == Status.Ok) and
+        expect(c.get[String]("supplyKind").contains("domestic")) and // GB market → domestic place of supply
+        expect(c.get[String]("engineVatTotal").contains("235.00"))   // engine VAT matches the priced VAT
     }
   }
 

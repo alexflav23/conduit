@@ -8,7 +8,15 @@ import com.hypervolt.conduit.api.auth.AuthService
 import com.hypervolt.conduit.api.auth.Secured
 import com.hypervolt.conduit.event.OutboxEvent
 import com.hypervolt.conduit.event.OutboxRepo
+import com.hypervolt.conduit.orgconfig.MarketRepo
+import com.hypervolt.conduit.orgconfig.SellingEntityRepo
 import com.hypervolt.conduit.pricing._
+import com.hypervolt.conduit.tax.RateTableProvider
+import com.hypervolt.conduit.tax.TaxDeterminationService
+import com.hypervolt.conduit.tax.TaxQuoteLineReq
+import com.hypervolt.conduit.tax.TaxQuoteRequest
+import com.hypervolt.conduit.tax.TaxQuoteResponse
+import com.hypervolt.conduit.tax.TaxShipPoint
 import doobie.implicits._
 import doobie.util.transactor.Transactor
 import io.circe.Codec
@@ -16,6 +24,7 @@ import io.circe.Json
 import io.circe.generic.semiauto.deriveCodec
 import io.circe.syntax._
 import java.time.Instant
+import java.time.LocalDate
 import java.util.UUID
 import org.http4s.HttpRoutes
 import scala.util.Try
@@ -55,7 +64,11 @@ final case class QuoteResp(
     subtotalExVat: String,
     vatTotal: String,
     totalIncVat: String,
-    requiresException: Boolean
+    requiresException: Boolean,
+    // The tax engine's preview determination for the market's jurisdiction (doc 16 §6) — the resolved place of
+    // supply + engine VAT, so cross-border (reverse-charge/export/import) is visible before the order is placed.
+    supplyKind: Option[String] = None,
+    engineVatTotal: Option[String] = None
 )
 object QuoteResp { implicit val codec: Codec[QuoteResp] = deriveCodec }
 
@@ -81,7 +94,46 @@ final class PricingRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) 
 
   private val base         = Secured.base[F](auth)
   private val quoteService = new QuoteService[F](xa)
+  private val tax          = new TaxDeterminationService[F](xa, Map(RateTableProvider.name -> RateTableProvider))
   private val anchor       = Target(None, None, None, None)
+
+  // The preview tax determination for a market (doc 16 §6, context=quote_preview). Resolves the market's
+  // jurisdiction + the seller-of-record entity, then runs the engine on the ex-tax subtotal. None when the market
+  // has no jurisdiction / no resolvable entity (so no quote is persisted against a non-existent entity).
+  private def previewTax(
+      market: UUID,
+      entity: Option[UUID],
+      currency: String,
+      subtotal: BigDecimal
+  ): F[Option[TaxQuoteResponse]] =
+    MarketRepo.jurisdiction(market).transact(xa).flatMap {
+      case None => Async[F].pure(None)
+      case Some(jur) =>
+        val resolved: F[Option[UUID]] = entity match {
+          case Some(e) => Async[F].pure(Some(e))
+          case None    => SellingEntityRepo.active(jur, LocalDate.now()).transact(xa)
+        }
+        resolved.flatMap {
+          case None => Async[F].pure(None)
+          case Some(ent) =>
+            tax
+              .determine(
+                TaxQuoteRequest(
+                  "quote_preview",
+                  ent,
+                  TaxShipPoint(jur, None, None),
+                  TaxShipPoint(jur, None, None),
+                  "business",
+                  None,
+                  None,
+                  currency,
+                  LocalDate.now(),
+                  List(TaxQuoteLineReq("q", None, Some("goods_standard"), None, 1, subtotal))
+                )
+              )
+              .map(_.toOption)
+        }
+    }
 
   private def badRequest(msg: String): (StatusCode, ApiError) = (StatusCode.BadRequest, ApiError("bad_request", msg))
   private def forbidden(msg: String): (StatusCode, ApiError)  = (StatusCode.Forbidden, ApiError("forbidden", msg))
@@ -113,9 +165,16 @@ final class PricingRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) 
           parsed match {
             case Left(e) => Async[F].pure(Left(e))
             case Right((channel, market, entity, lines)) =>
-              quoteService.quote(channel, market, entity, req.currency, lines, Instant.now()).map {
-                case Left(err)     => Left((StatusCode.UnprocessableEntity, ApiError("no_price", err)))
-                case Right(result) => Right(toResp(result))
+              quoteService.quote(channel, market, entity, req.currency, lines, Instant.now()).flatMap {
+                case Left(err) =>
+                  Async[F].pure(Left((StatusCode.UnprocessableEntity, ApiError("no_price", err))))
+                case Right(result) =>
+                  previewTax(market, entity, req.currency, result.subtotalExVat).map(t =>
+                    Right(
+                      toResp(result)
+                        .copy(supplyKind = t.map(_.supplyKind), engineVatTotal = t.map(_.taxTotal.toString))
+                    )
+                  )
               }
           }
         }

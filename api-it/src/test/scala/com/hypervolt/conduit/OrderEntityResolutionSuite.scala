@@ -74,7 +74,19 @@ object OrderEntityResolutionSuite extends IOSuite {
         case Right(p) => IO.pure(p)
         case Left(e)  => IO.raiseError(new RuntimeException(s"place failed: $e"))
       }
-      stamped <- sql"""SELECT entity_id FROM "order" WHERE id = ${placed.id}""".query[Option[UUID]].unique.transact(xa)
-    } yield expect(stamped.contains(entity)) // booked against the configured GB entity
+      stamped <-
+        sql"""SELECT entity_id, vat_total FROM "order" WHERE id = ${placed.id}"""
+          .query[(Option[UUID], BigDecimal)]
+          .unique
+          .transact(xa)
+      // the tax engine ran at placement: a provisional order_placed quote, tied to the order, whose total is the VAT
+      quote <-
+        sql"SELECT total_tax FROM tax_quote WHERE order_id = ${placed.id} AND context = 'order_placed'"
+          .query[BigDecimal]
+          .option
+          .transact(xa)
+    } yield expect(stamped._1.contains(entity)) and // booked against the configured GB entity
+      expect(quote.contains(stamped._2)) and        // engine VAT tied to the order
+      expect(stamped._2 == BigDecimal("100.0000"))  // 20% of £500 ex-VAT, engine-determined
   }
 }

@@ -11,6 +11,11 @@ import com.hypervolt.conduit.pricing.PricingService
 import com.hypervolt.conduit.pricing.QuoteLine
 import com.hypervolt.conduit.pricing.QuoteLineResult
 import com.hypervolt.conduit.pricing.VariantRepo
+import com.hypervolt.conduit.tax.RateTableProvider
+import com.hypervolt.conduit.tax.TaxDeterminationService
+import com.hypervolt.conduit.tax.TaxQuoteLineReq
+import com.hypervolt.conduit.tax.TaxQuoteRequest
+import com.hypervolt.conduit.tax.TaxShipPoint
 import doobie.ConnectionIO
 import doobie.implicits._
 import doobie.postgres.circe.jsonb.implicits._
@@ -29,6 +34,9 @@ private final case class LinePricing(variantId: UUID, line: PlaceLineInput, pric
 // (no OrderPlaced fan-out) until CEO approval; a credit block rejects; tranches are independently
 // fulfillable; pre-dispatch amendments re-price/re-ADLP and are audited.
 final class OrderService[F[_]: Async](xa: Transactor[F]) {
+
+  private val zero = new UUID(0L, 0L)
+  private val tax  = new TaxDeterminationService[F](xa, Map(RateTableProvider.name -> RateTableProvider))
 
   def place(in: PlaceOrderInput, asOf: Instant): F[Either[OrderError, PlacedOrder]] =
     resolveSellingEntity(in, asOf)
@@ -186,13 +194,50 @@ final class OrderService[F[_]: Async](xa: Transactor[F]) {
     for {
       created <- OrderRepo.insertOrder(in, status, adlp, subtotal, vat, total, None)
       (orderId, orderNo) = created
-      _ <- priced.traverse_(lp => insertLineWithTranches(orderId, lp, asOf))
+      _   <- priced.traverse_(lp => insertLineWithTranches(orderId, lp, asOf))
+      jur <- MarketRepo.jurisdiction(in.marketId).map(_.getOrElse("GB"))
+      // Provisional VAT from the tax engine (doc 16 §6, context=order_placed) — visible before dispatch and tied to
+      // the order; the authoritative re-quote happens at recognition. Only when an entity is resolved (the quote is
+      // persisted against it); otherwise fall back to the priced VAT.
+      taxRes <-
+        if (in.entityId.isDefined)
+          tax
+            .determineC(placedTaxRequest(in, orderId, jur, subtotal, priced.map(_.priced.qty).sum, asOf))
+            .map(_.toOption)
+        else Option.empty[com.hypervolt.conduit.tax.TaxQuoteResponse].pure[ConnectionIO]
+      engineVat  = taxRes.map(_.taxTotal).getOrElse(vat)
+      finalTotal = subtotal + engineVat
+      _ <-
+        if (engineVat != vat) OrderRepo.updateTotalsAndStatus(orderId, status, adlp, subtotal, engineVat, finalTotal)
+        else 0.pure[ConnectionIO]
       event =
         if (status == "pending_ceo") exceptionEvent(orderId, orderNo)
-        else placedEvent(orderId, orderNo, in, priced, total)
+        else placedEvent(orderId, orderNo, in, priced, finalTotal)
       _ <- OutboxRepo.append(event)
       _ <- auditOrder(orderId, orderNo, status, in.createdBy)
-    } yield PlacedOrder(orderId, orderNo, status, adlp, subtotal, vat, total)
+    } yield PlacedOrder(orderId, orderNo, status, adlp, subtotal, engineVat, finalTotal)
+
+  private def placedTaxRequest(
+      in: PlaceOrderInput,
+      orderId: UUID,
+      jurisdiction: String,
+      subtotal: BigDecimal,
+      qty: Int,
+      asOf: Instant
+  ): TaxQuoteRequest =
+    TaxQuoteRequest(
+      context = "order_placed",
+      entityId = in.entityId.getOrElse(zero),
+      shipFrom = TaxShipPoint(jurisdiction, None, None),
+      shipTo = TaxShipPoint(jurisdiction, None, None),
+      partyTaxStatus = "business",
+      buyerTaxId = None,
+      incoterm = None,
+      currency = in.currency,
+      asOf = asOf.atZone(ZoneOffset.UTC).toLocalDate,
+      lines = List(TaxQuoteLineReq("order", None, Some("goods_standard"), None, qty, subtotal)),
+      orderId = Some(orderId)
+    )
 
   private def auditOrder(orderId: UUID, orderNo: String, status: String, actor: Option[UUID]): ConnectionIO[Int] =
     sql"""INSERT INTO audit_log (entity_type, entity_id, action, after, actor_user_id)
