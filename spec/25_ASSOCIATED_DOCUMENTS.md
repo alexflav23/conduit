@@ -1,6 +1,21 @@
 # 25 — Associated / Inbound Documents (attachments)
 
-**Status:** design spec — **spec only, no implementation yet**. This adds the **inbound / received / attached**
+> **✅ Implemented (M13-Docs.9).** `document_attachment` (V1_0_52: WORM `storage_uri` + `content_sha256`,
+> `UNIQUE(subject, sha)` idempotent re-upload, `external_ref`, `data_layer`, `metadata`) + `order.source_attachment_id`.
+> `document.AttachmentService` — `store` (sha-dedupe, WORM put, `document.attached` event with no PII), `download`,
+> `listFor`, and `reconcilePo` (the PO's stated `metadata.po_total` vs the RESOLVED order total — `match`/`drift`,
+> the verdict persisted on the attachment for the review worklist; drift is never silent). **The provenance trace**:
+> `LineageService.contractualSources(orderId)` walks order → `customer_po_number` + source PO attachment → per-line
+> `price_agreement` → the signed contract + schedules its tiers were entered from — and `forInvoice` (the
+> Auditability Center lineage) now carries `contractual_sources`, so a recognised figure drills ledger → events →
+> invoice → **the contractual sources of the revenue** in one response. REST: `POST/GET /api/v1/documents/attachments`
+> (+ `/download`, `/reconcile/{orderId}`), `GET /api/v1/orders/{id}/provenance`; placement accepts
+> `sourceAttachmentId`. `AttachmentProvenanceSuite` proves the full Octopus shape end-to-end on LocalStack S3:
+> contract on the agreement, order created from PO HK00552 priced from the AGREEMENT (960 × £480, never the PO's
+> stated prices), one call returns the whole chain, WORM bytes round-trip intact, and the £-760 drift case flags.
+> *Deferred per §7: email-ingest mailbox; assisted PO parsing (baseline = manual + attach).*
+
+**Status:** ~~design spec — spec only, no implementation yet~~ **implemented** (above). This adds the **inbound / received / attached**
 document capability that complements **doc 17 (M13-Docs)**, which covers only **generated, outbound** documents
 (invoices, credit notes, proformas — the `document` table carries a `render_model` because Conduit *produced*
 them). What's missing is storing documents Conduit **receives** — a customer's purchase order, a signed supply

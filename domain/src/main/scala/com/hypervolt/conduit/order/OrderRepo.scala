@@ -39,11 +39,11 @@ object OrderRepo {
     sql"""INSERT INTO "order"
             (order_no, type, entity_id, sold_to_party_id, bill_to_party_id, customer_po_number, channel_id, market_id,
              status, adlp_category, txn_currency, subtotal_ex_vat, vat_total, total_inc_vat, payment_method,
-             requested_delivery, amend_cutoff, created_by)
+             requested_delivery, amend_cutoff, created_by, source_attachment_id)
           VALUES ('ORD-' || nextval('order_no_seq'), ${in.orderType}, ${in.entityId}, ${in.soldToPartyId},
              ${in.billToPartyId}, ${in.customerPoNumber}, ${in.channelId}, ${in.marketId}, $status, $adlpCategory,
              ${in.currency}, $subtotal, $vat, $total, ${in.paymentMethod}, ${in.requestedDelivery}, $amendCutoff,
-             ${in.createdBy})
+             ${in.createdBy}, ${in.sourceAttachmentId})
           RETURNING id, order_no""".query[(UUID, String)].unique
 
   def insertLine(orderId: UUID, variantId: UUID, priced: QuoteLineResult, isScheduled: Boolean): ConnectionIO[UUID] =

@@ -22,7 +22,9 @@ final case class PlaceOrderInput(
     lines: List[PlaceLineInput],
     // A pending tier request (doc 24 §6.3): the order is held pending_ceo until the draft agreement is activated,
     // then released + re-quoted against the now-active tier. The ONLY way to a price that doesn't exist yet.
-    draftAgreementId: Option[UUID] = None
+    draftAgreementId: Option[UUID] = None,
+    // The stored customer-PO attachment this order was created from (doc 25 §4) — the provenance link.
+    sourceAttachmentId: Option[UUID] = None
 )
 
 final case class PlacedOrder(

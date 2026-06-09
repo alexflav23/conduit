@@ -57,10 +57,9 @@ object Main extends IOApp.Simple {
       _          <- Resource.eval(logger.info("Flyway migrations applied"))
       xa         <- Transactor.build[IO](cfg.db)
       dispatcher <- Dispatcher.parallel[IO]
-      otel <-
-        GlobalMetrics.buildResource[IO](
-          "conduit"
-        ) // Prometheus exporter on :9464 (PROMETHEUS_PORT) — the estate scrapes it
+      otel <- GlobalMetrics.buildResource[IO](
+        "conduit"
+      ) // Prometheus exporter on :9464 (PROMETHEUS_PORT) — the estate scrapes it
       _ <- Resource.eval(IO.delay(ApiMetrics.install(otel.getMeter("tapir")))) // per-endpoint HTTP metrics
       _ <- Resource.eval(IO.delay(OtelAppender.register(otel.getMeterProvider(), "logs_count_conduit")))
       _ <- Resource.eval(
@@ -91,6 +90,12 @@ object Main extends IOApp.Simple {
           else S3DocumentStorage.awsClient
         val documentRoutes =
           new DocumentRoutes[IO](xa, auth, new S3DocumentStorage[IO](s3Client, cfg.documents.bucket)).routes
+        val attachmentRoutes =
+          new com.hypervolt.conduit.api.routes.AttachmentRoutes[IO](
+            xa,
+            auth,
+            new S3DocumentStorage[IO](s3Client, cfg.documents.bucket)
+          ).routes
         val voidRoutes      = new InvoiceVoidRoutes[IO](xa, auth).routes
         val lifecycleRoutes = new OrderLifecycleRoutes[IO](xa, auth).routes
         val taxRoutes       = new com.hypervolt.conduit.api.routes.TaxRoutes[IO](xa, auth).routes
@@ -111,7 +116,7 @@ object Main extends IOApp.Simple {
             "/" -> (HealthRoutes
               .routes[
                 IO
-              ] <+> accessRoutes <+> pricingRoutes <+> commerceRoutes <+> dealDeskRoutes <+> h6qRoutes <+> icRoutes <+> creditRoutes <+> auditRoutes <+> stripeRoutes <+> documentRoutes <+> voidRoutes <+> lifecycleRoutes <+> taxRoutes <+> privacyRoutes)
+              ] <+> accessRoutes <+> pricingRoutes <+> commerceRoutes <+> dealDeskRoutes <+> h6qRoutes <+> icRoutes <+> creditRoutes <+> auditRoutes <+> stripeRoutes <+> documentRoutes <+> attachmentRoutes <+> voidRoutes <+> lifecycleRoutes <+> taxRoutes <+> privacyRoutes)
           ).orNotFound
         val host      = Ipv4Address.fromString(cfg.http.host).getOrElse(ipv4"0.0.0.0")
         val apiPort   = Port.fromInt(cfg.http.port).getOrElse(port"8080")

@@ -65,7 +65,9 @@ final case class CreateOrderReq(
     customerPoNumber: Option[String],
     requestedDelivery: Option[String],
     lines: List[OrderLineReq],
-    draftAgreementId: Option[String] = None // a pending tier request holding this order (doc 24 §6.3)
+    draftAgreementId: Option[String] = None, // a pending tier request holding this order (doc 24 §6.3)
+    sourceAttachmentId: Option[String] =
+      None // the stored customer-PO attachment this order was created from (doc 25 §4)
 )
 object CreateOrderReq { implicit val codec: Codec[CreateOrderReq] = deriveCodec }
 
@@ -180,6 +182,7 @@ final class CommerceRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F])
               entity  <- optUuid(req.entityId)
               reqDel  <- req.requestedDelivery.traverse(date)
               draft   <- optUuid(req.draftAgreementId)
+              srcAtt  <- optUuid(req.sourceAttachmentId)
               lines   <- toLineInputs(req.lines)
               _ <- Either.cond(
                 PolicyEngine.authorize(
@@ -204,7 +207,8 @@ final class CommerceRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F])
               reqDel,
               Some(principal.userId),
               lines,
-              draft
+              draft,
+              srcAtt
             )
           parsed match {
             case Left(e) => Async[F].pure(Left(e))
