@@ -4,6 +4,12 @@ Build spec for the **Flutter companion app** (one codebase → mobile, tablet, w
 
 This doc is written to hand to **Claude Design**. Each screen lists: **purpose · role · entry · layout/components · data (→ API from doc 06) · actions (→ effects) · states**. It is grounded in the data model (02), domain logic (04) and API (06) — don't invent fields or endpoints beyond those.
 
+> **Platform DECISION — RESOLVED: full Flutter, iOS/iPad-first.** The companion app is 100% Flutter, built the
+> Hypervolt way (reuses `hypervolt_ui_kit` from `~/projects/hypervolt/ux`, Conduit purple `#962DFF` theme variant).
+> The **design + architecture + adaptive-layout (iOS/iPad) spec is [doc 23](./23_COMPANION_APP_DESIGN.md)**; this doc
+> stays the authoritative *screen-by-screen functional* spec. Note: the brand line below ("Material 3 base") is
+> realised via the Hypervolt kit's Material-3 theme re-seeded with the Conduit purple — see doc 23 §3.
+
 ---
 
 ## 0. Design language & global patterns

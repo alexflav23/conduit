@@ -145,10 +145,14 @@ Stack = **hyperstore**, replicated exactly:
 - Tests: **Vitest 3.2.4** (unit, `src/**/__tests__`, jsdom) + **Playwright 1.55.0** (e2e, `src/__tests__/browser/*.spec.ts`,
   baseURL the dev server, chromium/firefox/webkit). Chrome DevTools MCP available for manual UI verification.
 
-> **OPEN DECISION (companion app):** `spec/08` specifies the field companion app as **Flutter** (one codebase →
-> mobile/tablet/web). The user asked to use the Vite+React+StyleX combo "to stay consistent." The **back-office desk
-> is React/StyleX either way** and is the first UI we build, so this does not block. Resolve before the companion-app
-> milestone (M14): (a) keep Flutter per spec for true native field use, or (b) React+StyleX PWA for stack consistency.
+> **RESOLVED (companion app): full Flutter, no React.** The field companion app is **100% Flutter**, built the
+> Hypervolt way — it joins the estate's Flutter Melos workspace (`~/projects/hypervolt/ux`) and reuses
+> `hypervolt_ui_kit` (tokens/theme/components/responsive utils), `flutter_bloc`+RxDart, `go_router`, `dio`,
+> Keycloak auth, Hive — with a **Conduit purple (`#962DFF`) theme variant** over the kit's machinery. iOS/iPad-first
+> (width-class adaptive: bottom nav → rail → two-pane master-detail; Slide-Over/Split-View safe; Dynamic Type;
+> biometrics; camera scan), offline-tolerant, data-layer-aware, server-authoritative. The **back-office desk stays
+> React/StyleX** (doc 20) — desk and companion share brand tokens, not code. Full design+architecture spec:
+> **`spec/23`**; screen-by-screen functional spec: `spec/08`.
 
 ---
 

@@ -226,11 +226,13 @@ forms; axios. Copy hyperstore's dual-plugin `vite.config.ts`.
 
 - **In scope, ready now: the back-office desk** (doc 20, D1–D22) — design system, component kit, shell, and all
   desk screens. This is the first and primary UI and is fully unblocked.
-- **Companion app (doc 08) — OPEN DECISION, do not start the visual build yet.** Spec 08 specifies **Flutter**
-  (one codebase → mobile/tablet/web, Material 3 base). CLAUDE.md §5 records an unresolved choice to possibly use
-  the Vite+React+StyleX stack as a PWA instead "to stay consistent." **The design system you build for the desk
-  should be authored so its tokens/foundations can carry to the companion app regardless of which way that
-  decision goes** (keep brand tokens framework-neutral in naming). Resolve before the companion milestone (M14).
+- **Companion app (doc 08) — DECISION RESOLVED: full Flutter** (no React). Its design + adaptive-architecture spec
+  is **[doc 23](./23_COMPANION_APP_DESIGN.md)**: it's built the Hypervolt way on `hypervolt_ui_kit` (the estate
+  Flutter kit in `~/projects/hypervolt/ux`) with a **Conduit purple `#962DFF` theme variant**, iOS/iPad-first.
+  **The desk design system you build here should share its brand tokens with the companion** (one Conduit token
+  source, mirrored into both the StyleX/Figma desk library and the Flutter `hypervolt_ui_kit` theme) so desk and
+  companion are one design language across two stacks. The companion's visual build still waits for this design
+  pass; doc 23 is the brief for it.
 - **Out of scope:** inventing screens, fields, or endpoints beyond docs 20/08/06/02; RTL; marketing/site design.
 - **The "beautiful layer" is now in scope** — doc 20-H6Q explicitly deferred colour-systems/motion/illustration
   to *after* function-validation, and function is validated. This pack is the green light for that layer.
