@@ -3,13 +3,22 @@ package com.hypervolt.conduit.pricing
 import java.util.UUID
 import scala.math.BigDecimal.RoundingMode
 
-// Pricing resolution + ADLP categorisation (doc 04 §Pricing/§ADLP). Pure: candidates come from the repo.
+// Pricing resolution + ADLP categorisation (doc 04 §Pricing/§ADLP, doc 24). Pure: candidates come from the repo.
 object PricingService {
 
   private val Epsilon = BigDecimal("0.0001")
 
-  // Specificity: prefer exact channel > null, market > null, entity > null; then volume break (min_qty);
-  // then highest version.
+  // Most-specific agreement wins (doc 24 §2): a customer_set agreement naming the party beats a segment, beats a
+  // sector, beats the open_list. Within the chosen agreement the band is the highest from_qty the order's qty
+  // reaches (the candidates are already filtered to qty-eligible bands by the query).
+  private def appliesRank(appliesTo: String): Int =
+    appliesTo match {
+      case "customer_set" => 3
+      case "segment"      => 2
+      case "sector"       => 1
+      case _              => 0 // open_list
+    }
+
   def resolve(
       candidates: List[PriceRuleCandidate],
       channel: UUID,
@@ -24,9 +33,9 @@ object PricingService {
       ).count(identity)
 
     candidates
-      .sortBy(c => (-specificity(c), -c.minQty, -c.version))
+      .sortBy(c => (-appliesRank(c.appliesTo), -specificity(c), -c.minQty, -c.version))
       .headOption
-      .map(c => PriceResolution(c.id, c.authorisedPrice, c.maxDiscountPct, c.taxRegime, c.taxRatePct))
+      .map(c => PriceResolution(c.id, c.agreementId, c.authorisedPrice, c.maxDiscountPct, c.taxRegime, c.taxRatePct))
   }
 
   def appliedDiscountPct(listExVat: BigDecimal, unitPriceExVat: BigDecimal): BigDecimal =
@@ -36,6 +45,11 @@ object PricingService {
   def categorise(resolution: PriceResolution, unitPriceExVat: BigDecimal): String =
     if (appliedDiscountPct(resolution.exVat, unitPriceExVat) <= resolution.maxDiscountPct + Epsilon) "standard"
     else "exception"
+
+  // No typed prices (doc 24 §3): the authorized price is the resolved tier price. A supplied price is accepted only
+  // if it equals the tier price (idempotent re-quote); any other value is rejected upstream — never silently honoured.
+  def isTierPrice(resolution: PriceResolution, supplied: Option[BigDecimal]): Boolean =
+    supplied.forall(p => (p - resolution.exVat).abs <= Epsilon)
 
   def vat(unitPriceExVat: BigDecimal, qty: Int, ratePct: BigDecimal): BigDecimal =
     (unitPriceExVat * BigDecimal(qty) * ratePct / 100).setScale(2, RoundingMode.HALF_UP)
@@ -54,7 +68,8 @@ object PricingService {
       adlpCategory = categorise(resolution, unitPrice),
       vat = lineVat,
       lineTotalIncVat = exVatLine + lineVat,
-      priceRuleId = resolution.ruleId
+      priceRuleId = resolution.ruleId,
+      priceAgreementId = resolution.agreementId
     )
   }
 

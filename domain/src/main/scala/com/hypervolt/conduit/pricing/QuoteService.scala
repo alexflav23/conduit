@@ -17,11 +17,12 @@ final class QuoteService[F[_]: Async](xa: Transactor[F]) {
       entity: Option[UUID],
       currency: String,
       lines: List[QuoteLine],
+      customer: Option[UUID],
       asOf: Instant
   ): F[Either[String, QuoteResult]] = {
     val program: ConnectionIO[Either[String, QuoteResult]] =
       lines
-        .traverse(line => resolveLine(channel, market, entity, currency, line, asOf))
+        .traverse(line => resolveLine(channel, market, entity, currency, line, customer, asOf))
         .map { results =>
           results.collectFirst { case Left(err) => err } match {
             case Some(err) => Left(err)
@@ -37,16 +38,18 @@ final class QuoteService[F[_]: Async](xa: Transactor[F]) {
       entity: Option[UUID],
       currency: String,
       line: QuoteLine,
+      customer: Option[UUID],
       asOf: Instant
   ): ConnectionIO[Either[String, QuoteLineResult]] =
     VariantRepo.idBySku(line.sku).flatMap {
       case None => (Left(s"unknown sku: ${line.sku}"): Either[String, QuoteLineResult]).pure[ConnectionIO]
       case Some(variantId) =>
-        PriceRuleRepo.candidates(variantId, channel, market, entity, currency, line.qty, asOf).map { candidates =>
-          PricingService.resolve(candidates, channel, market, entity) match {
-            case None      => Left(s"no active price for ${line.sku}")
-            case Some(res) => Right(PricingService.priceLine(res, line))
-          }
+        PriceRuleRepo.candidates(variantId, channel, market, entity, currency, line.qty, customer, asOf).map {
+          candidates =>
+            PricingService.resolve(candidates, channel, market, entity) match {
+              case None      => Left(s"no active price for ${line.sku}")
+              case Some(res) => Right(PricingService.priceLine(res, line))
+            }
         }
     }
 }

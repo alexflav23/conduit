@@ -41,7 +41,15 @@ final class OrderService[F[_]: Async](xa: Transactor[F]) {
   def place(in: PlaceOrderInput, asOf: Instant): F[Either[OrderError, PlacedOrder]] =
     resolveSellingEntity(in, asOf)
       .flatMap(resolved =>
-        priceLines(resolved.channelId, resolved.marketId, resolved.entityId, resolved.currency, resolved.lines, asOf)
+        priceLines(
+          resolved.channelId,
+          resolved.marketId,
+          resolved.entityId,
+          resolved.currency,
+          resolved.lines,
+          Some(resolved.soldToPartyId),
+          asOf
+        )
           .flatMap {
             case Left(err) => err.asLeft[PlacedOrder].pure[ConnectionIO]
             case Right(priced) =>
@@ -90,7 +98,7 @@ final class OrderService[F[_]: Async](xa: Transactor[F]) {
               .leftWiden[OrderError]
               .pure[ConnectionIO]
           else
-            priceLines(h.channelId, h.marketId, h.entityId, h.currency, newLines, asOf).flatMap {
+            priceLines(h.channelId, h.marketId, h.entityId, h.currency, newLines, Some(h.soldTo), asOf).flatMap {
               case Left(err) => err.asLeft[PlacedOrder].pure[ConnectionIO]
               case Right(priced) =>
                 val (subtotal, vat, total) = totals(priced)
@@ -118,6 +126,7 @@ final class OrderService[F[_]: Async](xa: Transactor[F]) {
       entity: Option[UUID],
       currency: String,
       lines: List[PlaceLineInput],
+      customer: Option[UUID],
       asOf: Instant
   ): ConnectionIO[Either[OrderError, List[LinePricing]]] =
     lines.foldLeft((List.empty[LinePricing].asRight[OrderError]).pure[ConnectionIO]) { (accF, line) =>
@@ -128,18 +137,19 @@ final class OrderService[F[_]: Async](xa: Transactor[F]) {
             case None =>
               OrderError.UnknownSku(line.sku).asLeft[List[LinePricing]].leftWiden[OrderError].pure[ConnectionIO]
             case Some(vid) =>
-              PriceRuleRepo.candidates(vid, channel, market, entity, currency, line.qty, asOf).map { candidates =>
-                PricingService.resolve(candidates, channel, market, entity) match {
-                  case None => OrderError.NoPrice(line.sku).asLeft[List[LinePricing]]
-                  case Some(res) =>
-                    Right(
-                      acc :+ LinePricing(
-                        vid,
-                        line,
-                        PricingService.priceLine(res, QuoteLine(line.sku, line.qty, line.unitPriceExVat))
+              PriceRuleRepo.candidates(vid, channel, market, entity, currency, line.qty, customer, asOf).map {
+                candidates =>
+                  PricingService.resolve(candidates, channel, market, entity) match {
+                    case None => OrderError.NoPrice(line.sku).asLeft[List[LinePricing]]
+                    case Some(res) =>
+                      Right(
+                        acc :+ LinePricing(
+                          vid,
+                          line,
+                          PricingService.priceLine(res, QuoteLine(line.sku, line.qty, line.unitPriceExVat))
+                        )
                       )
-                    )
-                }
+                  }
               }
           }
       }

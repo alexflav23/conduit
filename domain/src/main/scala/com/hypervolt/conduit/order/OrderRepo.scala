@@ -49,10 +49,10 @@ object OrderRepo {
   def insertLine(orderId: UUID, variantId: UUID, priced: QuoteLineResult, isScheduled: Boolean): ConnectionIO[UUID] =
     sql"""INSERT INTO order_line
             (order_id, product_variant_id, qty, unit_price_ex_vat, discount_pct, tax_regime, vat_amount,
-             line_total_inc_vat, price_rule_id, adlp_category, is_scheduled, status)
+             line_total_inc_vat, price_rule_id, price_agreement_id, adlp_category, is_scheduled, status)
           VALUES ($orderId, $variantId, ${priced.qty}, ${priced.unitPriceExVat}, ${priced.appliedDiscountPct},
-             NULL, ${priced.vat}, ${priced.lineTotalIncVat}, ${priced.priceRuleId}, ${priced.adlpCategory},
-             $isScheduled, 'open')
+             NULL, ${priced.vat}, ${priced.lineTotalIncVat}, ${priced.priceRuleId}, ${priced.priceAgreementId},
+             ${priced.adlpCategory}, $isScheduled, 'open')
           RETURNING id""".query[UUID].unique
 
   def insertTranche(lineId: UUID, seq: Int, qty: Int, requestedDate: LocalDate): ConnectionIO[Int] =

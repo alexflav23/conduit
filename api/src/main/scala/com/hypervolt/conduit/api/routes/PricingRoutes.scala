@@ -43,6 +43,7 @@ final case class QuoteReq(
     channelId: String,
     marketId: String,
     currency: String,
+    customerId: Option[String], // the buyer (party) — resolves customer-scoped tiers (doc 24 §2); None = open_list
     lines: List[QuoteLineReq]
 )
 object QuoteReq { implicit val codec: Codec[QuoteReq] = deriveCodec }
@@ -56,7 +57,8 @@ final case class QuoteLineResp(
     unitPriceExVat: String,
     adlpCategory: String,
     vat: String,
-    lineTotalIncVat: String
+    lineTotalIncVat: String,
+    priceAgreementId: Option[String] = None // the resolved contract (doc 24); None for an open_list line
 )
 object QuoteLineResp { implicit val codec: Codec[QuoteLineResp] = deriveCodec }
 
@@ -91,12 +93,29 @@ final case class CreateRuleReq(
 )
 object CreateRuleReq { implicit val codec: Codec[CreateRuleReq] = deriveCodec }
 
+// A price-tier request (doc 24 §6) — the renamed ADLP exception. Becomes a draft, customer-scoped price_agreement.
+final case class BandReq(sku: String, fromQty: Int, upToQty: Option[Int], price: String, taxRegime: String)
+object BandReq { implicit val codec: Codec[BandReq] = deriveCodec }
+
+final case class TierRequestReq(
+    name: String,
+    currency: String,
+    customerIds: List[String],
+    bands: List[BandReq],
+    validFrom: Option[String],
+    validTo: Option[String],
+    baseVolumeBasis: Option[String],
+    justification: Option[String]
+)
+object TierRequestReq { implicit val codec: Codec[TierRequestReq] = deriveCodec }
+
 final class PricingRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
 
-  private val base         = Secured.base[F](auth)
-  private val quoteService = new QuoteService[F](xa)
-  private val tax          = new TaxDeterminationService[F](xa, Map(RateTableProvider.name -> RateTableProvider))
-  private val anchor       = Target(None, None, None, None)
+  private val base             = Secured.base[F](auth)
+  private val quoteService     = new QuoteService[F](xa)
+  private val agreementService = new AgreementService[F](xa)
+  private val tax              = new TaxDeterminationService[F](xa, Map(RateTableProvider.name -> RateTableProvider))
+  private val anchor           = Target(None, None, None, None)
 
   // The preview tax determination for a market (doc 16 §6, context=quote_preview). Resolves the market's
   // jurisdiction + the seller-of-record entity, then runs the engine on the ex-tax subtotal. None when the market
@@ -158,15 +177,16 @@ final class PricingRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) 
           Async[F].pure(Left(forbidden("requires view:price_rule")))
         else {
           val parsed = for {
-            channel <- uuid(req.channelId)
-            market  <- uuid(req.marketId)
-            entity  <- optUuid(req.entityId)
-            lines   <- req.lines.traverse(l => l.unitPriceExVat.traverse(decimal).map(p => QuoteLine(l.sku, l.qty, p)))
-          } yield (channel, market, entity, lines)
+            channel  <- uuid(req.channelId)
+            market   <- uuid(req.marketId)
+            entity   <- optUuid(req.entityId)
+            customer <- optUuid(req.customerId)
+            lines    <- req.lines.traverse(l => l.unitPriceExVat.traverse(decimal).map(p => QuoteLine(l.sku, l.qty, p)))
+          } yield (channel, market, entity, customer, lines)
           parsed match {
             case Left(e) => Async[F].pure(Left(e))
-            case Right((channel, market, entity, lines)) =>
-              quoteService.quote(channel, market, entity, req.currency, lines, Instant.now()).flatMap {
+            case Right((channel, market, entity, customer, lines)) =>
+              quoteService.quote(channel, market, entity, req.currency, lines, customer, Instant.now()).flatMap {
                 case Left(err) =>
                   Async[F].pure(Left((StatusCode.UnprocessableEntity, ApiError("no_price", err))))
                 case Right(result) =>
@@ -277,6 +297,81 @@ final class PricingRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) 
           }
       }
 
+  // doc 24 §6 — file a price-tier request: a draft, customer-scoped agreement + its bands. Requires the propose
+  // right (agents don't have it); the proposer is recorded for the maker-checker activation.
+  private val requestAgreement =
+    base.post
+      .in("api" / "v1" / "pricing" / "agreements")
+      .in(jsonBody[TierRequestReq])
+      .out(statusCode(StatusCode.Created).and(jsonBody[Json]))
+      .serverLogic { principal => req =>
+        if (!PolicyEngine.authorize(principal, Action.Edit, "price_rule", anchor))
+          Async[F].pure(Left(forbidden("requires edit:price_rule")))
+        else {
+          val parsed = for {
+            customers <- req.customerIds.traverse(uuid)
+            from <-
+              req.validFrom.traverse(s => Try(Instant.parse(s)).toEither.leftMap(_ => badRequest("invalid validFrom")))
+            to    <- req.validTo.traverse(s => Try(Instant.parse(s)).toEither.leftMap(_ => badRequest("invalid validTo")))
+            bands <- req.bands.traverse(b => decimal(b.price).map(p => (b, p)))
+          } yield (customers, from, to, bands)
+          parsed match {
+            case Left(e) => Async[F].pure(Left(e))
+            case Right((customers, from, to, bands)) =>
+              val program = bands
+                .traverse {
+                  case (b, price) =>
+                    VariantRepo
+                      .idBySku(b.sku)
+                      .map(_.map(vid => TierBand(vid, b.fromQty, b.upToQty, price, b.taxRegime)))
+                }
+                .map(_.sequence)
+              program.transact(xa).flatMap {
+                case None =>
+                  Async[F]
+                    .pure(Left((StatusCode.UnprocessableEntity, ApiError("unknown_sku", "a band sku is unknown"))))
+                case Some(tierBands) =>
+                  agreementService
+                    .request(
+                      TierRequest(
+                        req.name,
+                        req.currency,
+                        customers,
+                        tierBands,
+                        from.getOrElse(Instant.now()),
+                        to,
+                        req.baseVolumeBasis.getOrElse("per_order"),
+                        Json.obj(),
+                        req.justification,
+                        principal.userId
+                      )
+                    )
+                    .map(id => Right(Json.obj("id" -> id.toString.asJson, "status" -> "draft".asJson)))
+              }
+          }
+        }
+      }
+
+  // doc 24 §6 — govern the request: maker-checker activation (proposer ≠ approver, enforced in the service). On
+  // activation the agreement + its tier rules go active and the named customers resolve the new tier thereafter.
+  private val activateAgreement =
+    base.post
+      .in("api" / "v1" / "pricing" / "agreements" / path[String]("id") / "activate")
+      .out(jsonBody[Json])
+      .serverLogic { principal => idStr =>
+        if (!PolicyEngine.authorize(principal, Action.Edit, "price_rule", anchor))
+          Async[F].pure(Left(forbidden("requires edit:price_rule")))
+        else
+          uuid(idStr) match {
+            case Left(e) => Async[F].pure(Left(e))
+            case Right(id) =>
+              agreementService.activate(id, principal.userId).map {
+                case Left(msg) => Left((StatusCode.UnprocessableEntity, ApiError("not_activatable", msg)))
+                case Right(_)  => Right(Json.obj("id" -> id.toString.asJson, "status" -> "active".asJson))
+              }
+          }
+      }
+
   private def toResp(r: QuoteResult): QuoteResp =
     QuoteResp(
       lines = r.lines.map(l =>
@@ -289,7 +384,8 @@ final class PricingRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) 
           l.unitPriceExVat.toString,
           l.adlpCategory,
           l.vat.toString,
-          l.lineTotalIncVat.toString
+          l.lineTotalIncVat.toString,
+          l.priceAgreementId.map(_.toString)
         )
       ),
       subtotalExVat = r.subtotalExVat.toString,
@@ -299,5 +395,6 @@ final class PricingRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) 
     )
 
   val routes: HttpRoutes[F] =
-    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(List(quote, listRules, createRule, activateRule))
+    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F])
+      .toRoutes(List(quote, listRules, createRule, activateRule, requestAgreement, activateAgreement))
 }
