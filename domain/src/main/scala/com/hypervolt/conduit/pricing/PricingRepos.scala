@@ -12,6 +12,10 @@ import java.util.UUID
 object VariantRepo {
   def idBySku(sku: String): ConnectionIO[Option[UUID]] =
     sql"SELECT id FROM product_variant WHERE sku = $sku".query[UUID].option
+
+  // (id, product_class) — the class is the dimension cumulative tiers/rebates count over (doc 24 §4.5).
+  def lookupBySku(sku: String): ConnectionIO[Option[(UUID, String)]] =
+    sql"SELECT id, product_class FROM product_variant WHERE sku = $sku".query[(UUID, String)].option
 }
 
 object PriceRuleRepo {
@@ -61,6 +65,7 @@ object PriceRuleRepo {
             AND (pr.entity_id = $entity OR pr.entity_id IS NULL)
             AND pr.min_qty <= $qty
             AND (pr.up_to_qty IS NULL OR pr.up_to_qty >= $qty)
+            AND (pa.id IS NULL OR pa.base_volume_basis = 'per_order')
             AND (pa.id IS NULL
                  OR (pa.status = 'active' AND pa.valid_from <= $asOf AND (pa.valid_to IS NULL OR pa.valid_to > $asOf)))
             AND (pa.id IS NULL
@@ -73,6 +78,55 @@ object PriceRuleRepo {
       .map(_.map {
         case (id, agr, applies, ch, mk, en, price, disc, minQ, upTo, ver, tr, rate) =>
           PriceRuleCandidate(id, agr, applies, ch, mk, en, price, disc, minQ, upTo, ver, tr, rate)
+      })
+
+  // Cumulative (base_volume_basis <> 'per_order') tier bands applicable to the customer — NOT qty-filtered (the band
+  // is selected by the running cumulative position, not the line qty, doc 24 §4(b)). Carries the agreement's
+  // valid_from so the resolver can derive the contract-year window. open_list cumulative is possible but unusual.
+  private type CumBandRow =
+    (
+        UUID,
+        UUID,
+        String,
+        Instant,
+        Option[UUID],
+        Option[UUID],
+        Option[UUID],
+        BigDecimal,
+        BigDecimal,
+        Int,
+        Option[Int],
+        Int,
+        String,
+        BigDecimal
+    )
+
+  def cumulativeBands(
+      variantId: UUID,
+      currency: String,
+      customer: Option[UUID],
+      asOf: Instant
+  ): ConnectionIO[List[CumulativeBand]] =
+    sql"""SELECT pr.id, pa.id, pa.applies_to, pa.valid_from,
+                 pr.channel_id, pr.market_id, pr.entity_id, pr.authorised_price, pr.max_discount_pct,
+                 pr.min_qty, pr.up_to_qty, pr.version, pr.tax_regime, tr.rate_percent
+          FROM price_rule pr
+          JOIN tax_regime tr ON tr.code = pr.tax_regime
+          JOIN price_agreement pa ON pa.id = pr.price_agreement_id
+          WHERE pr.surface = 'customer' AND pr.product_variant_id = $variantId AND pr.currency = $currency
+            AND pr.status = 'active'
+            AND pr.effective_from <= $asOf AND (pr.effective_to IS NULL OR pr.effective_to > $asOf)
+            AND pa.base_volume_basis <> 'per_order'
+            AND pa.status = 'active' AND pa.valid_from <= $asOf AND (pa.valid_to IS NULL OR pa.valid_to > $asOf)
+            AND (pa.applies_to = 'open_list'
+                 OR (pa.applies_to = 'customer_set' AND $customer IS NOT NULL
+                     AND EXISTS (SELECT 1 FROM price_agreement_customer pac
+                                 WHERE pac.agreement_id = pa.id AND pac.party_id = $customer)))"""
+      .query[CumBandRow]
+      .to[List]
+      .map(_.map {
+        case (id, agr, applies, vf, ch, mk, en, price, disc, minQ, upTo, ver, tr, rate) =>
+          CumulativeBand(id, agr, applies, vf, ch, mk, en, price, disc, minQ, upTo, ver, tr, rate)
       })
 
   def listRulesJson: ConnectionIO[List[Json]] =

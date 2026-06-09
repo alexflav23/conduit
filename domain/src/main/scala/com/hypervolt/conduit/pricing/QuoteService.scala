@@ -41,15 +41,16 @@ final class QuoteService[F[_]: Async](xa: Transactor[F]) {
       customer: Option[UUID],
       asOf: Instant
   ): ConnectionIO[Either[String, QuoteLineResult]] =
-    VariantRepo.idBySku(line.sku).flatMap {
+    VariantRepo.lookupBySku(line.sku).flatMap {
       case None => (Left(s"unknown sku: ${line.sku}"): Either[String, QuoteLineResult]).pure[ConnectionIO]
-      case Some(variantId) =>
-        PriceRuleRepo.candidates(variantId, channel, market, entity, currency, line.qty, customer, asOf).map {
-          candidates =>
+      case Some((variantId, productClass)) =>
+        TierResolver
+          .candidates(variantId, productClass, channel, market, entity, currency, line.qty, customer, asOf)
+          .map { candidates =>
             PricingService.resolve(candidates, channel, market, entity) match {
               case None      => Left(s"no active price for ${line.sku}")
               case Some(res) => Right(PricingService.priceLine(res, line))
             }
-        }
+          }
     }
 }

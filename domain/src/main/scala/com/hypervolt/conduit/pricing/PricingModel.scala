@@ -22,6 +22,25 @@ final case class PriceRuleCandidate(
     taxRatePct: BigDecimal
 )
 
+// A band of a cumulative (non-per_order) agreement (doc 24 §4(b)) — selected by the running cumulative position,
+// not the line qty. Carries the agreement's valid_from so the contract-year window can be derived.
+final case class CumulativeBand(
+    id: UUID,
+    agreementId: UUID,
+    appliesTo: String,
+    validFrom: java.time.Instant,
+    channelId: Option[UUID],
+    marketId: Option[UUID],
+    entityId: Option[UUID],
+    authorisedPrice: BigDecimal,
+    maxDiscountPct: BigDecimal,
+    fromQty: Int,
+    upToQty: Option[Int],
+    version: Int,
+    taxRegime: String,
+    taxRatePct: BigDecimal
+)
+
 final case class PriceResolution(
     ruleId: UUID,
     agreementId: Option[UUID],

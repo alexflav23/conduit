@@ -6,8 +6,8 @@ import com.hypervolt.conduit.event.OutboxEvent
 import com.hypervolt.conduit.event.OutboxRepo
 import com.hypervolt.conduit.orgconfig.MarketRepo
 import com.hypervolt.conduit.orgconfig.SellingEntityRepo
-import com.hypervolt.conduit.pricing.PriceRuleRepo
 import com.hypervolt.conduit.pricing.PricingService
+import com.hypervolt.conduit.pricing.TierResolver
 import com.hypervolt.conduit.pricing.QuoteLine
 import com.hypervolt.conduit.pricing.QuoteLineResult
 import com.hypervolt.conduit.pricing.VariantRepo
@@ -133,12 +133,13 @@ final class OrderService[F[_]: Async](xa: Transactor[F]) {
       accF.flatMap {
         case Left(e) => e.asLeft[List[LinePricing]].pure[ConnectionIO]
         case Right(acc) =>
-          VariantRepo.idBySku(line.sku).flatMap {
+          VariantRepo.lookupBySku(line.sku).flatMap {
             case None =>
               OrderError.UnknownSku(line.sku).asLeft[List[LinePricing]].leftWiden[OrderError].pure[ConnectionIO]
-            case Some(vid) =>
-              PriceRuleRepo.candidates(vid, channel, market, entity, currency, line.qty, customer, asOf).map {
-                candidates =>
+            case Some((vid, productClass)) =>
+              TierResolver
+                .candidates(vid, productClass, channel, market, entity, currency, line.qty, customer, asOf)
+                .map { candidates =>
                   PricingService.resolve(candidates, channel, market, entity) match {
                     case None => OrderError.NoPrice(line.sku).asLeft[List[LinePricing]]
                     case Some(res) =>
@@ -150,7 +151,7 @@ final class OrderService[F[_]: Async](xa: Transactor[F]) {
                         )
                       )
                   }
-              }
+                }
           }
       }
     }
