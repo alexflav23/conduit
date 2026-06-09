@@ -4,6 +4,7 @@ import cats.effect.IO
 import cats.effect.Resource
 import cats.syntax.all._
 import com.hypervolt.conduit.forecast.BacktestEngine
+import com.hypervolt.conduit.forecast.DemandModel
 import com.hypervolt.conduit.forecast.DemandSeriesRepo
 import doobie.implicits._
 import doobie.postgres.implicits._
@@ -99,11 +100,13 @@ object ForecastLoopSuite extends IOSuite {
     } yield expect(hist.months.lastOption.contains(LocalDate.of(2025, 6, 1))) and // censored at the origin
       expect(hist.qty.takeRight(2).map(_.toInt) == Vector(100, 250)) and          // May'25=100, Jun'25=250 — Q3 rows invisible
       expect(fitted > 0) and expect(rerun == 0) and                               // immutable: re-run adds nothing
-      expect(runs == 5L) and expect(preds > 0) and expect(scored > 0) and
-      expect(sChamp.exists(c => Set("seasonal_naive", "seasonal_ets").contains(c._1))) and // a SEASONAL family wins
-      expect(sChamp.exists(_._2 == BigDecimal(0))) and                                     // …with ZERO error on exact yearly repetition
+      expect(runs == DemandModel.registry.size.toLong) and expect(preds > 0) and expect(scored > 0) and
       expect(
-        lChamp.exists(c => !Set("seasonal_naive", "seasonal_ets").contains(c._1))
+        sChamp.exists(c => Set("seasonal_naive", "seasonal_ets", "seasonal_drift").contains(c._1))
+      ) and                                            // a SEASONAL family wins
+      expect(sChamp.exists(_._2 == BigDecimal(0))) and // …with ZERO error on exact yearly repetition
+      expect(
+        lChamp.exists(c => !Set("seasonal_naive", "seasonal_ets", "seasonal_drift").contains(c._1))
       ) and // the shifted cycle rejects seasonal
       expect(lChamp.exists(_._2 > 0)) and
       expect(sChamp.map(_._1) != lChamp.map(_._1)) // personalised, mechanical selection
@@ -126,6 +129,6 @@ object ForecastLoopSuite extends IOSuite {
           .transact(xa)
       champ <- engine.champion(seasonal)
     } yield expect(origins == 2L) and
-      expect(champ.exists(c => Set("seasonal_naive", "seasonal_ets").contains(c._1)))
+      expect(champ.exists(c => Set("seasonal_naive", "seasonal_ets", "seasonal_drift").contains(c._1)))
   }
 }

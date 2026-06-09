@@ -59,9 +59,9 @@ object DemandModelSpec extends SimpleIOSuite with Checkers {
     val season = Vector(100, 100, 200, 100, 100, 100, 100, 100, 100, 100, 100, 100).map(BigDecimal(_))
     val grown  = season ++ season.map(_ * 2)
     val sd     = DemandModel.SeasonalDrift.predict(hist(grown), 3)
-    expect(hPred.head > ePred.head) and                      // trend captured, level model lags
-      expect(hPred.head > BigDecimal(300)) and               // near the series head (~330), not the mean
-      expect(sd.head == BigDecimal(400).setScale(4)) and     // 200 (last year's Jan×2 pattern) × growth 2 → capped path
+    expect(hPred.head > ePred.head) and                  // trend captured, level model lags
+      expect(hPred.head > BigDecimal(300)) and           // near the series head (~330), not the mean
+      expect(sd.head == BigDecimal(400).setScale(4)) and // 200 (last year's Jan×2 pattern) × growth 2 → capped path
       expect(sd.forall(_ >= 0))
   }
 

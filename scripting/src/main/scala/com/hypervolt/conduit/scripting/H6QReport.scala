@@ -40,12 +40,13 @@ object H6QReport extends IOApp.Simple {
     for {
       ids <- seed
       (octopus, installer, vid) = ids
-      engine = new BacktestEngine[IO](xa)
+      engine                    = new BacktestEngine[IO](xa)
       // the rolling-origin loop over four historical origins, scored against known actuals
-      origins = List(LocalDate.of(2024, 7, 1), LocalDate.of(2024, 10, 1), LocalDate.of(2025, 1, 1), LocalDate.of(2025, 4, 1))
-      _ <- origins.traverse_(o => engine.runOrigin(o, horizonMonths = 3))
-      _ <- origins.traverse_(o => engine.scoreOrigin(o, asOf = LocalDate.of(2025, 7, 1)))
-      q2 <- q2Detail(octopus).transact(xa)
+      origins =
+        List(LocalDate.of(2024, 7, 1), LocalDate.of(2024, 10, 1), LocalDate.of(2025, 1, 1), LocalDate.of(2025, 4, 1))
+      _   <- origins.traverse_(o => engine.runOrigin(o, horizonMonths = 3))
+      _   <- origins.traverse_(o => engine.scoreOrigin(o, asOf = LocalDate.of(2025, 7, 1)))
+      q2  <- q2Detail(octopus).transact(xa)
       lbO <- ForecastRunRepo.leaderboard(octopus).transact(xa)
       lbI <- ForecastRunRepo.leaderboard(installer).transact(xa)
       // the live forecast: champions publish Q3'25 from everything ≤ Jun'25
@@ -61,7 +62,16 @@ object H6QReport extends IOApp.Simple {
       global  <- views.perMarketAndGlobal(LocalDate.of(2025, 7, 1), scen)
       sectors <- views.sectors(LocalDate.of(2025, 7, 1), scen)
       money   <- views.netRevenueBySector(LocalDate.of(2025, 7, 1), scen, channel, "GBP", Instant.now())
-      html = render(q2, lbO, lbI, q3, state.orElse(runway.map(r => (BigDecimal(30), BigDecimal(15), Some(r)))), global, sectors, money)
+      html = render(
+        q2,
+        lbO,
+        lbI,
+        q3,
+        state.orElse(runway.map(r => (BigDecimal(30), BigDecimal(15), Some(r)))),
+        global,
+        sectors,
+        money
+      )
       _ <- IO.blocking(Files.write(Paths.get("/tmp/conduit-h6q-report.html"), html.getBytes(StandardCharsets.UTF_8)))
       _ <- IO.println("report written: /tmp/conduit-h6q-report.html")
     } yield ()
@@ -71,12 +81,15 @@ object H6QReport extends IOApp.Simple {
     (for {
       octopus <- sql"SELECT id FROM party WHERE display_name='Octopus Energy (demo)'".query[UUID].unique
       vid     <- sql"SELECT id FROM product_variant WHERE sku='HV3PROAA'".query[UUID].unique
-      installer <- sql"SELECT id FROM party WHERE display_name='Spark Bright Installations (demo)'".query[UUID].option.flatMap {
-        case Some(id) => id.pure[ConnectionIO]
-        case None =>
-          sql"""INSERT INTO party (display_name, party_type, is_organization, sector)
-                VALUES ('Spark Bright Installations (demo)','wholesaler',true,'installers') RETURNING id""".query[UUID].unique
-      }
+      installer <-
+        sql"SELECT id FROM party WHERE display_name='Spark Bright Installations (demo)'".query[UUID].option.flatMap {
+          case Some(id) => id.pure[ConnectionIO]
+          case None =>
+            sql"""INSERT INTO party (display_name, party_type, is_organization, sector)
+                VALUES ('Spark Bright Installations (demo)','wholesaler',true,'installers') RETURNING id"""
+              .query[UUID]
+              .unique
+        }
       ie <- sql"SELECT id FROM party WHERE display_name='IE Energy (demo)'".query[UUID].option.flatMap {
         case Some(id) => id.pure[ConnectionIO]
         case None =>
@@ -84,8 +97,9 @@ object H6QReport extends IOApp.Simple {
                 VALUES ('IE Energy (demo)','wholesaler',true,'energy') RETURNING id""".query[UUID].unique
       }
       // lumpy history: 300-unit spikes whose cycle shifts each year (same-month-last-year always wrong)
-      spikes = List(1, 4, 7, 10).map(LocalDate.of(2023, _, 1)) ++ List(2, 5, 8, 11).map(LocalDate.of(2024, _, 1)) ++
-        List(3, 6).map(LocalDate.of(2025, _, 1))
+      spikes =
+        List(1, 4, 7, 10).map(LocalDate.of(2023, _, 1)) ++ List(2, 5, 8, 11).map(LocalDate.of(2024, _, 1)) ++
+          List(3, 6).map(LocalDate.of(2025, _, 1))
       _ <- spikes.traverse_(m => demoOrder(installer, vid, m, 300, "DEMOL-" + m.toString.take(7)))
       _ <- sql"UPDATE party SET sector='energy' WHERE id=$octopus AND sector IS NULL".update.run
       // H6Q capture rows (the agents' weekly job) for Jul'25, two markets
@@ -98,31 +112,35 @@ object H6QReport extends IOApp.Simple {
     }
 
   private def agreementFor(octopus: UUID, vid: UUID): IO[Unit] =
-    sql"SELECT count(*) FROM price_agreement WHERE name='Octopus demo agreement'".query[Long].unique.transact(xa).flatMap {
-      case n if n > 0 => IO.unit
-      case _ =>
-        val svc = new AgreementService[IO](xa)
-        svc
-          .request(
-            TierRequest(
-              "Octopus demo agreement",
-              "GBP",
-              List(octopus),
-              List(
-                TierBand(vid, 0, Some(99), BigDecimal("600.00"), "GB_STANDARD"),
-                TierBand(vid, 100, Some(499), BigDecimal("560.00"), "GB_STANDARD"),
-                TierBand(vid, 500, None, BigDecimal("520.00"), "GB_STANDARD")
-              ),
-              Instant.now().minusSeconds(3600),
-              None,
-              "cumulative_retrospective",
-              Json.obj("min_commitment_units" -> Json.fromInt(500)),
-              Some("demo"),
-              UUID.randomUUID()
+    sql"SELECT count(*) FROM price_agreement WHERE name='Octopus demo agreement'"
+      .query[Long]
+      .unique
+      .transact(xa)
+      .flatMap {
+        case n if n > 0 => IO.unit
+        case _ =>
+          val svc = new AgreementService[IO](xa)
+          svc
+            .request(
+              TierRequest(
+                "Octopus demo agreement",
+                "GBP",
+                List(octopus),
+                List(
+                  TierBand(vid, 0, Some(99), BigDecimal("600.00"), "GB_STANDARD"),
+                  TierBand(vid, 100, Some(499), BigDecimal("560.00"), "GB_STANDARD"),
+                  TierBand(vid, 500, None, BigDecimal("520.00"), "GB_STANDARD")
+                ),
+                Instant.now().minusSeconds(3600),
+                None,
+                "cumulative_retrospective",
+                Json.obj("min_commitment_units" -> Json.fromInt(500)),
+                Some("demo"),
+                UUID.randomUUID()
+              )
             )
-          )
-          .flatMap(id => svc.activate(id, UUID.randomUUID()).void)
-    }
+            .flatMap(id => svc.activate(id, UUID.randomUUID()).void)
+      }
 
   private def demoOrder(buyer: UUID, vid: UUID, month: LocalDate, qty: Int, no: String): ConnectionIO[Unit] =
     sql"""SELECT count(*) FROM "order" WHERE order_no=$no""".query[Long].unique.flatMap {
@@ -144,7 +162,8 @@ object H6QReport extends IOApp.Simple {
       case _ =>
         sql"""INSERT INTO forecast_entry (market_id, channel_id, segment, company_id, branch_company_id,
                 forecaster_user_id, product_variant_id, period_month, scenario_id, qty, source)
-              VALUES ($market,$channel,'trade',$company,$company,${UUID.randomUUID()},$vid,'2025-07-01',$scen,$qty,'manual')""".update.run.void
+              VALUES ($market,$channel,'trade',$company,$company,${UUID
+          .randomUUID()},$vid,'2025-07-01',$scen,$qty,'manual')""".update.run.void
     }
 
   // Q2'25 detail: per model, Apr/May/Jun forecast vs actual (origin 2025-04-01)
@@ -182,8 +201,10 @@ object H6QReport extends IOApp.Simple {
     val actuals = q2.filter(_._1 == byModel.headOption.map(_._1).getOrElse("")).map(_._4)
     val q2rows = byModel.map {
       case (m, rows) =>
-        val err  = rows.map(r => (r._3 - r._4).abs).sum
-        val wape = if (rows.map(_._4).sum > 0) (err / rows.map(_._4).sum * 100).setScale(1, BigDecimal.RoundingMode.HALF_UP) else BigDecimal(0)
+        val err = rows.map(r => (r._3 - r._4).abs).sum
+        val wape =
+          if (rows.map(_._4).sum > 0) (err / rows.map(_._4).sum * 100).setScale(1, BigDecimal.RoundingMode.HALF_UP)
+          else BigDecimal(0)
         val champ = lbO.headOption.exists(_._1 == m)
         s"""<tr class="${if (champ) "champ" else ""}"><td>$m${if (champ) " ★" else ""}</td>${rows
           .map(r => s"<td>${r._3.setScale(0, BigDecimal.RoundingMode.HALF_UP)}</td>")
@@ -194,7 +215,7 @@ object H6QReport extends IOApp.Simple {
         case (m, w) =>
           s"<tr><td>$m</td><td>${(w * 100).setScale(1, BigDecimal.RoundingMode.HALF_UP)}%</td></tr>"
       }.mkString
-    val q3rows = q3.map { case (p, q, mv) => s"<tr><td>$p</td><td class='num'>$q</td><td>$mv</td></tr>" }.mkString
+    val q3rows            = q3.map { case (p, q, mv) => s"<tr><td>$p</td><td class='num'>$q</td><td>$mv</td></tr>" }.mkString
     val (shelf, vel, run) = state.map(s => (s._1, s._2, s._3)).getOrElse((BigDecimal(0), BigDecimal(0), None))
     s"""<!doctype html><html><head><meta charset="utf-8"><style>
 body{font-family:-apple-system,Helvetica,sans-serif;background:#101014;color:#e8e8ee;margin:28px;max-width:1280px}
@@ -209,12 +230,15 @@ tr.champ td{background:#1d1430;color:#d9c5ff;font-weight:700}
 .kpi{display:inline-block;background:#17171f;border:1px solid #2a2a35;border-radius:8px;padding:12px 22px;margin-right:14px}
 .kpi b{display:block;font-size:24px;color:#962DFF}.kpi span{font-size:11px;color:#9a9ab0}
 .note{color:#8a8aa0;font-size:12px;margin:6px 0}</style></head><body>
-<h1><b>Conduit</b> — H6Q &amp; Revenue Forecasting <span style="font-size:12px;color:#8a8aa0">live engine run · ${LocalDate.now()}</span></h1>
+<h1><b>Conduit</b> — H6Q &amp; Revenue Forecasting <span style="font-size:12px;color:#8a8aa0">live engine run · ${LocalDate
+      .now()}</span></h1>
 
 <h2>1 · The rolling-origin backtest — predict Q2'25 from data ≤ Q1'25, compared with known actuals</h2>
 <p class="note">Octopus Energy (demo) · every registry model trained on censored history (&lt; 2025-04-01), scored against what actually happened. ★ = the champion the error ledger selected.</p>
 <table><tr><th>model</th><th>Apr '25 fc</th><th>May '25 fc</th><th>Jun '25 fc</th><th>WAPE</th></tr>
-<tr><td><i>actuals</i></td>${actuals.map(a => s"<td><i>${a.setScale(0, BigDecimal.RoundingMode.HALF_UP)}</i></td>").mkString}<td>—</td></tr>
+<tr><td><i>actuals</i></td>${actuals
+      .map(a => s"<td><i>${a.setScale(0, BigDecimal.RoundingMode.HALF_UP)}</i></td>")
+      .mkString}<td>—</td></tr>
 $q2rows</table>
 
 <div class="grid"><div>
@@ -232,7 +256,9 @@ $q2rows</table>
 <h2>4 · Account telemetry — the depletion edge (real shelf, real activations)</h2>
 <span class="kpi"><b>${shelf.setScale(0, BigDecimal.RoundingMode.HALF_UP)}</b><span>units on shelf</span></span>
 <span class="kpi"><b>${vel.setScale(1, BigDecimal.RoundingMode.HALF_UP)}</b><span>activations / month</span></span>
-<span class="kpi"><b>${run.map(_.setScale(0, BigDecimal.RoundingMode.HALF_UP).toString).getOrElse("—")}</b><span>runway days</span></span>
+<span class="kpi"><b>${run
+      .map(_.setScale(0, BigDecimal.RoundingMode.HALF_UP).toString)
+      .getOrElse("—")}</b><span>runway days</span></span>
 
 <h2>5 · H6Q — per market &amp; global (Jul '25 capture)</h2>
 <pre style="background:#15151d;padding:14px;border-radius:8px;font-size:12px;overflow:auto">${global.spaces2}</pre>

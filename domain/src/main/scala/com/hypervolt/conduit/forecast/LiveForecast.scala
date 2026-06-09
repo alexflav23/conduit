@@ -15,41 +15,39 @@ import java.time.LocalDate
 import java.util.UUID
 import scala.math.BigDecimal.RoundingMode
 
-// The live engine (doc 26 §6, batch layer): for each forecastable account×SKU, the BACKTEST CHAMPION (argmin over
-// the error ledger; seasonal_naive until an account has history) fits the full censored-at-now history and its
-// predictions land in the existing H6Q spine as forecast_entry(source='model') rows — so humans, hyperview and the
-// learned models are scored on identical terms, and the coverage projector fans them out unchanged. Prior model
-// rows for the same key are superseded (the H6Q append-only chain), never deleted.
+// The live engine (doc 26 §6, batch layer): for each forecastable account×SKU, the TOURNAMENT POLICY (singles +
+// inverse-WAPE blends scored on all censored prior origins; seasonal_naive until an account has evidence) fits the
+// full censored-at-now history and its predictions land in the existing H6Q spine as forecast_entry(source='model')
+// rows — so humans, hyperview and the learned models are scored on identical terms, and the coverage projector fans
+// them out unchanged. Prior model rows for the same key are superseded (the H6Q append-only chain), never deleted.
 final class LiveForecastService[F[_]: Async](xa: Transactor[F]) {
 
   def publish(origin: LocalDate, horizonMonths: Int, minOrders: Int = 3): F[Int] =
     DemandSeriesRepo.forecastableKeys(origin, minOrders).transact(xa).flatMap {
       _.traverse {
         case (company, variant) =>
-          ForecastRunRepo.championBefore(company, origin).transact(xa).flatMap { champ =>
-            val model = champ
-              .flatMap(c => DemandModel.registry.find(_.key == c._1))
-              .getOrElse(DemandModel.SeasonalNaive)
-            publishOne(company, variant, model, origin, horizonMonths)
-          }
+          PolicyRepo
+            .evidence(company, origin)
+            .transact(xa)
+            .flatMap(ev => publishOne(company, variant, PolicySelector.select(ev), origin, horizonMonths))
       }.map(_.sum)
     }
 
   private def publishOne(
       company: UUID,
       variant: UUID,
-      model: DemandModel,
+      policy: Policy,
       origin: LocalDate,
       horizon: Int
   ): F[Int] = {
     val program = DemandSeriesRepo.history(company, variant, origin).flatMap { h =>
-      val preds = model.predict(h, horizon)
+      val preds = policy.predict(h, horizon)
       defaultScenario.flatMap { scenario =>
         preds.zipWithIndex.toList
           .traverse {
             case (qty, i) =>
               val period = origin.plusMonths(i.toLong)
-              insertModelEntry(company, variant, period, scenario, qty, model)
+              insertModelEntry(company, variant, period, scenario, qty, policy)
                 .flatMap(newId => supersedePrior(company, variant, period, newId).as(1))
           }
           .map(_.sum)
@@ -73,11 +71,11 @@ final class LiveForecastService[F[_]: Async](xa: Transactor[F]) {
       period: LocalDate,
       scenario: UUID,
       qty: BigDecimal,
-      model: DemandModel
+      policy: Policy
   ): ConnectionIO[UUID] =
     sql"""INSERT INTO forecast_entry (company_id, product_variant_id, period_month, scenario_id, qty, source, model_version)
           VALUES ($company, $variant, $period, $scenario, ${qty.setScale(0, RoundingMode.HALF_UP).toInt},
-                  'model', ${model.key + ":v" + model.version})
+                  'model', ${policy.key + ":v1"})
           RETURNING id""".query[UUID].unique
 }
 

@@ -125,7 +125,6 @@ object DemandModel {
       }
   }
 
-
   // Damped Holt linear trend (doc 26 §4 iteration 2): level + trend with damping φ — the standard answer to
   // "level models systematically under-forecast a growing business" without naive trend explosion at horizon.
   final class HoltDamped(alpha: BigDecimal, beta: BigDecimal, phi: BigDecimal, keyName: String = "holt_damped")
