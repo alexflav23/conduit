@@ -1,5 +1,25 @@
 # 26 — Per-Account Revenue Forecasting (the self-improving engine)
 
+> **✅ Slices 1–4 implemented (M-Forecast core + live engine).**
+> **1–2 — series + registry:** `forecast.DemandModel` (seasonal_naive / ewma / croston_sba / **depletion** /
+> seasonal_ets — pure, deterministic, ScalaCheck-verified) + `DemandSeriesRepo` (censored account×SKU monthly
+> series as-of any origin, shelf/velocity context from the serial log; data-driven forecastability ≥3 orders).
+> **3 — the loop:** `BacktestEngine` + V1_0_53 (`forecast_run`/`forecast_run_prediction` immutable + UNIQUE per
+> origin×model; `model_accuracy`; champion = pure argmin, deterministic tie-break). `ForecastLoopSuite`'s headline
+> IS the acceptance sentence: train ≤Q2'25 → predict Q3'25 → score vs actuals → a DIFFERENT champion per demand
+> shape (exact-seasonal → seasonal family at ZERO error; shifted-lumpy rejects it); censoring/immutability/
+> idempotency asserted; a new origin extends the learning.
+> **4 — the live engine:** `LiveForecastService` (the champion publishes into the H6Q spine as
+> `forecast_entry(source='model')`, append-only supersession — humans/hyperview/models scored on identical terms);
+> `RunwayService` + **`PlacementConsumer`** (M8's missing `athena-placement-versioned` wire, subscription
+> `conduit-placement-versioned-subscription-1`) — activations update shelf/velocity/runway and fire
+> `forecast.account.runway` at the reorder point; `RevenueProjectionService` — units × the customer's tier net of
+> the expected per-unit retrospective rebate (contract-consistent by construction). `LiveForecastSuite` green.
+> *Fixed en route: a latent M8 bug — `ActivationService` nulled existing `company_id` when an activation arrived
+> without one (now COALESCE; attribution is never erased).*
+> *Remaining: slice 5 (NDJSON snapshot ingest + HubSpot/ghost-busters scrapers + car-sales elasticity + sector
+> rollup) and slice 6 (desk surfaces).*
+
 **Status:** design spec + build plan (M-Forecast). The capstone overlay on everything built so far: a
 **definitive, self-improving model that automatically predicts revenue per account from historical patterns** —
 per SKU, per geography — learning by **rolling-origin backtesting** (train on data ≤ Q2'25, predict Q3'25, score

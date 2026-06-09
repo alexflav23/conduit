@@ -67,8 +67,8 @@ final class ActivationService[F[_]: Async](xa: Transactor[F]) {
       months <- WarrantyProvisioning.legalMonths(su.familyId)
       extra  <- WarrantyProvisioning.extensionMonths(su.id)
       end = start.plusMonths((months + extra).toLong)
-      _ <-
-        sql"""UPDATE serial_unit SET status = 'activated', company_id = $companyId, activated_at = $activatedAt, warranty_end = $end WHERE id = ${su.id}""".update.run
+      _ <- sql"""UPDATE serial_unit SET status = 'activated', company_id = COALESCE($companyId, company_id),
+                activated_at = $activatedAt, warranty_end = $end WHERE id = ${su.id}""".update.run
       _ <- WarrantyProvisioning.open(su.id, su.entityId, su.lotBatchId, su.familyId, start, end)
       _ <- OutboxRepo.append(
         event(
