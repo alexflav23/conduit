@@ -3,7 +3,6 @@ package com.hypervolt.conduit.scripting
 import cats.effect.IO
 import cats.effect.IOApp
 import cats.syntax.all._
-import com.hypervolt.conduit.forecast.DemandSeriesRepo
 import com.hypervolt.conduit.forecast.PolicyRepo
 import com.hypervolt.conduit.forecast.PolicySelector
 import doobie._
@@ -12,11 +11,13 @@ import doobie.postgres.implicits._
 import doobie.util.transactor.Transactor
 import java.time.LocalDate
 import java.util.UUID
+import scala.math.BigDecimal.RoundingMode
 
-// The engine-side tournament, run blind on the real HubSpot history: for every channel series the policy is
-// selected from evidence strictly before the origin (all prior origins), then applied to the censored history
-// and scored against the real Q2'25 — the same protocol the report-side prototype used, now through the
-// production PolicySelector so the numbers must reproduce.
+// The honest evaluation of the engine tournament: at EVERY eval origin the policy is selected from evidence
+// strictly before that origin and scored one-step-ahead on the quarter that followed — a mean over quarters,
+// never a single test quarter (optimising one quarter is curve-fitting with extra steps). The policy forecast
+// is the weighted blend of the stored per-model predictions at that origin (identical to predicting from the
+// censored history, since blending is linear).
 object PolicyTournamentReport extends IOApp.Simple {
 
   private val xa = Transactor.fromDriverManager[IO](
@@ -27,57 +28,79 @@ object PolicyTournamentReport extends IOApp.Simple {
     None
   )
 
-  private val origin = LocalDate.of(2025, 4, 1)
+  private val evalOrigins =
+    List(LocalDate.of(2024, 7, 1), LocalDate.of(2024, 10, 1), LocalDate.of(2025, 1, 1), LocalDate.of(2025, 4, 1))
 
-  private val channelKeys: ConnectionIO[List[(UUID, String, UUID)]] =
-    sql"""SELECT DISTINCT o.sold_to_party_id, p.display_name, ol.product_variant_id
-          FROM order_line ol
-          JOIN "order" o ON o.id = ol.order_id
-          JOIN party p ON p.id = o.sold_to_party_id
-          WHERE p.display_name LIKE 'CH: %'"""
-      .query[(UUID, String, UUID)]
+  private val channels: ConnectionIO[List[(UUID, String)]] =
+    sql"SELECT id, display_name FROM party WHERE display_name LIKE 'CH: %' ORDER BY display_name"
+      .query[(UUID, String)]
       .to[List]
 
+  private def originRows(company: UUID, origin: LocalDate): ConnectionIO[Map[String, (BigDecimal, BigDecimal)]] =
+    sql"""SELECT model_key, SUM(forecast_qty), SUM(actual_qty)
+          FROM model_accuracy WHERE company_id = $company AND origin_month = $origin
+          GROUP BY model_key"""
+      .query[(String, BigDecimal, BigDecimal)]
+      .to[List]
+      .map(_.map { case (k, f, a) => k -> ((f, a)) }.toMap)
+
+  private def evalOne(company: UUID, origin: LocalDate): IO[Option[(String, BigDecimal, BigDecimal)]] =
+    (PolicyRepo.evidence(company, origin).transact(xa), originRows(company, origin).transact(xa)).mapN {
+      (evidence, rows) =>
+        rows.values.headOption.map {
+          case (_, actual) =>
+            val policy = PolicySelector.select(evidence)
+            val forecast = policy.weights.toList
+              .map { case (k, w) => rows.get(k).map(_._1).getOrElse(BigDecimal(0)) * w }
+              .foldLeft(BigDecimal(0))(_ + _)
+            (policy.key, forecast, actual)
+        }
+    }
+
+  private def pct(f: BigDecimal, a: BigDecimal): String =
+    if (a <= 0) "    n/a"
+    else f"${((f - a).abs / a * 100).setScale(1, RoundingMode.HALF_UP)}%6s%%"
+
   override def run: IO[Unit] =
-    channelKeys.transact(xa).flatMap { keys =>
-      keys
+    channels.transact(xa).flatMap { chs =>
+      chs
         .traverse {
-          case (company, name, variant) =>
-            (
-              PolicyRepo.evidence(company, origin).transact(xa),
-              DemandSeriesRepo.history(company, variant, origin).transact(xa),
-              DemandSeriesRepo.actuals(company, variant, origin, origin.plusMonths(3)).transact(xa)
-            ).mapN {
-              case (evidence, hist, actuals) =>
-                val policy   = PolicySelector.select(evidence)
-                val forecast = policy.predict(hist, 3).foldLeft(BigDecimal(0))(_ + _)
-                val actual   = actuals.values.foldLeft(BigDecimal(0))(_ + _)
-                val err =
-                  if (actual > 0) ((forecast - actual).abs / actual * 100).setScale(1, BigDecimal.RoundingMode.HALF_UP)
-                  else BigDecimal(0)
-                (name.stripPrefix("CH: "), policy.key, forecast, actual, err, hist.nonEmpty)
-            }
+          case (company, name) =>
+            evalOrigins
+              .traverse(o => evalOne(company, o).map(o -> _))
+              .map(evals => (name.stripPrefix("CH: "), evals))
         }
         .flatMap { rows =>
-          val (trained, untrained) = rows.sortBy(-_._4).partition(_._6)
-          val header               = f"${"channel"}%-30s ${"policy"}%-28s ${"forecast £"}%12s ${"actual £"}%12s ${"err%"}%7s"
-          def line(r: (String, String, BigDecimal, BigDecimal, BigDecimal, Boolean)) =
-            f"${r._1}%-30s ${r._2}%-28s ${r._3.setScale(0, BigDecimal.RoundingMode.HALF_UP)}%12s ${r._4
-              .setScale(0, BigDecimal.RoundingMode.HALF_UP)}%12s ${r._5}%6s%%"
-          val totF = trained.map(_._3).foldLeft(BigDecimal(0))(_ + _)
-          val totA = trained.map(_._4).foldLeft(BigDecimal(0))(_ + _)
-          val wape = trained
-            .map(r => (r._3 - r._4).abs)
-            .foldLeft(BigDecimal(0))(_ + _) / totA.max(1) * 100
+          val header = f"${"channel"}%-30s" + evalOrigins.map(o => f"${o.toString.take(7)}%8s").mkString +
+            "   policy @ last origin"
+          val lines = rows.map {
+            case (name, evals) =>
+              val cells = evals.map {
+                case (_, Some((_, f, a))) => pct(f, a)
+                case (_, None)            => "       -"
+              }.mkString
+              val policy = evals.last._2.map(_._1).getOrElse("untrained")
+              f"$name%-30s$cells   $policy"
+          }
+          val perOrigin = evalOrigins.zipWithIndex.map {
+            case (o, i) =>
+              val scored = rows.flatMap(_._2(i)._2)
+              val errs   = scored.map { case (_, f, a) => (f - a).abs }.foldLeft(BigDecimal(0))(_ + _)
+              val acts   = scored.map(_._3).foldLeft(BigDecimal(0))(_ + _)
+              val tot    = scored.map(_._2).foldLeft(BigDecimal(0))(_ + _)
+              (o, errs / acts.max(1) * 100, (tot - acts).abs / acts.max(1) * 100)
+          }
+          val meanWape = perOrigin.map(_._2).foldLeft(BigDecimal(0))(_ + _) / perOrigin.length
           IO.println(
-            (header +: trained.map(line)).mkString("\n") +
-              f"\nTRAINED forecast ${totF.setScale(0, BigDecimal.RoundingMode.HALF_UP)} vs actual ${totA
-                .setScale(0, BigDecimal.RoundingMode.HALF_UP)}  |  per-channel WAPE ${wape
-                .setScale(1, BigDecimal.RoundingMode.HALF_UP)}%%" +
-              (if (untrained.isEmpty) ""
-               else
-                 "\nUNTRAINED (no history at origin — excluded from the WAPE line):\n" +
-                   untrained.map(line).mkString("\n"))
+            (header +: lines).mkString("\n") + "\n" +
+              perOrigin
+                .map {
+                  case (o, w, t) =>
+                    f"${o.toString.take(7)}: per-channel WAPE ${w.setScale(1, RoundingMode.HALF_UP)}%5s%%   total-level ${t
+                      .setScale(1, RoundingMode.HALF_UP)}%5s%%"
+                }
+                .mkString("\n") +
+              f"\nMEAN per-channel WAPE over ${perOrigin.length} quarters: ${meanWape.setScale(1, RoundingMode.HALF_UP)}%%"
           )
         }
     }

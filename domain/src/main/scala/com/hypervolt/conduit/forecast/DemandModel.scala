@@ -12,9 +12,11 @@ final case class DemandHistory(
     shelfStock: Option[BigDecimal] = None,         // shipped − activated, at origin
     activationVelocity: Option[BigDecimal] = None, // units activated / month (seasonally adjustable), at origin
     // the order-book context (doc 26 §4a) — present when the series maps to a deal pipeline, as-of the origin
-    openBook: Option[BigDecimal] = None,       // open deal amount at the origin
-    bookConversion: Option[BigDecimal] = None, // share of an open book won within a quarter (pre-origin cohorts)
-    newBusinessQ: Option[BigDecimal] = None    // created-and-won-within-quarter run-rate (pre-origin quarters)
+    openBook: Option[BigDecimal] = None,        // open deal amount at the origin
+    bookConversion: Option[BigDecimal] = None,  // share of an open book won within a quarter (pre-origin cohorts)
+    newBusinessQ: Option[BigDecimal] = None,    // created-and-won-within-quarter run-rate (pre-origin quarters)
+    funnelExpectedQ: Option[BigDecimal] = None, // the retail-funnel composed quarter expectation (doc 26 §4a)
+    funnelMomentumQ: Option[BigDecimal] = None  // the same funnel with created volume at last month's rate × 3
 ) {
   def nonEmpty: Boolean = qty.exists(_ > 0)
 }
@@ -193,6 +195,31 @@ object DemandModel {
       }
   }
 
+  // The retail funnel (doc 26 §4a — the user's decomposition): components measured singly from pre-origin
+  // cohorts (created volume, conversion per payment channel, conversion-by-age), cumulated by the calc into
+  // one quarter expectation. Without a pipeline it degrades to the run-rate (never fails, never peeks).
+  object RetailFunnel extends DemandModel {
+    val key     = "retail_funnel"
+    val version = 1
+    def predict(h: DemandHistory, horizon: Int): Vector[BigDecimal] =
+      h.funnelExpectedQ match {
+        case Some(expected) => Vector.fill(horizon)(r(expected / horizon))
+        case None           => RunRate3.predict(h, horizon)
+      }
+  }
+
+  // The same funnel with the created-volume component at the LAST month's rate × 3 — the ramp-tracking
+  // variant; a steeply growing channel outruns any quarter-trailing window.
+  object RetailFunnelMomentum extends DemandModel {
+    val key     = "retail_funnel_m"
+    val version = 1
+    def predict(h: DemandHistory, horizon: Int): Vector[BigDecimal] =
+      h.funnelMomentumQ match {
+        case Some(expected) => Vector.fill(horizon)(r(expected / horizon))
+        case None           => RunRate3.predict(h, horizon)
+      }
+  }
+
   // The registry (doc 26 §4) — code-defined; the loop ranks these mechanically, nothing is hand-picked.
   val registry: List[DemandModel] = List(
     SeasonalNaive,
@@ -204,6 +231,8 @@ object DemandModel {
     RunRate3,
     SeasonalDrift,
     Depletion,
-    OrderBook
+    OrderBook,
+    RetailFunnel,
+    RetailFunnelMomentum
   )
 }

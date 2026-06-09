@@ -35,31 +35,47 @@ object DemandSeriesRepo {
       .to[List]
       .flatMap(raw =>
         depletionContext(company, variant, origin).flatMap(ctx =>
-          orderBookContext(company, origin).map(book => zeroFill(raw, origin, ctx, book))
+          dealContext(company, origin).map {
+            case (book, funnel, momentum) => zeroFill(raw, origin, ctx, book, funnel, momentum)
+          }
         )
       )
 
-  // The censored deal view behind the order-book model (doc 26 §4a): closures at-or-after the origin are
-  // INVISIBLE — the deal appears open, exactly as the forecaster would have seen it. Series map to a pipeline
-  // through the channel-party convention ('CH: <pipeline>'); accounts without one carry no book context.
-  private def orderBookContext(
+  // The censored deal view behind the order-book and retail-funnel models (doc 26 §4a): closures at-or-after
+  // the origin are INVISIBLE — the deal appears open, exactly as the forecaster would have seen it. Series map
+  // to a pipeline through the channel-party convention ('CH: <pipeline>'); accounts without one carry no context.
+  private def dealContext(
       company: UUID,
       origin: LocalDate
-  ): ConnectionIO[(Option[BigDecimal], Option[BigDecimal], Option[BigDecimal])] =
+  ): ConnectionIO[
+    ((Option[BigDecimal], Option[BigDecimal], Option[BigDecimal]), Option[BigDecimal], Option[BigDecimal])
+  ] =
     sql"SELECT display_name FROM party WHERE id = $company AND display_name LIKE 'CH: %'"
       .query[String]
       .option
       .flatMap {
-        case None => (Option.empty[BigDecimal], Option.empty[BigDecimal], Option.empty[BigDecimal]).pure[ConnectionIO]
+        case None =>
+          (
+            (Option.empty[BigDecimal], Option.empty[BigDecimal], Option.empty[BigDecimal]),
+            Option.empty[BigDecimal],
+            Option.empty[BigDecimal]
+          ).pure[ConnectionIO]
         case Some(name) =>
           sql"""SELECT created_at,
                        CASE WHEN is_closed AND closed_at < $origin THEN closed_at END,
                        is_won AND is_closed AND closed_at < $origin,
-                       amount
+                       amount,
+                       payment_method
                 FROM deal_snapshot WHERE pipeline = ${name.stripPrefix("CH: ")} AND created_at < $origin"""
             .query[DealRow]
             .to[List]
-            .map(OrderBookCalc.context(_, origin))
+            .map(deals =>
+              (
+                OrderBookCalc.context(deals, origin),
+                RetailFunnelCalc.expectedQuarter(deals, origin),
+                RetailFunnelCalc.expectedQuarter(deals, origin, momentum = true)
+              )
+            )
       }
 
   // Shelf stock + activation velocity as-of the origin (the doc 26 §4 edge), from the serial/activation log.
@@ -85,10 +101,13 @@ object DemandSeriesRepo {
       raw: List[(LocalDate, BigDecimal)],
       origin: LocalDate,
       ctx: (Option[BigDecimal], Option[BigDecimal]),
-      book: (Option[BigDecimal], Option[BigDecimal], Option[BigDecimal])
+      book: (Option[BigDecimal], Option[BigDecimal], Option[BigDecimal]),
+      funnel: Option[BigDecimal],
+      momentum: Option[BigDecimal]
   ): DemandHistory =
     raw.headOption match {
-      case None => DemandHistory(Vector.empty, Vector.empty, ctx._1, ctx._2, book._1, book._2, book._3)
+      case None =>
+        DemandHistory(Vector.empty, Vector.empty, ctx._1, ctx._2, book._1, book._2, book._3, funnel, momentum)
       case Some((first, _)) =>
         val byMonth = raw.toMap
         val months = Iterator
@@ -102,7 +121,9 @@ object DemandSeriesRepo {
           ctx._2,
           book._1,
           book._2,
-          book._3
+          book._3,
+          funnel,
+          momentum
         )
     }
 

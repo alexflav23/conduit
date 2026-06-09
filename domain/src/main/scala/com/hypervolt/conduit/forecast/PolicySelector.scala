@@ -127,12 +127,14 @@ object PolicySelector {
     val blends = List(2, 3)
       .filter(_ <= singles.size)
       .map(n => score(inverseWapeBlend(singles.take(n)), cells))
-    // the structural hedge: the order-book model paired with each top-2 statistical — a book that explains
-    // PART of a channel earns PART of the weight, even when it can't win the pooled score alone
+    // the structural hedge: each structural model (order book, retail funnel) paired with each top-2
+    // statistical — structure that explains PART of a channel earns PART of the weight, even when it
+    // can't win the pooled score alone
+    val structuralKeys =
+      Set(DemandModel.OrderBook.key, DemandModel.RetailFunnel.key, DemandModel.RetailFunnelMomentum.key)
     val hedges = singles
-      .find(_.policy.key == DemandModel.OrderBook.key)
-      .filterNot(s => singles.take(3).contains(s))
-      .toList
+      .filter(s => structuralKeys(s.policy.key))
+      .filterNot(singles.take(3).contains)
       .flatMap(s => singles.take(2).map(st => score(inverseWapeBlend(List(st, s)), cells)))
     val candidates = singles ++ blends ++ hedges
     val best       = candidates.map(_.pooled).min

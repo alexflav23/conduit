@@ -4,7 +4,13 @@ import java.time.LocalDate
 
 // One deal as the forecaster could see it at the origin: `closed`/`won` reflect ONLY closures that happened
 // strictly before the origin (the repo censors them); an open deal carries no closure information.
-final case class DealRow(created: LocalDate, closed: Option[LocalDate], won: Boolean, amount: BigDecimal)
+final case class DealRow(
+    created: LocalDate,
+    closed: Option[LocalDate],
+    won: Boolean,
+    amount: BigDecimal,
+    payment: Option[String] = None
+)
 
 // The censored order-book features (doc 26 §4a). For every prior quarter start q (with q+3m ≤ origin) the
 // cohort of deals OPEN at q is reconstructed and followed for the quarter that ensued — all strictly before
@@ -22,14 +28,9 @@ object OrderBookCalc {
       deals: List[DealRow],
       origin: LocalDate
   ): (Option[BigDecimal], Option[BigDecimal], Option[BigDecimal]) =
-    deals.map(_.created).minOption match {
-      case None => (None, None, None)
-      case Some(first) =>
-        val quarters = Iterator
-          .iterate(quarterStart(first).plusMonths(3))(_.plusMonths(3))
-          .takeWhile(q => !q.plusMonths(3).isAfter(origin))
-          .toList
-          .takeRight(CohortWindow)
+    cohortQuarters(deals, origin, CohortWindow) match {
+      case Nil => (None, None, None)
+      case quarters =>
         val books   = quarters.map(q => bookByBucket(deals, q)).foldLeft(Map.empty[Int, BigDecimal])(merge)
         val wins    = quarters.map(q => winsByBucket(deals, q)).foldLeft(Map.empty[Int, BigDecimal])(merge)
         val totBook = books.values.foldLeft(BigDecimal(0))(_ + _)
@@ -58,13 +59,25 @@ object OrderBookCalc {
       .map(k => k -> (a.getOrElse(k, BigDecimal(0)) + b.getOrElse(k, BigDecimal(0))))
       .toMap
 
-  private def ageBucket(created: LocalDate, at: LocalDate): Int = {
+  private[forecast] def ageBucket(created: LocalDate, at: LocalDate): Int = {
     val days = java.time.temporal.ChronoUnit.DAYS.between(created, at)
     if (days < 90) 0 else if (days < 365) 1 else 2
   }
 
-  private def quarterStart(d: LocalDate): LocalDate =
+  private[forecast] def quarterStart(d: LocalDate): LocalDate =
     d.withDayOfMonth(1).withMonth(((d.getMonthValue - 1) / 3) * 3 + 1)
+
+  private[forecast] def cohortQuarters(deals: List[DealRow], origin: LocalDate, window: Int): List[LocalDate] =
+    deals
+      .map(_.created)
+      .minOption
+      .fold(List.empty[LocalDate])(first =>
+        Iterator
+          .iterate(quarterStart(first).plusMonths(3))(_.plusMonths(3))
+          .takeWhile(q => !q.plusMonths(3).isAfter(origin))
+          .toList
+          .takeRight(window)
+      )
 
   private def bookByBucket(deals: List[DealRow], at: LocalDate): Map[Int, BigDecimal] =
     deals
