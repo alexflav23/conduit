@@ -117,8 +117,14 @@ final class DealDeskService[F[_]: Async](xa: Transactor[F]) {
       volumeMin: Option[Int]
   ): F[Either[String, Unit]] =
     decisionContext(exceptionId).transact(xa).flatMap {
-      case None => "no such exception".asLeft[Unit].pure[F]
-      case Some((orderId, status, createdBy)) =>
+      case None                               => "no such exception".asLeft[Unit].pure[F]
+      case Some((_, _, _, Some(agreementId))) =>
+        // doc 24 §6.2 — a tier-request hold is decided by ACTIVATING the agreement (the governed maker-checker
+        // step on /pricing/agreements/{id}/activate), never by an order-scoped price decision.
+        s"this exception is a pending tier request: decide it by activating agreement $agreementId"
+          .asLeft[Unit]
+          .pure[F]
+      case Some((orderId, status, createdBy, None)) =>
         if (status != "pending_ceo") s"exception not pending (status $status)".asLeft[Unit].pure[F]
         else if (createdBy.contains(approver))
           "maker cannot be checker (the proposing agent cannot approve)".asLeft[Unit].pure[F]
@@ -185,9 +191,10 @@ final class DealDeskService[F[_]: Async](xa: Transactor[F]) {
   private def orderOfException(id: UUID): ConnectionIO[Option[(UUID, String)]] =
     sql"SELECT order_id, status FROM adlp_exception WHERE id = $id".query[(UUID, String)].option
 
-  private def decisionContext(id: UUID): ConnectionIO[Option[(UUID, String, Option[UUID])]] =
-    sql"""SELECT e.order_id, e.status, o.created_by FROM adlp_exception e JOIN "order" o ON o.id = e.order_id WHERE e.id = $id"""
-      .query[(UUID, String, Option[UUID])]
+  private def decisionContext(id: UUID): ConnectionIO[Option[(UUID, String, Option[UUID], Option[UUID])]] =
+    sql"""SELECT e.order_id, e.status, o.created_by, e.agreement_id
+          FROM adlp_exception e JOIN "order" o ON o.id = e.order_id WHERE e.id = $id"""
+      .query[(UUID, String, Option[UUID], Option[UUID])]
       .option
 
   private def event(exceptionId: UUID, orderId: UUID, eventType: String, payload: Json): OutboxEvent =

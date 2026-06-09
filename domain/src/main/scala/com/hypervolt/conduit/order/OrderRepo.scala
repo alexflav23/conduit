@@ -59,14 +59,31 @@ object OrderRepo {
     sql"""INSERT INTO delivery_tranche (order_line_id, seq, qty, requested_date, status)
           VALUES ($lineId, $seq, $qty, $requestedDate, 'scheduled')""".update.run
 
-  def insertException(
-      orderId: UUID,
-      lineId: UUID,
-      requestedPrice: BigDecimal,
-      discountPct: BigDecimal
-  ): ConnectionIO[Int] =
-    sql"""INSERT INTO adlp_exception (order_id, order_line_id, requested_price, requested_discount_pct, status)
-          VALUES ($orderId, $lineId, $requestedPrice, $discountPct, 'pending_ceo')""".update.run
+  // The desk workflow artifact for a held tier request (doc 24 §6.3): order-level, linked to the draft agreement
+  // it waits on. No requested price — there are no typed prices; the price IS the requested tier ladder.
+  def insertTierRequestException(orderId: UUID, agreementId: UUID): ConnectionIO[Int] =
+    sql"""INSERT INTO adlp_exception (order_id, agreement_id, status,
+            party_id, justification)
+          SELECT $orderId, $agreementId, 'pending_ceo', o.sold_to_party_id, pa.justification
+          FROM "order" o, price_agreement pa WHERE o.id = $orderId AND pa.id = $agreementId""".update.run
+
+  def heldOrderIds(agreementId: UUID): ConnectionIO[List[UUID]] =
+    sql"""SELECT DISTINCT e.order_id FROM adlp_exception e JOIN "order" o ON o.id = e.order_id
+          WHERE e.agreement_id = $agreementId AND o.status = 'pending_ceo'"""
+      .query[UUID]
+      .to[List]
+
+  // The order's lines as re-quotable inputs (sku + qty; the price comes from resolution, never from the row).
+  def lineInputs(orderId: UUID): ConnectionIO[List[PlaceLineInput]] =
+    sql"""SELECT pv.sku, ol.qty FROM order_line ol JOIN product_variant pv ON pv.id = ol.product_variant_id
+          WHERE ol.order_id = $orderId"""
+      .query[(String, Int)]
+      .to[List]
+      .map(_.map { case (sku, qty) => PlaceLineInput(sku, qty, None, Nil) })
+
+  def approveTierRequestException(orderId: UUID, agreementId: UUID, approver: UUID): ConnectionIO[Int] =
+    sql"""UPDATE adlp_exception SET status = 'approved', approved_by = $approver, decided_at = now()
+          WHERE order_id = $orderId AND agreement_id = $agreementId AND status = 'pending_ceo'""".update.run
 
   def creditProfile(partyId: UUID): ConnectionIO[Option[CreditProfileRow]] =
     sql"SELECT credit_limit, currency, policy FROM credit_profile WHERE party_id = $partyId"

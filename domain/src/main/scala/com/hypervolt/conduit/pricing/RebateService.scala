@@ -30,6 +30,21 @@ object RebateRepo {
   def validFrom(agreementId: UUID): ConnectionIO[Option[Instant]] =
     sql"SELECT valid_from FROM price_agreement WHERE id = $agreementId".query[Instant].option
 
+  // The contract's committed annual volume (doc 24 §5.3) — the H6Q floor recorded as a descriptive term. None when
+  // the contract carries no commitment (the ASC-606 constraint then collapses expected to earned).
+  def commitment(agreementId: UUID): ConnectionIO[Option[Int]] =
+    sql"SELECT (terms->>'min_commitment_units')::int FROM price_agreement WHERE id = $agreementId"
+      .query[Option[Int]]
+      .option
+      .map(_.flatten)
+
+  // Discrete settlements already approved for the contract year — the draw-downs the outstanding target nets off.
+  def settledTotal(agreementId: UUID, yearIndex: Int): ConnectionIO[BigDecimal] =
+    sql"""SELECT COALESCE(SUM(amount), 0) FROM rebate_settlement
+          WHERE agreement_id = $agreementId AND contract_year_index = $yearIndex AND status = 'approved'"""
+      .query[BigDecimal]
+      .unique
+
   // The distinct (variant, product_class) the agreement prices — the rebate is computed per variant.
   def variantClasses(agreementId: UUID): ConnectionIO[List[(UUID, String)]] =
     sql"""SELECT DISTINCT pr.product_variant_id, pv.product_class
@@ -102,28 +117,46 @@ final class RebateService[F[_]: Async](xa: Transactor[F], ledger: TigerBeetleLed
   private def detId(s: String): UUID                   = UUID.nameUUIDFromBytes(s.getBytes(StandardCharsets.UTF_8))
   private def yearIndex(vf: Instant, at: Instant): Int = ContractYear.indexOf(vf, at).toInt
 
-  // The reproducible earned-rebate projection for an agreement as-of an instant (doc 24 §5.2).
-  def earnedRebate(agreementId: UUID, asOf: Instant): F[BigDecimal] = projection(agreementId, asOf).transact(xa)
+  // The reproducible earned-rebate projection for an agreement as-of an instant (doc 24 §5.2): the rebate owed at
+  // the tier the ACTUAL cumulative volume has achieved.
+  def earnedRebate(agreementId: UUID, asOf: Instant): F[BigDecimal] =
+    projection(agreementId, asOf, (cumVol, _) => cumVol).transact(xa)
 
-  private def projection(agreementId: UUID, asOf: Instant): ConnectionIO[BigDecimal] =
+  // The EXPECTED rebate (doc 24 §5.3, ASC 606): the same projection at the expected FINAL tier — the larger of the
+  // actual volume and the contract commitment (the H6Q floor). Constrained: with no commitment, expected == earned
+  // (recognise only consideration highly likely not to reverse). Converges to earned as actual volume lands.
+  def expectedRebate(agreementId: UUID, asOf: Instant): F[BigDecimal] =
+    projection(agreementId, asOf, (cumVol, commitment) => math.max(cumVol, commitment.getOrElse(0))).transact(xa)
+
+  private def projection(
+      agreementId: UUID,
+      asOf: Instant,
+      position: (Int, Option[Int]) => Int
+  ): ConnectionIO[BigDecimal] =
     RebateRepo.validFrom(agreementId).flatMap {
       case None => BigDecimal(0).pure[ConnectionIO]
       case Some(vf) =>
         val (start, end) = ContractYear.windowFor(vf, asOf)
-        RebateRepo
-          .variantClasses(agreementId)
-          .flatMap(
-            _.traverse {
-              case (variant, cls) =>
-                (
-                  RebateRepo.ladder(agreementId, variant),
-                  ContractVolumeRepo.priorCumulativeQualifying(agreementId, cls, start, end),
-                  RebateRepo.variantUnits(agreementId, variant, start, end)
-                ).mapN { (ladder, cumVol, units) =>
-                  RebateEngine.earned(ladder.map { case (q, p) => RebateEngine.Tier(q, p) }, cumVol, units)
-                }
-            }.map(_.foldLeft(BigDecimal(0))(_ + _))
-          )
+        RebateRepo.commitment(agreementId).flatMap { commitment =>
+          RebateRepo
+            .variantClasses(agreementId)
+            .flatMap(
+              _.traverse {
+                case (variant, cls) =>
+                  (
+                    RebateRepo.ladder(agreementId, variant),
+                    ContractVolumeRepo.priorCumulativeQualifying(agreementId, cls, start, end),
+                    RebateRepo.variantUnits(agreementId, variant, start, end)
+                  ).mapN { (ladder, cumVol, units) =>
+                    RebateEngine.earnedAt(
+                      ladder.map { case (q, p) => RebateEngine.Tier(q, p) },
+                      position(cumVol, commitment),
+                      units
+                    )
+                  }
+              }.map(_.foldLeft(BigDecimal(0))(_ + _))
+            )
+        }
     }
 
   // ACCRUE (doc 24 §5.2/§5.5): bring REBATE_ACCRUAL gross credits up to the earned amount via a true-up delta —
@@ -160,6 +193,48 @@ final class RebateService[F[_]: Async](xa: Transactor[F], ledger: TigerBeetleLed
               ) *> emit(agreementId, "pricing.rebate.accrued", Json.obj("earned" -> earned.toString.asJson))
                 .transact(xa)
                 .void
+            }
+          }
+      }
+    }
+
+  // ACCRUE at the EXPECTED final tier (doc 24 §5.3) — recognition net-of-expected as a true-up: bring the
+  // OUTSTANDING liability (credits − debits) to `expected − settled`. Bidirectional: growth posts an accrual
+  // (DR REVENUE / CR REBATE_ACCRUAL); a drop in the estimate posts a RELEASE (DR REBATE_ACCRUAL / CR REVENUE) —
+  // posted entries are never reopened, the delta is a current-period adjustment (the M5 true-up pattern on the
+  // revenue side). Idempotent per ledger state: the transfer id is keyed by the exact (credits, debits) the delta
+  // was computed from, so a re-run from the same state is a TB no-op, and any prior posting changed the state.
+  def accrueExpected(agreementId: UUID, entity: UUID, ccy: Currency, asOf: Instant): F[Unit] =
+    expectedRebate(agreementId, asOf).flatMap { expected =>
+      RebateRepo.validFrom(agreementId).transact(xa).flatMap {
+        case None => Async[F].unit
+        case Some(vf) =>
+          val yr       = yearIndex(vf, asOf)
+          val ledgerId = Ledgers.forCurrency(ccy)
+          ledger.createAccounts(
+            List(
+              LedgerAccount(rebateAccrual(entity), ledgerId, LedgerAccountCode.RebateAccrual),
+              LedgerAccount(revenue(entity), ledgerId, LedgerAccountCode.Revenue)
+            )
+          ) *> RebateRepo.settledTotal(agreementId, yr).transact(xa).flatMap { settled =>
+            ledger.balance(rebateAccrual(entity)).flatMap { bal =>
+              val outstanding = bal.creditsPosted - bal.debitsPosted
+              val target      = (minor(expected) - minor(settled)).max(BigInt(0))
+              val delta       = target - outstanding
+              val id          = detId(s"rebate-trueup:$agreementId:$yr:${bal.creditsPosted}:${bal.debitsPosted}:$target")
+              val accrualAcc  = JournalAccount(s"REBATE_ACCRUAL:$entity", LedgerAccountCode.RebateAccrual, Some(entity))
+              val revenueAcc  = JournalAccount(s"REVENUE:$entity", LedgerAccountCode.Revenue, Some(entity))
+              if (delta == 0) Async[F].unit
+              else if (delta > 0)
+                journal.postOne(asOf, Posting(id, 0, revenueAcc, accrualAcc, ccy, delta)) *>
+                  emit(agreementId, "pricing.rebate.accrued", Json.obj("expected" -> expected.toString.asJson))
+                    .transact(xa)
+                    .void
+              else
+                journal.postOne(asOf, Posting(id, 0, accrualAcc, revenueAcc, ccy, -delta)) *>
+                  emit(agreementId, "pricing.rebate.trued_up", Json.obj("expected" -> expected.toString.asJson))
+                    .transact(xa)
+                    .void
             }
           }
       }

@@ -114,6 +114,7 @@ final class PricingRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) 
   private val base             = Secured.base[F](auth)
   private val quoteService     = new QuoteService[F](xa)
   private val agreementService = new AgreementService[F](xa)
+  private val orderService     = new com.hypervolt.conduit.order.OrderService[F](xa)
   private val tax              = new TaxDeterminationService[F](xa, Map(RateTableProvider.name -> RateTableProvider))
   private val anchor           = Target(None, None, None, None)
 
@@ -353,7 +354,8 @@ final class PricingRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) 
       }
 
   // doc 24 §6 — govern the request: maker-checker activation (proposer ≠ approver, enforced in the service). On
-  // activation the agreement + its tier rules go active and the named customers resolve the new tier thereafter.
+  // activation the agreement + its tier rules go active, and any order the request was holding releases —
+  // RE-QUOTED against the now-active tier (§6.3). The activation IS the exception decision (§6.2).
   private val activateAgreement =
     base.post
       .in("api" / "v1" / "pricing" / "agreements" / path[String]("id") / "activate")
@@ -365,9 +367,13 @@ final class PricingRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) 
           uuid(idStr) match {
             case Left(e) => Async[F].pure(Left(e))
             case Right(id) =>
-              agreementService.activate(id, principal.userId).map {
-                case Left(msg) => Left((StatusCode.UnprocessableEntity, ApiError("not_activatable", msg)))
-                case Right(_)  => Right(Json.obj("id" -> id.toString.asJson, "status" -> "active".asJson))
+              agreementService.activate(id, principal.userId).flatMap {
+                case Left(msg) =>
+                  Async[F].pure(Left((StatusCode.UnprocessableEntity, ApiError("not_activatable", msg))))
+                case Right(_) =>
+                  orderService
+                    .releaseForAgreement(id, principal.userId, Instant.now())
+                    .as(Right(Json.obj("id" -> id.toString.asJson, "status" -> "active".asJson)))
               }
           }
       }

@@ -34,11 +34,29 @@
 > genuine FACT) + a `sector` ref table + `price_agreement.scope_value`, with **sector/segment-scoped resolution** wired
 > into both candidate queries (completing customer_set ≻ segment ≻ sector ≻ open_list). `RenewalAnalytics` — logo
 > retention derived from `valid_to` + `renews_from`, overall and **by sector** (no stored lifecycle). `RebateScheme-
-> RenewalSuite` green. *Remaining for M-Pricing: §3 hard no-typed-prices enforcement; §5.3 recognition-net-of-expected;
-> step 5 — desk + companion UI (the design pass).*
+> RenewalSuite` green.
 
-**Status:** design spec — **slices 1–4 (the backend) built** (above); only the §3 enforcement tightening, §5.3
-expected-revenue smoothing, and step-5 UI remain. This deep-dive
+> **✅ Tail implemented — §3 enforcement + §5.3 net-of-expected (the backend is COMPLETE).**
+> **§3 — nobody types a price, enforced:** placement REJECTS any supplied line price that differs from the resolved
+> authorized tier price (`non_tier_price` 422; the exact tier price is an accepted idempotent echo). The typed-price
+> →exception path is REMOVED. The `pending_ceo` hold now arises from a **tier-request linkage**: an order placed with
+> `draftAgreementId` (a draft agreement naming the buyer, validated) holds with an agreement-linked `adlp_exception`
+> (V1_0_51 `agreement_id`) — the desk worklist/narrative artifact is unchanged. **The decision IS the activation**
+> (§6.2): `DealDeskService.decide` redirects agreement-linked exceptions to `/pricing/agreements/{id}/activate`,
+> which (maker-checker) activates the tier and **releases the held orders RE-QUOTED at the now-active tier**
+> (`OrderService.releaseForAgreement`); an amend never lifts the hold. `OrderHttpSuite` + `DealDeskHttpSuite` rewritten
+> to the new model and green (quote-level what-if categorisation stays as a preview signal).
+> **§5.3 — recognition net of the EXPECTED rebate:** `RebateService.expectedRebate` = the earned projection evaluated
+> at the expected FINAL tier — `max(actual cumulative volume, terms.min_commitment_units)` (the H6Q commitment floor),
+> ASC-606-constrained (no commitment ⇒ expected = earned). `accrueExpected` brings the OUTSTANDING liability to
+> `expected − settled` **bidirectionally**: growth accrues (DR REVENUE / CR REBATE_ACCRUAL), an estimate drop posts a
+> RELEASE (DR REBATE_ACCRUAL / CR REVENUE) — posted entries never reopened (the M5 true-up pattern); transfer ids are
+> keyed by the exact ledger state so a re-run from the same state is a TB no-op. Event `pricing.rebate.trued_up`.
+> `RebateExpectedSuite` proves expected>earned under commitment, convergence as volume lands, and the downward release
+> on a cancellation.
+
+**Status:** **the M-Pricing backend is COMPLETE** (slices 1–4 + the §3/§5.3 tail, above); only step-5 UI (desk +
+companion, the design pass) remains. This deep-dive
 re-states how pricing works in Conduit and **supersedes the "agent types a price → CEO approves the number"
 reading** of ADLP in doc 04 §Pricing/§ADLP and doc 08 S14/S16. It is grounded in the existing
 `price_rule`/`PricingService`/maker-checker machinery (M3) — this is an **evolution of that spine, not a parallel

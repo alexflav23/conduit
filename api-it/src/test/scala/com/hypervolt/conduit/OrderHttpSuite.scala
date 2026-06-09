@@ -127,29 +127,98 @@ object OrderHttpSuite extends IOSuite {
       expect(events == 1L) and expect(audit == 1L)
   }
 
-  test("an out-of-band discount holds the order pending_ceo (202) with no OrderPlaced and an exception row") { xa =>
+  test("nobody types a price: a non-tier price is rejected (422); the exact tier price is an accepted no-op echo") {
+    xa =>
+      for {
+        _    <- seedCatalogue(xa)
+        kc   <- retailAgent(xa)
+        sold <- newParty(xa, "Branch B")
+        bill <- newParty(xa, "Master B")
+        // a hand-crafted discount cannot be injected — rejected outright, no order row (doc 24 §3)
+        rejected <- post(
+          xa,
+          "/api/v1/orders",
+          s"dev:$kc",
+          orderBody(sold, bill, "stripe", Json.arr(line("HV-310", 1, Some("400.00"))))
+        )
+        rejJson <- rejected.as[Json]
+        // supplying EXACTLY the authorized tier price is an idempotent re-quote — places normally
+        echoed <- post(
+          xa,
+          "/api/v1/orders",
+          s"dev:$kc",
+          orderBody(sold, bill, "stripe", Json.arr(line("HV-310", 1, Some("587.50"))))
+        )
+      } yield expect(rejected.status == Status.UnprocessableEntity) and
+        expect(rejJson.hcursor.get[String]("error").contains("non_tier_price")) and
+        expect(echoed.status == Status.Created)
+  }
+
+  test("a tier-request order holds pending_ceo (202); activation releases it re-quoted at the new tier") { xa =>
+    val proposer = UUID.randomUUID()
+    val approver = UUID.randomUUID()
+    val agrSvc   = new com.hypervolt.conduit.pricing.AgreementService[IO](xa)
+    val ordSvc   = new com.hypervolt.conduit.order.OrderService[IO](xa)
     for {
       _    <- seedCatalogue(xa)
       kc   <- retailAgent(xa)
-      sold <- newParty(xa, "Branch B")
-      bill <- newParty(xa, "Master B")
-      body = orderBody(sold, bill, "stripe", Json.arr(line("HV-310", 1, Some("400.00")))) // ~32% discount
+      sold <- newParty(xa, "Branch D")
+      bill <- newParty(xa, "Master D")
+      vid  <- sql"SELECT id FROM product_variant WHERE sku='HV-310'".query[UUID].unique.transact(xa)
+      // the agent's price-tier request: 480.00 for this customer — a DRAFT agreement (doc 24 §6.1)
+      draft <- agrSvc.request(
+        com.hypervolt.conduit.pricing.TierRequest(
+          "Branch D tier",
+          "GBP",
+          List(sold),
+          List(com.hypervolt.conduit.pricing.TierBand(vid, 1, None, BigDecimal("480.00"), "GB_STANDARD")),
+          java.time.Instant.now().minusSeconds(60),
+          None,
+          "per_order",
+          Json.obj(),
+          Some("volume commitment"),
+          proposer
+        )
+      )
+      body = orderBody(sold, bill, "stripe", Json.arr(line("HV-310", 1)))
+        .deepMerge(Json.obj("draftAgreementId" -> draft.toString.asJson))
       resp <- post(xa, "/api/v1/orders", s"dev:$kc", body)
       json <- resp.as[Json]
-      orderId = json.hcursor.get[String]("id").toOption.get
-      placed <-
-        sql"SELECT count(*) FROM outbox_event WHERE event_type='order.placed' AND aggregate_id=${UUID.fromString(orderId)}"
+      orderId = UUID.fromString(json.hcursor.get[String]("id").toOption.get)
+      placedBefore <-
+        sql"SELECT count(*) FROM outbox_event WHERE event_type='order.placed' AND aggregate_id=$orderId"
           .query[Long]
           .unique
           .transact(xa)
       exc <-
-        sql"SELECT count(*) FROM adlp_exception WHERE order_id=${UUID.fromString(orderId)}"
+        sql"SELECT count(*) FROM adlp_exception WHERE order_id=$orderId AND agreement_id=$draft"
           .query[Long]
+          .unique
+          .transact(xa)
+      // the governed decision IS the activation (doc 24 §6.2) — releases + re-quotes the held order
+      _ <- agrSvc.activate(draft, approver)
+      _ <- ordSvc.releaseForAgreement(draft, approver, java.time.Instant.now())
+      released <-
+        sql"""SELECT o.status, ol.unit_price_ex_vat FROM "order" o JOIN order_line ol ON ol.order_id = o.id
+              WHERE o.id = $orderId"""
+          .query[(String, BigDecimal)]
+          .unique
+          .transact(xa)
+      placedAfter <-
+        sql"SELECT count(*) FROM outbox_event WHERE event_type='order.placed' AND aggregate_id=$orderId"
+          .query[Long]
+          .unique
+          .transact(xa)
+      excAfter <-
+        sql"SELECT status FROM adlp_exception WHERE order_id=$orderId AND agreement_id=$draft"
+          .query[String]
           .unique
           .transact(xa)
     } yield expect(resp.status == Status.Accepted) and
       expect(json.hcursor.get[String]("status").contains("pending_ceo")) and
-      expect(placed == 0L) and expect(exc == 1L)
+      expect(placedBefore == 0L) and expect(exc == 1L) and         // held, no fan-out, desk artifact exists
+      expect(released == (("placed", BigDecimal("480.0000")))) and // released + RE-QUOTED at the new tier
+      expect(placedAfter == 1L) and expect(excAfter == "approved")
   }
 
   test("a credit-limit breach is blocked (422); a party with no credit profile is not billable (422)") { xa =>

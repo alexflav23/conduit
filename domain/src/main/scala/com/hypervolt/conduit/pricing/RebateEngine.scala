@@ -14,11 +14,16 @@ object RebateEngine {
   def achievedPrice(ladder: List[Tier], cumVol: Int): Option[BigDecimal] =
     ladder.filter(_.fromQty <= cumVol).maxByOption(_.fromQty).map(_.price).orElse(entryPrice(ladder))
 
-  // The earned rebate: per-unit saving (entry − achieved) × the units receiving it (doc 24 §5.2). Never negative
-  // (a well-formed ladder steps DOWN, so achieved ≤ entry); clamped at 0 to be robust to a mis-ordered ladder.
-  def earned(ladder: List[Tier], cumVol: Int, unitsReceiving: Int): BigDecimal =
-    (entryPrice(ladder), achievedPrice(ladder, cumVol)) match {
+  // The rebate at a given tier position: per-unit saving (entry − price at `tierVol`) × the units receiving it
+  // (doc 24 §5.2/§5.3). EARNED uses the actual cumulative volume; EXPECTED uses the larger of actual volume and the
+  // contract commitment (the H6Q floor) — same math, different position. Never negative (a well-formed ladder steps
+  // DOWN, so achieved ≤ entry); clamped at 0 to be robust to a mis-ordered ladder.
+  def earnedAt(ladder: List[Tier], tierVol: Int, unitsReceiving: Int): BigDecimal =
+    (entryPrice(ladder), achievedPrice(ladder, tierVol)) match {
       case (Some(e), Some(a)) => (BigDecimal(unitsReceiving) * (e - a)).max(BigDecimal(0))
       case _                  => BigDecimal(0)
     }
+
+  def earned(ladder: List[Tier], cumVol: Int, unitsReceiving: Int): BigDecimal =
+    earnedAt(ladder, cumVol, unitsReceiving)
 }

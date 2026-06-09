@@ -56,15 +56,43 @@ final class OrderService[F[_]: Async](xa: Transactor[F]) {
               val (subtotal, vat, total) = totals(priced)
               creditCheck(resolved.paymentMethod, resolved.billToPartyId, total).flatMap {
                 case Some(err) => err.asLeft[PlacedOrder].pure[ConnectionIO]
-                case None =>
-                  val hasException = priced.exists(_.priced.adlpCategory == "exception")
-                  val status       = if (hasException) "pending_ceo" else "placed"
-                  val adlp         = if (hasException) "exception" else "standard"
-                  insertGraph(resolved, priced, subtotal, vat, total, status, adlp, asOf).map(_.asRight[OrderError])
+                case None      =>
+                  // doc 24 §6.3 — an order referencing a pending tier request (a DRAFT agreement naming the buyer)
+                  // is held pending_ceo until the agreement activates; there is no typed-price exception any more.
+                  validDraftAgreement(resolved).flatMap {
+                    case Left(err) => err.asLeft[PlacedOrder].pure[ConnectionIO]
+                    case Right(draft) =>
+                      val held   = draft.isDefined
+                      val status = if (held) "pending_ceo" else "placed"
+                      val adlp   = if (held) "exception" else "standard"
+                      insertGraph(resolved, priced, subtotal, vat, total, status, adlp, asOf, draft)
+                        .map(_.asRight[OrderError])
+                  }
               }
           }
       )
       .transact(xa)
+
+  // The referenced draft agreement must exist, be a draft, and name the buyer (doc 24 §6.3).
+  private def validDraftAgreement(in: PlaceOrderInput): ConnectionIO[Either[OrderError, Option[UUID]]] =
+    in.draftAgreementId match {
+      case None => Option.empty[UUID].asRight[OrderError].pure[ConnectionIO]
+      case Some(id) =>
+        sql"""SELECT pa.status,
+                     EXISTS (SELECT 1 FROM price_agreement_customer pac
+                             WHERE pac.agreement_id = pa.id AND pac.party_id = ${in.soldToPartyId})
+              FROM price_agreement pa WHERE pa.id = $id"""
+          .query[(String, Boolean)]
+          .option
+          .map {
+            case None => OrderError.BadTierRequest("no such agreement").asLeft[Option[UUID]].leftWiden[OrderError]
+            case Some((status, _)) if status != "draft" =>
+              OrderError.BadTierRequest(s"agreement is $status, not a pending tier request").asLeft[Option[UUID]]
+            case Some((_, names)) if !names =>
+              OrderError.BadTierRequest("the tier request does not name the buyer").asLeft[Option[UUID]]
+            case Some(_) => Option(id).asRight[OrderError]
+          }
+    }
 
   // Stamp the seller-of-record entity from the market's jurisdiction when it isn't set explicitly (doc 16 §1.3):
   // the `selling_entity` config decides which Hypervolt entity books a sale into a market. An explicit entity wins.
@@ -102,9 +130,9 @@ final class OrderService[F[_]: Async](xa: Transactor[F]) {
               case Left(err) => err.asLeft[PlacedOrder].pure[ConnectionIO]
               case Right(priced) =>
                 val (subtotal, vat, total) = totals(priced)
-                val hasException           = priced.exists(_.priced.adlpCategory == "exception")
-                val status                 = if (hasException) "pending_ceo" else "placed"
-                val adlp                   = if (hasException) "exception" else "standard"
+                // an amend never lifts a tier-request hold — only the agreement activation releases it (doc 24 §6.3)
+                val status = h.status
+                val adlp   = if (h.status == "pending_ceo") "exception" else "standard"
                 for {
                   before <- OrderRepo.snapshotLines(orderId)
                   _      <- OrderRepo.deleteLines(orderId)
@@ -117,6 +145,52 @@ final class OrderService[F[_]: Async](xa: Transactor[F]) {
             }
       }
       .transact(xa)
+
+  // doc 24 §6.3 — agreement activation releases the orders it was holding: each linked pending_ceo order is
+  // RE-QUOTED against the now-active tier (the lines re-price, the agreement is stamped), the exception is marked
+  // approved, and the order fans out as placed. Idempotent: a released order is no longer pending_ceo.
+  def releaseForAgreement(agreementId: UUID, approver: UUID, asOf: Instant): F[Unit] =
+    OrderRepo
+      .heldOrderIds(agreementId)
+      .flatMap(_.traverse_(requoteAndRelease(_, agreementId, approver, asOf)))
+      .transact(xa)
+
+  private def requoteAndRelease(orderId: UUID, agreementId: UUID, approver: UUID, asOf: Instant): ConnectionIO[Unit] =
+    OrderRepo.header(orderId).flatMap {
+      case Some(h) if h.status == "pending_ceo" =>
+        OrderRepo.lineInputs(orderId).flatMap { lines =>
+          priceLines(h.channelId, h.marketId, h.entityId, h.currency, lines, Some(h.soldTo), asOf).flatMap {
+            case Left(_) => ().pure[ConnectionIO] // unresolvable re-quote leaves the order held (operator visible)
+            case Right(priced) =>
+              val (subtotal, vat, total) = totals(priced)
+              OrderRepo.deleteLines(orderId) *>
+                priced.traverse_(lp => insertLineWithTranches(orderId, lp, asOf)) *>
+                OrderRepo.updateTotalsAndStatus(orderId, "placed", "standard", subtotal, vat, total) *>
+                OrderRepo.approveTierRequestException(orderId, agreementId, approver) *>
+                OutboxRepo.append(releasedEvent(orderId, agreementId)).void
+          }
+        }
+      case _ => ().pure[ConnectionIO]
+    }
+
+  private def releasedEvent(orderId: UUID, agreementId: UUID): OutboxEvent =
+    OutboxEvent(
+      UUID.randomUUID(),
+      "order.placed",
+      1,
+      "order",
+      orderId,
+      orderId.toString,
+      None,
+      None,
+      None,
+      Json.obj(
+        "released_from" -> "pending_ceo".asJson,
+        "agreement_id"  -> agreementId.toString.asJson
+      ),
+      Instant.now(),
+      "service:order"
+    )
 
   // ----- internals -----
 
@@ -142,6 +216,10 @@ final class OrderService[F[_]: Async](xa: Transactor[F]) {
                 .map { candidates =>
                   PricingService.resolve(candidates, channel, market, entity) match {
                     case None => OrderError.NoPrice(line.sku).asLeft[List[LinePricing]]
+                    // doc 24 §3 — no typed prices: a supplied price must EQUAL the resolved tier price (an
+                    // idempotent re-quote); anything else is rejected, never honoured as a discount.
+                    case Some(res) if !PricingService.isTierPrice(res, line.unitPriceExVat) =>
+                      OrderError.NonTierPrice(line.sku).asLeft[List[LinePricing]]
                     case Some(res) =>
                       Right(
                         acc :+ LinePricing(
@@ -185,10 +263,7 @@ final class OrderService[F[_]: Async](xa: Transactor[F]) {
       val tranches =
         if (scheduled) lp.line.schedule
         else List(TrancheInput(1, lp.line.qty, asOf.atZone(ZoneOffset.UTC).toLocalDate))
-      tranches.traverse_(t => OrderRepo.insertTranche(lineId, t.seq, t.qty, t.requestedDate)) *>
-        (if (lp.priced.adlpCategory == "exception")
-           OrderRepo.insertException(orderId, lineId, lp.priced.unitPriceExVat, lp.priced.appliedDiscountPct).void
-         else ().pure[ConnectionIO])
+      tranches.traverse_(t => OrderRepo.insertTranche(lineId, t.seq, t.qty, t.requestedDate))
     }
   }
 
@@ -200,12 +275,15 @@ final class OrderService[F[_]: Async](xa: Transactor[F]) {
       total: BigDecimal,
       status: String,
       adlp: String,
-      asOf: Instant
+      asOf: Instant,
+      draftAgreement: Option[UUID]
   ): ConnectionIO[PlacedOrder] =
     for {
       created <- OrderRepo.insertOrder(in, status, adlp, subtotal, vat, total, None)
       (orderId, orderNo) = created
-      _   <- priced.traverse_(lp => insertLineWithTranches(orderId, lp, asOf))
+      _ <- priced.traverse_(lp => insertLineWithTranches(orderId, lp, asOf))
+      // the desk workflow artifact for a held tier request (doc 24 §6.3) — one order-level row, agreement-linked
+      _   <- draftAgreement.traverse_(agr => OrderRepo.insertTierRequestException(orderId, agr))
       jur <- MarketRepo.jurisdiction(in.marketId).map(_.getOrElse("GB"))
       // Provisional VAT from the tax engine (doc 16 §6, context=order_placed) — visible before dispatch and tied to
       // the order; the authoritative re-quote happens at recognition. Only when an entity is resolved (the quote is

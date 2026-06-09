@@ -35,7 +35,7 @@ object DealDeskHttpSuite extends IOSuite {
     (new AccessRoutes[IO](xa, auth).routes <+> new CommerceRoutes[IO](xa, auth).routes <+> new DealDeskRoutes[IO](
       xa,
       auth
-    ).routes).orNotFound
+    ).routes <+> new com.hypervolt.conduit.api.routes.PricingRoutes[IO](xa, auth).routes).orNotFound
   }
 
   private def post(xa: HikariTransactor[IO], path: String, token: String, body: Json): IO[Response[IO]] =
@@ -81,38 +81,58 @@ object DealDeskHttpSuite extends IOSuite {
       .unique
       .transact(xa)
 
-  // Place an out-of-band order (32% discount > 10% band) -> 202 pending_ceo + an adlp_exception.
-  private def placeOutOfBand(xa: HikariTransactor[IO], agent: String): IO[(UUID, UUID)] =
+  // The new trigger (doc 24 §6.3): a price-tier REQUEST (a draft agreement at 400.00 for this customer) + an order
+  // placed against it -> 202 pending_ceo + an agreement-linked adlp_exception (the desk worklist artifact).
+  private def placeHeld(xa: HikariTransactor[IO], agent: String, proposer: UUID): IO[(UUID, UUID, UUID)] = {
+    val agrSvc = new com.hypervolt.conduit.pricing.AgreementService[IO](xa)
     for {
       sold <- party(xa)
       bill <- party(xa)
+      vid  <- sql"SELECT id FROM product_variant WHERE sku='HV-310'".query[UUID].unique.transact(xa)
+      draft <- agrSvc.request(
+        com.hypervolt.conduit.pricing.TierRequest(
+          "Octopus strategic tier",
+          "GBP",
+          List(sold),
+          List(com.hypervolt.conduit.pricing.TierBand(vid, 1, None, BigDecimal("400.00"), "GB_STANDARD")),
+          java.time.Instant.now().minusSeconds(60),
+          None,
+          "per_order",
+          Json.obj(),
+          Some("competitive displacement"),
+          proposer
+        )
+      )
       body = Json.obj(
-        "type"          -> "trade".asJson,
-        "soldToPartyId" -> sold.toString.asJson,
-        "billToPartyId" -> bill.toString.asJson,
-        "channelId"     -> channel.toString.asJson,
-        "marketId"      -> market.toString.asJson,
-        "currency"      -> "GBP".asJson,
-        "paymentMethod" -> "stripe".asJson,
-        "lines"         -> Json.arr(Json.obj("sku" -> "HV-310".asJson, "qty" -> 1.asJson, "unitPriceExVat" -> "400.00".asJson))
+        "type"             -> "trade".asJson,
+        "soldToPartyId"    -> sold.toString.asJson,
+        "billToPartyId"    -> bill.toString.asJson,
+        "channelId"        -> channel.toString.asJson,
+        "marketId"         -> market.toString.asJson,
+        "currency"         -> "GBP".asJson,
+        "paymentMethod"    -> "stripe".asJson,
+        "draftAgreementId" -> draft.toString.asJson,
+        "lines"            -> Json.arr(Json.obj("sku" -> "HV-310".asJson, "qty" -> 1.asJson))
       )
       resp <- post(xa, "/api/v1/orders", s"dev:$agent", body)
       json <- resp.as[Json]
       orderId = UUID.fromString(json.hcursor.get[String]("id").toOption.get)
       excId <- sql"SELECT id FROM adlp_exception WHERE order_id=$orderId LIMIT 1".query[UUID].unique.transact(xa)
-    } yield (orderId, excId)
+    } yield (orderId, excId, draft)
+  }
 
   test(
-    "the Deal Desk workflow: agent proposes a narrative; only the CEO can approve; approval is timed, volume-contingent and customer-specific; the order releases"
+    "the Deal Desk workflow (doc 24 §6): agent proposes the narrative; the decision IS the agreement activation — maker-checker; the order releases re-quoted at the approved tier"
   ) { xa =>
+    val proposer = UUID.randomUUID() // the tier request's maker
     for {
       _      <- seedCatalogue(xa)
       agent  <- userWithRole(xa, "retail_sales_agent")
       ceo    <- userWithRole(xa, "ceo")
       admin  <- userWithRole(xa, "admin")
-      placed <- placeOutOfBand(xa, agent)
-      (orderId, excId) = placed
-      // agent assembles the narrative + volume expectation + value notes
+      placed <- placeHeld(xa, agent, proposer)
+      (orderId, excId, draft) = placed
+      // agent assembles the narrative + volume expectation + value notes on the desk artifact (unchanged flow)
       narrative = Json.obj(
         "justification"       -> "Strategic Octopus rollout; competitive displacement".asJson,
         "volumeExpectation"   -> 500.asJson,
@@ -121,34 +141,30 @@ object DealDeskHttpSuite extends IOSuite {
         "notes"               -> "Customer commits to 500 units across 2 tranches".asJson
       )
       submitted <- post(xa, s"/api/v1/adlp/exceptions/$excId/submit", s"dev:$agent", narrative)
-      // an admin (not the CEO) cannot approve a price deviation
+      // an admin (not the CEO) still cannot touch the decision endpoint (role gate unchanged)
       adminDecision <- post(
         xa,
         s"/api/v1/adlp/exceptions/$excId/decision",
         s"dev:$admin",
         Json.obj("decision" -> "approve".asJson, "memo" -> "x".asJson)
       )
-      // the CEO cannot approve without a memo
-      ceoNoMemo <-
-        post(xa, s"/api/v1/adlp/exceptions/$excId/decision", s"dev:$ceo", Json.obj("decision" -> "approve".asJson))
-      // the CEO approves: timed (validity window) + volume-contingent (min 400) + memo
-      ceoApprove <- post(
+      // an order-scoped price decision no longer exists for a tier request — it redirects to the activation
+      ceoOldPath <- post(
         xa,
         s"/api/v1/adlp/exceptions/$excId/decision",
         s"dev:$ceo",
-        Json.obj(
-          "decision"  -> "approve".asJson,
-          "memo"      -> "Approved for Octopus; 500-unit commitment".asJson,
-          "validFrom" -> "2026-06-01T00:00:00Z".asJson,
-          "validTo"   -> "2026-09-01T00:00:00Z".asJson,
-          "volumeMin" -> 400.asJson
-        )
+        Json.obj("decision" -> "approve".asJson, "memo" -> "x".asJson)
       )
+      // the decision IS the agreement activation (doc 24 §6.2): governed by edit:price_rule + maker-checker.
+      // The agent cannot activate (no edit:price_rule)...
+      agentActivate <- post(xa, s"/api/v1/pricing/agreements/$draft/activate", s"dev:$agent", Json.obj())
+      // ...the CEO can (proposer ≠ approver) — the order releases, RE-QUOTED at the approved tier
+      ceoActivate <- post(xa, s"/api/v1/pricing/agreements/$draft/activate", s"dev:$ceo", Json.obj())
       detail      <- get(xa, s"/api/v1/adlp/exceptions/$excId", s"dev:$ceo").flatMap(_.as[Json])
-      orderStatus <- sql"""SELECT status FROM "order" WHERE id=$orderId""".query[String].unique.transact(xa)
-      approvedEv <-
-        sql"SELECT count(*) FROM outbox_event WHERE event_type='adlp.exception.approved' AND aggregate_id=$orderId"
-          .query[Long]
+      released <-
+        sql"""SELECT o.status, ol.unit_price_ex_vat FROM "order" o JOIN order_line ol ON ol.order_id = o.id
+              WHERE o.id = $orderId"""
+          .query[(String, BigDecimal)]
           .unique
           .transact(xa)
       releasedEv <-
@@ -156,20 +172,23 @@ object DealDeskHttpSuite extends IOSuite {
           .query[Long]
           .unique
           .transact(xa)
+      activatedEv <-
+        sql"SELECT count(*) FROM outbox_event WHERE event_type='pricing.agreement.activated' AND aggregate_id=$draft"
+          .query[Long]
+          .unique
+          .transact(xa)
     } yield {
       val c = detail.hcursor
       expect(submitted.status == Status.Ok) and
-        expect(adminDecision.status == Status.Forbidden) and       // only the CEO may approve
-        expect(ceoNoMemo.status == Status.UnprocessableEntity) and // memo required
-        expect(ceoApprove.status == Status.Ok) and
+        expect(adminDecision.status == Status.Forbidden) and        // only the CEO may decide (role gate)
+        expect(ceoOldPath.status == Status.UnprocessableEntity) and // the decision is the activation, not a number
+        expect(agentActivate.status == Status.Forbidden) and        // agents cannot activate tiers
+        expect(ceoActivate.status == Status.Ok) and
         expect(c.get[String]("status").contains("approved")) and
-        expect(c.get[String]("list_price").contains("587.5000")) and // clear price banding
-        expect(c.get[String]("max_discount_pct").contains("10.00")) and
-        expect(c.get[Int]("volume_expectation").contains(500)) and
-        expect(c.get[Int]("approved_volume_min").contains(400)) and          // volume-contingent
-        expect(c.downField("approved_valid_to").focus.exists(!_.isNull)) and // timed
-        expect(c.downField("party_id").focus.exists(!_.isNull)) and          // customer-specific
-        expect(orderStatus == "placed") and expect(approvedEv == 1L) and expect(releasedEv == 1L)
+        expect(c.get[Int]("volume_expectation").contains(500)) and   // narrative intact
+        expect(c.downField("party_id").focus.exists(!_.isNull)) and  // customer-specific
+        expect(released == (("placed", BigDecimal("400.0000")))) and // released, RE-QUOTED at the tier
+        expect(releasedEv == 1L) and expect(activatedEv == 1L)
     }
   }
 
@@ -177,8 +196,8 @@ object DealDeskHttpSuite extends IOSuite {
     for {
       _      <- seedCatalogue(xa)
       agent  <- userWithRole(xa, "retail_sales_agent")
-      placed <- placeOutOfBand(xa, agent)
-      (_, excId) = placed
+      placed <- placeHeld(xa, agent, UUID.randomUUID())
+      (_, excId, _) = placed
       _ <- post(
         xa,
         s"/api/v1/adlp/exceptions/$excId/submit",
