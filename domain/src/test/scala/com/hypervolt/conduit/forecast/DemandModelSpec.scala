@@ -50,6 +50,15 @@ object DemandModelSpec extends SimpleIOSuite with Checkers {
     expect(preds.map(_.toInt) == Vector(0, 0, 50, 50))
   }
 
+  pureTest("sell_through forecasts the trailing activation rate, not the lumpy sell-in") {
+    val lumpySellIn = Vector(0, 0, 300, 0, 0, 300, 0, 0, 300, 0, 0, 300).map(BigDecimal(_))
+    val h           = hist(lumpySellIn).copy(activationVelocity3 = Some(BigDecimal(95)))
+    expect(DemandModel.SellThrough.predict(h, 3).map(_.toInt) == Vector(95, 95, 95)) and
+      expect(
+        DemandModel.SellThrough.predict(hist(lumpySellIn), 2) == DemandModel.RunRate3.predict(hist(lumpySellIn), 2)
+      )
+  }
+
   pureTest("holt_damped recovers linear growth that level models miss; seasonal_drift scales last year by growth") {
     val grow  = Vector.tabulate(24)(i => BigDecimal(100 + 10 * i)) // +10/month
     val holt  = new DemandModel.HoltDamped(BigDecimal("0.3"), BigDecimal("0.1"), BigDecimal("0.9"))

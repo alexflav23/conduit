@@ -12,13 +12,14 @@ final case class DemandHistory(
     shelfStock: Option[BigDecimal] = None,         // shipped − activated, at origin
     activationVelocity: Option[BigDecimal] = None, // units activated / month (seasonally adjustable), at origin
     // the order-book context (doc 26 §4a) — present when the series maps to a deal pipeline, as-of the origin
-    openBook: Option[BigDecimal] = None,        // open deal amount at the origin
-    bookConversion: Option[BigDecimal] = None,  // share of an open book won within a quarter (pre-origin cohorts)
-    newBusinessQ: Option[BigDecimal] = None,    // created-and-won-within-quarter run-rate (pre-origin quarters)
-    funnelExpectedQ: Option[BigDecimal] = None, // the retail-funnel composed quarter expectation (doc 26 §4a)
-    funnelMomentumQ: Option[BigDecimal] = None, // the same funnel with created volume at last month's rate × 3
-    mrpOpenBook: Option[BigDecimal] = None,     // MRPeasy: undispached charger qty on open orders at origin (≤60d old)
-    mrpBookRatio: Option[BigDecimal] = None     // measured share of a month's dispatches already booked at month start
+    openBook: Option[BigDecimal] = None,           // open deal amount at the origin
+    bookConversion: Option[BigDecimal] = None,     // share of an open book won within a quarter (pre-origin cohorts)
+    newBusinessQ: Option[BigDecimal] = None,       // created-and-won-within-quarter run-rate (pre-origin quarters)
+    funnelExpectedQ: Option[BigDecimal] = None,    // the retail-funnel composed quarter expectation (doc 26 §4a)
+    funnelMomentumQ: Option[BigDecimal] = None,    // the same funnel with created volume at last month's rate × 3
+    mrpOpenBook: Option[BigDecimal] = None,        // MRPeasy: undispached charger qty on open orders at origin (≤60d old)
+    mrpBookRatio: Option[BigDecimal] = None,       // measured share of a month's dispatches already booked at month start
+    activationVelocity3: Option[BigDecimal] = None // trailing-3-month activation rate /mo — the sell-through level
 ) {
   def nonEmpty: Boolean = qty.exists(_ > 0)
 }
@@ -267,6 +268,21 @@ object DemandModel {
       }
   }
 
+  // Sell-through (the user's installer steer, measured): the trailing-3-month ACTIVATION rate as the level —
+  // activations are the demand truth and sell-in is lumpy batching on top (hand-to-mouth installers buy as
+  // they install; procurement-cycle buyers like Octopus order in waves around the same underlying rate).
+  // Measured pooled vs the selected policy: installers 74.6 vs 82.4, energy 39.7 vs 44.2, wholesale 48.9 vs
+  // 49.6 — but per-origin mixed, so it enters the tournament and earns accounts on censored evidence.
+  object SellThrough extends DemandModel {
+    val key     = "sell_through"
+    val version = 1
+    def predict(h: DemandHistory, horizon: Int): Vector[BigDecimal] =
+      h.activationVelocity3 match {
+        case Some(v) if v > 0 => Vector.fill(horizon)(r(v))
+        case _                => RunRate3.predict(h, horizon)
+      }
+  }
+
   // The registry (doc 26 §4) — code-defined; the loop ranks these mechanically, nothing is hand-picked.
   val registry: List[DemandModel] = List(
     SeasonalNaive,
@@ -282,6 +298,7 @@ object DemandModel {
     RetailFunnel,
     RetailFunnelMomentum,
     PantryReversal,
-    MrpOrderBook
+    MrpOrderBook,
+    SellThrough
   )
 }

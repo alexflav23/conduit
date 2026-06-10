@@ -88,12 +88,13 @@ object DemandSeriesRepo {
       }
 
   // Shelf stock + activation velocity as-of the origin (the doc 26 §4 edge), from the serial/activation log.
-  // Velocity = activations over the trailing 6 months / 6.
+  // Velocity at two windows: trailing 6 months /6 (depletion's smooth rate) and 3 months /3 (the sell-through
+  // level — the user's installer steer, measured better pooled in every segment).
   private def depletionContext(
       company: UUID,
       variant: UUID,
       origin: LocalDate
-  ): ConnectionIO[(Option[BigDecimal], Option[BigDecimal])] =
+  ): ConnectionIO[(Option[BigDecimal], Option[BigDecimal], Option[BigDecimal])] =
     sql"""SELECT
             (SELECT COUNT(*)::numeric FROM serial_unit su JOIN dispatch d ON d.id = su.dispatch_id
              WHERE su.company_id = $company AND su.product_variant_id = $variant
@@ -101,10 +102,13 @@ object DemandSeriesRepo {
                AND (su.activated_at IS NULL OR su.activated_at >= $origin)),
             (SELECT COUNT(*)::numeric / 6.0 FROM serial_unit su
              WHERE su.company_id = $company AND su.product_variant_id = $variant
-               AND su.activated_at >= ${origin.minusMonths(6)} AND su.activated_at < $origin)"""
-      .query[(Option[BigDecimal], Option[BigDecimal])]
+               AND su.activated_at >= ${origin.minusMonths(6)} AND su.activated_at < $origin),
+            (SELECT COUNT(*)::numeric / 3.0 FROM serial_unit su
+             WHERE su.company_id = $company AND su.product_variant_id = $variant
+               AND su.activated_at >= ${origin.minusMonths(3)} AND su.activated_at < $origin)"""
+      .query[(Option[BigDecimal], Option[BigDecimal], Option[BigDecimal])]
       .unique
-      .map { case (shelf, vel) => (shelf.filter(_ > 0), vel.filter(_ > 0)) }
+      .map { case (shelf, vel, vel3) => (shelf.filter(_ > 0), vel.filter(_ > 0), vel3.filter(_ > 0)) }
 
   // The MRPeasy open book (the user's lag-structure point, doc 26): orders measurably sit days-to-weeks between
   // creation and dispatch, differently per account. The open book = un-dispatched qty on orders created in the
@@ -141,7 +145,7 @@ object DemandSeriesRepo {
   private def zeroFill(
       raw: List[(LocalDate, BigDecimal)],
       origin: LocalDate,
-      ctx: (Option[BigDecimal], Option[BigDecimal]),
+      ctx: (Option[BigDecimal], Option[BigDecimal], Option[BigDecimal]),
       book: (Option[BigDecimal], Option[BigDecimal], Option[BigDecimal]),
       funnel: Option[BigDecimal],
       momentum: Option[BigDecimal],
@@ -160,7 +164,8 @@ object DemandSeriesRepo {
           funnel,
           momentum,
           mrp._1,
-          mrp._2
+          mrp._2,
+          ctx._3
         )
       case Some((first, _)) =>
         val byMonth = raw.toMap
@@ -179,7 +184,8 @@ object DemandSeriesRepo {
           funnel,
           momentum,
           mrp._1,
-          mrp._2
+          mrp._2,
+          ctx._3
         )
     }
 
