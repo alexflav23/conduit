@@ -86,6 +86,17 @@ object ComparablesHtml extends IOApp.Simple {
           WHERE company_id = $company AND source = 'model' AND superseded_by IS NULL
             AND period_month >= $from AND period_month < $until""".query[BigDecimal].unique
 
+  // The BUSINESS actual: every attributed unit in the dispatch log for the window — independent of which
+  // account×SKU keys were forecastable at the origin. The scored subset is a fraction of this early on
+  // (the serialized record reaches adoption Q4'24→Q1'25), and presenting the subset as "actual" misleads.
+  private def businessUnits(from: LocalDate, until: LocalDate): ConnectionIO[Map[UUID, BigDecimal]] =
+    sql"""SELECT su.company_id, COUNT(*)::numeric
+          FROM serial_unit su JOIN dispatch d ON d.id = su.dispatch_id
+          WHERE su.company_id IS NOT NULL
+            AND COALESCE(d.delivered_at, d.date::timestamptz) >= $from
+            AND COALESCE(d.delivered_at, d.date::timestamptz) < $until
+          GROUP BY 1""".query[(UUID, BigDecimal)].to[List].map(_.toMap)
+
   private case class Cell(sector: String, policy: String, f: BigDecimal, a: BigDecimal, price: BigDecimal)
 
   override def run: IO[Unit] =
@@ -115,14 +126,22 @@ object ComparablesHtml extends IOApp.Simple {
             }
             .map(rs => label -> rs.flatten)
       }
-      q2actual <- accts.traverse {
+      business <- backtests.traverse {
+        case (label, o) => businessUnits(o, o.plusMonths(3)).transact(xa).map(label -> _)
+      }
+      // the open quarter, June counted ONCE: Apr+May closed, June = max(model, June-to-date actual)
+      q2parts <- accts.traverse {
         case (id, name) =>
-          sql"""SELECT COALESCE(count(*), 0)::numeric FROM serial_unit su JOIN dispatch d ON d.id = su.dispatch_id
-                WHERE su.company_id = $id AND COALESCE(d.delivered_at, d.date::timestamptz) >= '2026-04-01'"""
-            .query[BigDecimal]
+          sql"""SELECT COUNT(*) FILTER (WHERE t.dt < '2026-06-01')::numeric,
+                       COUNT(*) FILTER (WHERE t.dt >= '2026-06-01')::numeric
+                FROM (SELECT COALESCE(d.delivered_at, d.date::timestamptz) AS dt
+                      FROM serial_unit su JOIN dispatch d ON d.id = su.dispatch_id
+                      WHERE su.company_id = $id
+                        AND COALESCE(d.delivered_at, d.date::timestamptz) >= '2026-04-01') t"""
+            .query[(BigDecimal, BigDecimal)]
             .unique
             .transact(xa)
-            .map(u => (sectorOf(name), u, priceOf(id)))
+            .map { case (aprMay, junAct) => (sectorOf(name), aprMay, junAct, priceOf(id)) }
       }
       junC <- accts.traverse {
         case (id, name) =>
@@ -136,14 +155,6 @@ object ComparablesHtml extends IOApp.Simple {
             .transact(xa)
             .map(u => (sectorOf(name), u, priceOf(id)))
       }
-      // the uncovered tail: units dispatched this quarter to accounts OUTSIDE the covered MRP party set
-      // (new accounts, unattributed serials) — invisible in the covered rows, so stated, never hidden
-      allQ2 <-
-        sql"""SELECT COUNT(*)::numeric FROM serial_unit su JOIN dispatch d ON d.id = su.dispatch_id
-              WHERE COALESCE(d.delivered_at, d.date::timestamptz) >= '2026-04-01'"""
-          .query[BigDecimal]
-          .unique
-          .transact(xa)
       d2c <-
         sql"""SELECT period_month, value FROM exogenous_series
                    WHERE series_key = 'stripe_d2c_gross_gbp' ORDER BY period_month"""
@@ -162,49 +173,74 @@ object ComparablesHtml extends IOApp.Simple {
 
       def errCls(e: BigDecimal): String = if (e <= 20) "good" else if (e <= 50) "mid" else "bad"
 
+      val sectorById = accts.map { case (id, n) => id -> sectorOf(n) }.toMap
+      val bizByLabel = business.toMap
+
       val quarterTables = cells.map {
         case (label, rs) =>
-          val rows = sectors.map { sec =>
-            val xs = rs.filter(_.sector == sec)
-            val fU = xs.map(_.f).foldLeft(BigDecimal(0))(_ + _)
-            val aU = xs.map(_.a).foldLeft(BigDecimal(0))(_ + _)
-            val fM = xs.map(c => c.f * c.price).foldLeft(BigDecimal(0))(_ + _)
-            val aM = xs.map(c => c.a * c.price).foldLeft(BigDecimal(0))(_ + _)
-            val e  = if (aU > 0) ((fU - aU).abs / aU * 100).setScale(1, RoundingMode.HALF_UP) else BigDecimal(0)
-            s"<tr><td>$sec</td><td>${dominantPolicy(xs)}</td><td class='num'>${u(aU)}</td><td class='num'>${u(fU)}</td>" +
-              s"<td class='num'>${gbp(aM)}</td><td class='num'>${gbp(fM)}</td><td class='${errCls(e)}'>$e%</td></tr>"
+          val biz = bizByLabel.getOrElse(label, Map.empty[UUID, BigDecimal])
+          def bizOf(sec: String): (BigDecimal, BigDecimal) = {
+            val xs = biz.toList.filter { case (id, _) => sectorById.get(id).contains(sec) }
+            (xs.map(_._2).sum, xs.map { case (id, units) => units * priceOf(id) }.sum)
           }
-          val fT = rs.map(_.f).foldLeft(BigDecimal(0))(_ + _)
-          val aT = rs.map(_.a).foldLeft(BigDecimal(0))(_ + _)
-          val fM = rs.map(c => c.f * c.price).foldLeft(BigDecimal(0))(_ + _)
-          val aM = rs.map(c => c.a * c.price).foldLeft(BigDecimal(0))(_ + _)
-          val eT = if (aT > 0) ((fT - aT).abs / aT * 100).setScale(1, RoundingMode.HALF_UP) else BigDecimal(0)
+          val rows = sectors.map { sec =>
+            val xs           = rs.filter(_.sector == sec)
+            val fU           = xs.map(_.f).foldLeft(BigDecimal(0))(_ + _)
+            val aU           = xs.map(_.a).foldLeft(BigDecimal(0))(_ + _)
+            val (bizU, bizM) = bizOf(sec)
+            val e            = if (aU > 0) ((fU - aU).abs / aU * 100).setScale(1, RoundingMode.HALF_UP) else BigDecimal(0)
+            s"<tr><td>$sec</td><td>${dominantPolicy(xs)}</td><td class='num'>${u(bizU)}</td><td class='num'>${gbp(
+              bizM
+            )}</td><td class='num'>${u(aU)}</td><td class='num'>${u(fU)}</td><td class='${errCls(e)}'>$e%</td></tr>"
+          }
+          val fT   = rs.map(_.f).foldLeft(BigDecimal(0))(_ + _)
+          val aT   = rs.map(_.a).foldLeft(BigDecimal(0))(_ + _)
+          val bizT = biz.values.sum
+          val bizM = biz.toList.map { case (id, units) => units * priceOf(id) }.sum
+          val eT   = if (aT > 0) ((fT - aT).abs / aT * 100).setScale(1, RoundingMode.HALF_UP) else BigDecimal(0)
+          val cov  = if (bizT > 0) (aT / bizT * 100).setScale(0, RoundingMode.HALF_UP) else BigDecimal(0)
           s"""<h2>$label — backtest (selected censored at quarter start)</h2>
-<table><tr><th>channel</th><th>policy</th><th>actual u</th><th>forecast u</th><th>actual £</th><th>forecast £</th><th>err</th></tr>
+<table><tr><th>channel</th><th>policy</th><th>BUSINESS actual u</th><th>BUSINESS actual £</th><th>scored actual u</th><th>forecast u</th><th>err</th></tr>
 ${rows.mkString("\n")}
-<tr class='tot'><td>TOTAL</td><td></td><td class='num'>${u(aT)}</td><td class='num'>${u(fT)}</td><td class='num'>${gbp(
-            aM
-          )}</td><td class='num'>${gbp(fM)}</td><td class='${errCls(eT)}'>$eT%</td></tr></table>"""
+<tr class='tot'><td>TOTAL</td><td></td><td class='num'>${u(bizT)}</td><td class='num'>${gbp(
+            bizM
+          )}</td><td class='num'>${u(aT)}</td><td class='num'>${u(fT)}</td><td class='${errCls(
+            eT
+          )}'>$eT%</td></tr></table>
+<p class="note">BUSINESS actual = every attributed unit in the dispatch log this quarter. The model could only score the accounts with enough pre-quarter history ($cov% of business units at this origin) — err compares forecast to that scored subset only.</p>"""
       }
 
-      val q2Rows = sectors.map { sec =>
-        val a  = q2actual.filter(_._1 == sec)
-        val j  = junC.filter(_._1 == sec)
-        val aU = a.map(_._2).sum
-        val jU = j.map(_._2).sum
-        val aM = a.map(r => r._2 * r._3).sum
-        val jM = j.map(r => r._2 * r._3).sum
-        s"<tr><td>$sec</td><td class='num'>${u(aU)}</td><td class='num'>${u(jU)}</td><td class='num'>${u(aU + jU)}</td>" +
-          s"<td class='num'>${gbp(aM + jM)}</td></tr>"
+      // June counted ONCE: closed Apr+May + max(June model, June actual-so-far), per sector
+      final case class Q2Sec(
+          aprMay: BigDecimal,
+          junAct: BigDecimal,
+          junEst: BigDecimal,
+          projU: BigDecimal,
+          projM: BigDecimal
+      )
+      val q2BySec = sectors.map { sec =>
+        val parts    = q2parts.filter(_._1 == sec)
+        val jm       = junC.filter(_._1 == sec)
+        val aprMay   = parts.map(_._2).sum
+        val junAct   = parts.map(_._3).sum
+        val junModel = jm.map(_._2).sum
+        val aprMayM  = parts.map(r => r._2 * r._4).sum
+        val junActM  = parts.map(r => r._3 * r._4).sum
+        val junModM  = jm.map(r => r._2 * r._3).sum
+        val junEst   = junModel.max(junAct)
+        val junEstM  = junModM.max(junActM)
+        sec -> Q2Sec(aprMay, junAct, junEst, aprMay + junEst, aprMayM + junEstM)
       }
-      val q2aT = q2actual.map(_._2).sum; val q2jT = junC.map(_._2).sum
-      val q2mT = q2actual.map(r => r._2 * r._3).sum + junC.map(r => r._2 * r._3).sum
-      // tail scales the June model by its share of actuals-to-date; priced at the covered median
-      val tailA    = (allQ2 - q2aT).max(BigDecimal(0))
-      val tailJ    = if (q2aT > 0) (q2jT * tailA / q2aT).setScale(0, RoundingMode.HALF_UP) else BigDecimal(0)
-      val tailM    = (tailA + tailJ) * median
-      val allInU   = q2aT + q2jT + tailA + tailJ
-      val allInGbp = q2mT + tailM
+      val q2Rows = q2BySec.map {
+        case (sec, s) =>
+          s"<tr><td>$sec</td><td class='num'>${u(s.aprMay)}</td><td class='num'>${u(s.junAct)}</td>" +
+            s"<td class='num'>${u(s.junEst)}</td><td class='num'>${u(s.projU)}</td><td class='num'>${gbp(s.projM)}</td></tr>"
+      }
+      val q2AllAprMay = q2BySec.map(_._2.aprMay).sum
+      val q2AllJunAct = q2BySec.map(_._2.junAct).sum
+      val q2AllJunEst = q2BySec.map(_._2.junEst).sum
+      val q2AllU      = q2BySec.map(_._2.projU).sum
+      val q2AllM      = q2BySec.map(_._2.projM).sum
 
       val q3Rows = sectors.map { sec =>
         val xs = q3C.filter(_._1 == sec)
@@ -238,27 +274,21 @@ tr.tot td{background:#1d1430;color:#d9c5ff;font-weight:700}
 .kpi b{display:block;font-size:24px;color:#962DFF}.kpi span{font-size:11px;color:#9a9ab0}</style></head><body>
 <h1><b>Conduit</b> — channel comparables, Q2'25 → Q3'26 <span style="font-size:12px;color:#8a8aa0">serial-attributed dispatch basis · realized tier prices · depletion live · ${LocalDate
         .now()}</span></h1>
-<p class="note">Backtests: the policy is selected on evidence strictly BEFORE each quarter, then scored against what happened. Money = units × each account's realized net unit price (embeds its tier). Q2'25 coverage is partial (the serialized record reaches full adoption Q4'24→Q1'25), flagged not hidden.</p>
+<p class="note">BUSINESS actual = the full attributed dispatch log (what the company really shipped). The model's err is measured only on the accounts it could score at each origin (enough pre-quarter history) — early quarters have low scoring coverage because the serialized record only reached full adoption Q4'24→Q1'25. Money = units × each account's realized net unit price (embeds its tier).</p>
 ${quarterTables.mkString("\n")}
 
-<h2>Q2'26 — NOWCAST (open quarter: Apr+May actual + June model)</h2>
-<table><tr><th>channel</th><th>actual-to-date u</th><th>June model u</th><th>projected u</th><th>projected £</th></tr>
+<h2>Q2'26 — NOWCAST (open quarter; June counted once: max of model and to-date)</h2>
+<table><tr><th>channel</th><th>Apr+May actual u</th><th>June so far u</th><th>June estimate u</th><th>projected u</th><th>projected £</th></tr>
 ${q2Rows.mkString("\n")}
-<tr class='tot'><td>TOTAL B2B</td><td class='num'>${u(q2aT)}</td><td class='num'>${u(q2jT)}</td><td class='num'>${u(
-        q2aT + q2jT
-      )}</td><td class='num'>${gbp(q2mT)}</td></tr>
-<tr><td>Uncovered tail (accounts outside the 651 covered — new/unattributed)</td><td class='num'>${u(
-        tailA
-      )}</td><td class='num'>${u(tailJ)}</td><td class='num'>${u(tailA + tailJ)}</td><td class='num'>${gbp(
-        tailM
+<tr class='tot'><td>TOTAL B2B</td><td class='num'>${u(q2AllAprMay)}</td><td class='num'>${u(
+        q2AllJunAct
+      )}</td><td class='num'>${u(q2AllJunEst)}</td><td class='num'>${u(q2AllU)}</td><td class='num'>${gbp(
+        q2AllM
       )}</td></tr>
-<tr class='tot'><td>ALL-IN B2B</td><td class='num'>${u(q2aT + tailA)}</td><td class='num'>${u(
-        q2jT + tailJ
-      )}</td><td class='num'>${u(allInU)}</td><td class='num'>${gbp(allInGbp)}</td></tr>
 <tr><td>D2C (Stripe, net of ${refund.setScale(
         1,
         RoundingMode.HALF_UP
-      )}% refunds)</td><td></td><td></td><td></td><td class='num'>${gbp(
+      )}% refunds)</td><td></td><td></td><td></td><td></td><td class='num'>${gbp(
         d2cQ2
       )}</td></tr></table>
 
@@ -270,11 +300,19 @@ ${q3Rows.mkString("\n")}
         .setScale(1, RoundingMode.HALF_UP)}%/mo)</td><td></td><td class='num'>${gbp(
         d2cQ3
       )}</td></tr></table>
-<p class="note">TAM-seasonal band (H6Q SMMT, six-year profile — the market does 56% of its year in H2): Q3'26 ${u(
-        q3uT
-      )}u floor → ${u(q3uT * BigDecimal("25.93") / BigDecimal("21.84"))}u seasonal · Q4'26 seasonal ${u(
-        (q2aT + q2jT) * BigDecimal("30.34") / BigDecimal("21.84")
-      )}u. The truth trades inside the band; depletion narrows it as activation evidence deepens.</p>
+<h2>THE BOTTOM LINE</h2>
+<div>
+<div class="kpi"><b>${gbp(q2AllM + d2cQ2)}</b><span>Q2'26 all-in (closing) — B2B ${u(q2AllU)}u ${gbp(
+        q2AllM
+      )} + D2C ${gbp(d2cQ2)}</span></div>
+<div class="kpi"><b>${gbp(q3mT + d2cQ3)}</b><span>Q3'26 floor — B2B ${u(q3uT)}u ${gbp(q3mT)} + D2C ${gbp(
+        d2cQ3
+      )} · seasonal up to ${u(q3uT * BigDecimal("25.93") / BigDecimal("21.84"))}u</span></div>
+<div class="kpi"><b>${u(q2AllU * BigDecimal("30.34") / BigDecimal("21.84"))}u</b><span>Q4'26 TAM-seasonal (${gbp(
+        q2AllM * BigDecimal("30.34") / BigDecimal("21.84")
+      )} at current mix) — the market does 56% of its year in H2</span></div>
+</div>
+<p class="note">TAM-seasonal band (H6Q SMMT six-year profile): the truth trades between the model floor and the seasonal number; depletion narrows it as activation evidence deepens. Forecast accuracy on closed quarters: recent-origin total-level 9–16%.</p>
 </body></html>"""
       Files.write(Paths.get("/tmp/conduit-comparables.html"), html.getBytes(StandardCharsets.UTF_8))
       println("written /tmp/conduit-comparables.html")
