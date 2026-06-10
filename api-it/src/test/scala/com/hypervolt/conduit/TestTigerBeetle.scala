@@ -16,9 +16,12 @@ final class TbContainer(image: DockerImageName) extends GenericContainer[TbConta
 // Mirrors the house pattern (Athena runs the same binary as a local process).
 object TestTigerBeetle {
 
+  // --development relaxes the O_DIRECT/io_uring requirements: the container's /tmp is overlayfs, where
+  // direct IO is engine-dependent (measured: a Docker Desktop restart silently broke it and the replica died
+  // after the banner with no error — the compose service survives only because it writes to a named volume).
   private val script =
-    "/tigerbeetle format --cluster=0 --replica=0 --replica-count=1 /tmp/0_0.tigerbeetle && " +
-      "/tigerbeetle start --addresses=0.0.0.0:3000 /tmp/0_0.tigerbeetle"
+    "/tigerbeetle format --cluster=0 --replica=0 --replica-count=1 --development /tmp/0_0.tigerbeetle && " +
+      "/tigerbeetle start --addresses=0.0.0.0:3000 --development /tmp/0_0.tigerbeetle"
 
   def client: Resource[IO, Client] =
     Resource
