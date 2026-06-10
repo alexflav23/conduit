@@ -154,5 +154,17 @@ object ChannelMatrix extends IOApp.Simple {
         println(f"$sec%-24s $cols | Q2'26proj ${u2.setScale(0, RoundingMode.HALF_UP)}u £${k(m2)} | Q3'26 ${u3
           .setScale(0, RoundingMode.HALF_UP)}u £${k(m3)}")
       }
+      // The TAM-seasonal band (H6Q SMMT tab, six-year month-share profile): the UK market does 56% of its
+      // year in H2 (Sep plate change 15.1%, Dec 12.5%) — the statistical floor carries no calendar, so the
+      // seasonal expectation scales the Q2 projection by the market's quarter shares. Floor = models;
+      // ceiling = market shape; the truth trades between them.
+      val q2Tot      = q2a.map(_._2).sum + q2f.map(_._2).sum
+      val q3Seasonal = q2Tot * BigDecimal("25.93") / BigDecimal("21.84")
+      val q4Seasonal = q2Tot * BigDecimal("30.34") / BigDecimal("21.84")
+      val q3Floor    = q3f.map(_._2).sum
+      println(
+        s"\nTAM-SEASONAL BAND (total): Q3'26 floor ${q3Floor.setScale(0, RoundingMode.HALF_UP)}u .. seasonal ${q3Seasonal
+          .setScale(0, RoundingMode.HALF_UP)}u | Q4'26 seasonal ${q4Seasonal.setScale(0, RoundingMode.HALF_UP)}u"
+      )
     }
 }
