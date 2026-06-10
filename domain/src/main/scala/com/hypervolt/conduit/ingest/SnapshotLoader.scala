@@ -157,12 +157,28 @@ object SnapshotLoader {
   private def skippableSku(code: String): Boolean =
     code.contains("DELIVERY") || code.contains("DONOTUSE")
 
+  // the channel taxonomy the live comparables view groups by — set at insert so new accounts never vanish
+  // from channel_comparables with a NULL segment
+  private def segmentOf(name: String): String = {
+    val n      = name.toLowerCase
+    val energy = List("octopus", "e.on", "eon energy", "edf", "ovo", "british gas", "scottish power", "shell")
+    val wholesale =
+      List("yesss", "rexel", "cef", "city electrical", "medlock", "kelvelec", "edmundson", "denmans", "wolseley")
+    val online = List("smart home charge", "ev store", "evec", "amazon")
+    if (energy.exists(n.contains)) "energy"
+    else if (wholesale.exists(n.contains)) "wholesale"
+    else if (online.exists(n.contains)) "online_retail"
+    else "installers"
+  }
+
   private def mrpParty(name: String): ConnectionIO[UUID] =
     sql"SELECT id FROM party WHERE display_name = ${"MRP: " + name}".query[UUID].option.flatMap {
       case Some(id) => id.pure[ConnectionIO]
       case None =>
-        sql"""INSERT INTO party (display_name, party_type, is_organization)
-              VALUES (${"MRP: " + name}, 'wholesaler', true) RETURNING id""".query[UUID].unique
+        sql"""INSERT INTO party (display_name, party_type, is_organization, segment)
+              VALUES (${"MRP: " + name}, 'wholesaler', true, ${segmentOf(name)}) RETURNING id"""
+          .query[UUID]
+          .unique
     }
 
   private def mrpVariant(sku: String): ConnectionIO[UUID] =
