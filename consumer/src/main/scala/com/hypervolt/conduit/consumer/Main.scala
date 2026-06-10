@@ -71,13 +71,13 @@ object Main extends IOApp.Simple {
     resources.use {
       case (cfg, xa, pulsar, http, tb) =>
         XeroAccountingConsumer.build[IO](http, cfg.xero).flatMap { (accounting: AccountingConsumer[IO]) =>
-          val ledger          = TigerBeetleLedger.fromClient[IO](tb)
-          val dispatcher      = new InvoiceDispatcher[IO](xa, accounting)
-          val xeroConsumer    = new XeroInvoiceConsumer[IO](pulsar, dispatcher)
-          val revConsumer     = new RevenueRecognitionConsumer[IO](pulsar, new RevenueRecognitionService[IO](xa, ledger))
-          val stripeHandler   = new StripePaymentHandler[IO](new PaymentService[IO](xa, ledger))
-          val stripeProcessor = new StripeInboundProcessor[IO](xa, stripeHandler)
-          val stripeLoop      = (stripeProcessor.runOnce() *> IO.sleep(2.second)).foreverM
+          val ledger               = TigerBeetleLedger.fromClient[IO](tb)
+          val dispatcher           = new InvoiceDispatcher[IO](xa, accounting)
+          val xeroConsumer         = new XeroInvoiceConsumer[IO](pulsar, dispatcher)
+          val revConsumer          = new RevenueRecognitionConsumer[IO](pulsar, new RevenueRecognitionService[IO](xa, ledger))
+          val stripeHandler        = new StripePaymentHandler[IO](new PaymentService[IO](xa, ledger))
+          val stripeProcessor      = new StripeInboundProcessor[IO](xa, stripeHandler)
+          val stripeLoop: IO[Unit] = (stripeProcessor.runOnce() *> IO.sleep(2.second)).foreverM
           val s3Client =
             if (cfg.documents.usesEndpoint)
               S3DocumentStorage.endpointClient(cfg.documents.endpoint, cfg.documents.accessKey, cfg.documents.secretKey)
@@ -111,22 +111,23 @@ object Main extends IOApp.Simple {
               new com.hypervolt.conduit.forecast.RunwayService[IO](xa)
             )
           PulsarEventPublisher.create[IO](pulsar).flatMap { publisher =>
-            val relay     = new OutboxRelay[IO](xa, publisher)
-            val relayLoop = (relay.runOnce() *> IO.sleep(1.second)).foreverM
+            val relay                                           = new OutboxRelay[IO](xa, publisher)
+            val relayLoop: IO[Unit]                             = (relay.runOnce() *> IO.sleep(1.second)).foreverM
+            implicit val log: org.typelevel.log4cats.Logger[IO] = logger
             logger.info(
               "Consumer running: outbox relay + Xero invoice + revenue recognition + Stripe settlement + document generation + VAT remittance + PII tombstone"
             ) *>
               List(
-                relayLoop,
-                xeroConsumer.runForever,
-                revConsumer.runForever,
-                stripeLoop,
-                docConsumer.runForever,
-                voidConsumer.runForever,
-                vatRemitConsumer.runForever,
-                piiTombstoneConsumer.runForever,
-                rebateAccrualConsumer.runForever,
-                placementConsumer.runForever
+                Supervised("outbox-relay", relayLoop),
+                Supervised("xero-invoice", xeroConsumer.runForever),
+                Supervised("revenue-recognition", revConsumer.runForever),
+                Supervised("stripe-settlement", stripeLoop),
+                Supervised("document-generation", docConsumer.runForever),
+                Supervised("invoice-void", voidConsumer.runForever),
+                Supervised("vat-remittance", vatRemitConsumer.runForever),
+                Supervised("pii-tombstone", piiTombstoneConsumer.runForever),
+                Supervised("rebate-accrual", rebateAccrualConsumer.runForever),
+                Supervised("placement", placementConsumer.runForever)
               ).parSequence_
           }
         }
