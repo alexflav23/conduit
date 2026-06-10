@@ -1,0 +1,17 @@
+#!/usr/bin/env nix-shell
+#! nix-shell -i bash -p awscli2 gnutar jq
+
+set -exuo pipefail
+
+hash="$1"
+name="$2"
+nix_module_name="$3"
+jarname="$4"
+project="$5"
+
+bucket=pkgs.eu-west-1.hypervolt
+key=$name/app/$name-$hash.tar.xz
+body=$project/target/universal/$name-$hash.txz
+
+s3version="$(aws s3api put-object --bucket $bucket --key $key --body $body | jq -r .VersionId)"
+./scripts/module-publish "$hash" "$s3version" $nix_module_name $jarname $project

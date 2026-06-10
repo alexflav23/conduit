@@ -4,6 +4,7 @@ stages:
   - lint
   - test
   - package
+  - publish
 
 variables:
   SBT_OPTS: "-Duser.home=$CI_PROJECT_DIR"
@@ -36,10 +37,23 @@ package:
   tags:
     - x86_64-nix-24.11
   script:
-    - nix-shell --run "sbt api/Universal/packageXzTarball"
+    - nix-shell --run "sbt api/Universal/packageXzTarball consumer/Universal/packageXzTarball"
   artifacts:
     paths:
       - "api/target/universal/*.txz"
+      - "consumer/target/universal/*.txz"
     expire_in: 1 day
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
+
+# Publish to the pkgs bucket + record nix module versions (protected branches only — the deploy path).
+publish:
+  stage: publish
+  tags:
+    - x86_64-nix-24.11
+  rules:
+    - if: '$CI_COMMIT_REF_PROTECTED == "true"'
+  dependencies:
+    - package
+  script:
+    - ./scripts/publish ${CI_COMMIT_SHORT_SHA}

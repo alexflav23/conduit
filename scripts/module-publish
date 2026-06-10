@@ -1,0 +1,59 @@
+#!/usr/bin/env nix-shell
+#! nix-shell -i bash -p awscli2 gnutar git
+
+hash="$1"
+s3version="$2"
+nix_module_name="$3"
+jarname="$4"
+project="$5"
+extras="${6:-}"
+
+set -euo pipefail
+
+die() {
+  >&2 echo "$@"
+  exit 1
+}
+
+[[ -n "$hash" ]] || die "commit hash not set"
+
+tmp_nix="$(mktemp -d --tmpdir default.nix.XXXXXX)"
+
+cleanup() {
+  rm -r "$tmp_nix"
+  rm "$module_tarball"
+}
+
+trap 'cleanup' EXIT
+root="$(git rev-parse --show-toplevel)"
+
+tar_path="$project/target/universal/$jarname-$hash.txz"
+s3bucket="pkgs.eu-west-1.hypervolt"
+s3key="$jarname/app/$jarname-$hash.tar.xz"
+
+nix_bucket_prefix="s3://nix.eu-west-1.hypervolt/$nix_module_name"
+
+#module
+module_top_dir="$nix_module_name-$hash"
+module_dist="$tmp_nix/$module_top_dir"
+mkdir -p "$module_dist"
+
+cp "$root/scripts/$nix_module_name-module.nix" "$module_dist/default.nix"
+
+# fix the version of api jar.
+nix-prefetch-url --unpack --type sha256 "file://$(pwd)/$tar_path" | tr -d '\n' > "$module_dist/hash"
+
+echo -n "$s3bucket" > "$module_dist/bucket"
+echo -n "$s3key" > "$module_dist/key"
+echo -n "$s3version" > "$module_dist/version"
+
+# add in extra dependencies etc
+[ -n "$extras" -a -x "$extras" ] && $extras "$module_dist"
+
+"${root}/scripts/module-metadata" "${hash}" "${nix_module_name}" "${jarname}" "${module_dist}"
+
+module_tarball="module-$hash.tar.xz"
+tar -C "$tmp_nix" -cJf "$module_tarball" "$module_top_dir"
+
+aws s3 cp $module_tarball "$nix_bucket_prefix/module-$hash.tar.xz"
+aws s3 cp $module_tarball "$nix_bucket_prefix/module-staging.tar.xz"

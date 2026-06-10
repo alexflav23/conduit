@@ -1,0 +1,11 @@
+#!/usr/bin/env nix-shell
+#! nix-shell -i bash -p bash
+
+# Publishes both Conduit services to the pkgs bucket (mirrors athena/scripts/publish):
+#   <name>-<hash>.tar.xz -> s3://pkgs.eu-west-1.hypervolt/<name>/app/ + nix module version record.
+set -euo pipefail
+
+hash="${1:?commit hash not set}"
+
+./scripts/publish-app "$hash" conduit-api conduit conduit-api api
+./scripts/publish-app "$hash" conduit-consumer conduit-consumer conduit-consumer consumer

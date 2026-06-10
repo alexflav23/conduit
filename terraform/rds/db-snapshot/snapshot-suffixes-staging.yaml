@@ -1,0 +1,9 @@
+# Add suffixes to the "suffixes" list to create database snapshots (in
+# addition to the automatic daily backup). Remove them to delete the
+# suffix. Order does not matter. Be sure to quote numbers, all elements
+# should be strings.
+# Note that:
+# "Identifiers must begin with a letter; must contain only ASCII letters, digits, and hyphens; and must not end
+# with a hyphen or contain two consecutive hyphens."
+suffixes:
+  - "20260219T1157"

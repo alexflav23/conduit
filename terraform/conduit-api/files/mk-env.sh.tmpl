@@ -1,0 +1,40 @@
+#!/usr/bin/env nix-shell
+#! nix-shell -i bash -p awscli2 jq
+
+# Materializes /etc/default/${service}/env at boot (pre-switch): SSM parameters under /${env}/conduit/ plus
+# the RDS runtime credentials secret. Self-contained (no shared print-env.sh) — conduit's config surface is
+# fully env-var driven, so this file IS the deploy-time configuration.
+set -euo pipefail
+
+: $${AWS_DEFAULT_REGION:=${region}}
+export AWS_DEFAULT_REGION
+
+root="/etc/default/${service}"
+mkdir -p "$root"
+
+trap 'rm -f -- "$root/env.tmp"' ERR
+
+{
+  echo "HYPERVOLT_ENV=${env}"
+
+  # Every parameter under /<env>/conduit/ becomes an env var: /<env>/conduit/FOO -> FOO=value
+  aws ssm get-parameters-by-path \
+    --path "/${env}/conduit/" --recursive --with-decryption \
+    --query "Parameters[].[Name,Value]" --output text \
+  | while IFS=$'\t' read -r name value; do
+      printf '%s=%s\n' "$${name##*/}" "$value"
+    done
+
+  # RDS runtime credentials (written by terraform/rds): {"username":...,"password":...,"host":...,"port":...,"dbname":...}
+  creds="$(aws secretsmanager get-secret-value \
+    --secret-id "${env}/conduit/rds-db-credentials/conduit.json" \
+    --query SecretString --output text)"
+  printf 'CONDUIT_DB_HOST=%s\n'     "$(jq -r .host     <<<"$creds")"
+  printf 'CONDUIT_DB_PORT=%s\n'     "$(jq -r .port     <<<"$creds")"
+  printf 'CONDUIT_DB_NAME=%s\n'     "$(jq -r .dbname   <<<"$creds")"
+  printf 'CONDUIT_DB_USER=%s\n'     "$(jq -r .username <<<"$creds")"
+  printf 'CONDUIT_DB_PASSWORD=%s\n' "$(jq -r .password <<<"$creds")"
+} > "$root/env.tmp"
+
+mv -- "$root/env.tmp" "$root/env"
+chmod 0600 "$root/env"

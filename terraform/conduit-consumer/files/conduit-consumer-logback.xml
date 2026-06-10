@@ -1,0 +1,11 @@
+<configuration>
+  <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+    <encoder class="com.hypervolt.conduit.logging.VectorLogEncoder" />
+  </appender>
+
+  <logger name="com.hypervolt" level="info" />
+
+  <root level="warn">
+    <appender-ref ref="STDOUT" />
+  </root>
+</configuration>
