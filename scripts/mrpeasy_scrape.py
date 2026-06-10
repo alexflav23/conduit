@@ -19,30 +19,48 @@ def get(path, rng):
             print(f'retry {path}: {e}', flush=True); time.sleep(delay)
     raise RuntimeError(path)
 
+# Incremental by default: the NDJSON snapshot is the source of truth and the API is only asked for the TAIL —
+# new rows beyond what we hold, plus a recheck window over the most recent rows to catch status churn on open
+# orders. MRPEASY_FULL=1 forces the old full re-walk (weekly hygiene / first run).
+RECHECK = 3000
+
 def walk(endpoint, out, slim, idkey):
-    seen = set()
+    full = os.environ.get('MRPEASY_FULL') == '1' or not os.path.exists(out)
+    existing = {}
+    if not full:
+        with open(out) as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    row = json.loads(line)
+                    existing[row['id']] = row
     cr, rows = get(endpoint, 'items=0-99')
     total = int(cr.split('/')[-1])
-    print(f'{endpoint}: total {total}', flush=True)
-    with open(out, 'w') as f:
-        start = 0
-        while start < total:
-            if start > 0:
-                time.sleep(0.7)
-                _, rows = get(endpoint, f'items={start}-{start+99}')
-            if not rows: break
-            fresh = 0
-            for x in rows:
-                i = x.get(idkey)
-                if i in seen: continue
-                seen.add(i); fresh += 1
-                f.write(json.dumps(slim(x), separators=(',', ':')) + '\n')
-            if fresh == 0:
-                print(f'{endpoint}: page at {start} all duplicates — pagination broken, aborting', flush=True)
-                break
-            start += len(rows)
-            if start % 5000 < 100: print(f'{endpoint}: {start}/{total}', flush=True)
-    print(f'{endpoint}: wrote {len(seen)} unique rows', flush=True)
+    start = 0 if full else max(0, len(existing) - RECHECK)
+    print(f'{endpoint}: total {total}, known {len(existing)}, from offset {start}', flush=True)
+    fetched, prev_first = 0, None
+    while start < total:
+        if start > 0:
+            time.sleep(0.7)
+            _, rows = get(endpoint, f'items={start}-{start+99}')
+        if not rows: break
+        first = rows[0].get(idkey)
+        if first is not None and first == prev_first:
+            print(f'{endpoint}: page at {start} repeats — pagination broken, aborting', flush=True)
+            break
+        prev_first = first
+        for x in rows:
+            i = x.get(idkey)
+            if i is None: continue
+            existing[i] = slim(x)
+            fetched += 1
+        start += len(rows)
+        if start % 5000 < 100: print(f'{endpoint}: {start}/{total}', flush=True)
+    with open(out + '.tmp', 'w') as f:
+        for i in sorted(existing):
+            f.write(json.dumps(existing[i], separators=(',', ':')) + '\n')
+    os.replace(out + '.tmp', out)  # atomic: a killed scrape can never truncate the snapshot
+    print(f'{endpoint}: wrote {len(existing)} unique rows ({fetched} fetched this run)', flush=True)
 
 def order_slim(o):
     return {
