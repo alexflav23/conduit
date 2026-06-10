@@ -96,6 +96,12 @@ module "bootstrap" {
 
   pin_versions = true
 
+  swap_devices = (
+    local.swap_device == null
+    ? {}
+    : { "${local.swap_device}" = {} }
+  )
+
   service_module = {
     name    = "conduit"
     service = "conduit-api"
@@ -184,9 +190,16 @@ resource "aws_vpc_security_group_ingress_rule" "rds-client" {
 
 locals {
   per_env = {
-    staging = { instance_type = "t4g.small" }
-    prod    = { instance_type = "t3a.medium" }
+    staging = {
+      instance_type = "t4g.small"
+      swap_device   = "/dev/sdf"
+    }
+    prod = {
+      instance_type = "t3a.medium"
+      swap_device   = null
+    }
   }
+  swap_device = local.per_env[local.env].swap_device
 }
 
 module "autoscaling-group" {
