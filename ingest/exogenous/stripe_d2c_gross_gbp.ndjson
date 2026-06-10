@@ -1,0 +1,17 @@
+{"period_month": "2025-01-01", "value": 86000, "known_at": "2025-02-02T00:00:00Z"}
+{"period_month": "2025-02-01", "value": 84000, "known_at": "2025-03-02T00:00:00Z"}
+{"period_month": "2025-03-01", "value": 133000, "known_at": "2025-04-02T00:00:00Z"}
+{"period_month": "2025-04-01", "value": 154000, "known_at": "2025-05-02T00:00:00Z"}
+{"period_month": "2025-05-01", "value": 167000, "known_at": "2025-06-02T00:00:00Z"}
+{"period_month": "2025-06-01", "value": 212000, "known_at": "2025-07-02T00:00:00Z"}
+{"period_month": "2025-07-01", "value": 214000, "known_at": "2025-08-02T00:00:00Z"}
+{"period_month": "2025-08-01", "value": 220000, "known_at": "2025-09-02T00:00:00Z"}
+{"period_month": "2025-09-01", "value": 200000, "known_at": "2025-10-02T00:00:00Z"}
+{"period_month": "2025-10-01", "value": 180000, "known_at": "2025-11-02T00:00:00Z"}
+{"period_month": "2025-11-01", "value": 355000, "known_at": "2025-12-02T00:00:00Z"}
+{"period_month": "2025-12-01", "value": 366000, "known_at": "2026-01-02T00:00:00Z"}
+{"period_month": "2026-01-01", "value": 510000, "known_at": "2026-02-02T00:00:00Z"}
+{"period_month": "2026-02-01", "value": 489000, "known_at": "2026-03-02T00:00:00Z"}
+{"period_month": "2026-03-01", "value": 652000, "known_at": "2026-04-02T00:00:00Z"}
+{"period_month": "2026-04-01", "value": 584000, "known_at": "2026-05-02T00:00:00Z"}
+{"period_month": "2026-05-01", "value": 545000, "known_at": "2026-06-02T00:00:00Z"}
