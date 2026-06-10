@@ -82,9 +82,12 @@ object PolicySelector {
       .toList
 
     if (cells.isEmpty || complete.isEmpty) Policy.single(DemandModel.SeasonalNaive.key)
-    else if (origins.size < minOrigins)
-      complete.map(k => score(Policy.single(k), cells)).minBy(s => (s.pooled, s.policy.key)).policy
-    else {
+    else if (origins.size < minOrigins) {
+      // thin evidence gets the same bounded-badness protection as the tournament: a winner whose own
+      // (small) record pools past the unforecastable line must not extrapolate — the level run-rate does
+      val winner = complete.map(k => score(Policy.single(k), cells)).minBy(s => (s.pooled, s.policy.key))
+      if (winner.pooled > UnforecastableWape) Policy.single(Fallback) else winner.policy
+    } else {
       // an origin even the BEST single missed by >150% is an anomaly quarter (a one-off collapse, a data
       // artifact) — it punishes every candidate and drowns the regular-quarter signal, so it is dropped
       // from the selection evidence, provided enough origins remain to select on.

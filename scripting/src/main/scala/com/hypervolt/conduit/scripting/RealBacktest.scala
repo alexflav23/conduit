@@ -36,12 +36,23 @@ object RealBacktest extends IOApp.Simple {
       LocalDate.of(2025, 10, 1),
       LocalDate.of(2026, 1, 1),
       LocalDate.of(2026, 4, 1),
+      LocalDate.of(
+        2026,
+        6,
+        1
+      ),                       // the NOWCAST origin: June is forecast from data through May, not from the quarter start
       LocalDate.of(2026, 7, 1) // the FORWARD origin: 6-month horizon covers Q3'26 and Q4'26
     )
     origins.traverse_(o =>
       // the forward origin carries a 6-month horizon (Q3'26 = months 0-2, Q4'26 = 3-5) — fitting Q4 from an
       // origin past the data's edge would zero-fill phantom months and collapse every model
-      engine.runOrigin(o, horizonMonths = if (o == LocalDate.of(2026, 7, 1)) 6 else 3) *>
+      engine.runOrigin(
+        o,
+        horizonMonths =
+          if (o == LocalDate.of(2026, 7, 1)) 6
+          else if (o == LocalDate.of(2026, 6, 1)) 1
+          else 3
+      ) *>
         engine.scoreOrigin(o, asOf = LocalDate.of(2026, 6, 1)) *>
         IO.println(s"origin $o: fitted + scored")
     ) *> IO.println("real backtest complete")

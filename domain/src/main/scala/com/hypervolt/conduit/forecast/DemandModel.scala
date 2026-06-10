@@ -220,6 +220,25 @@ object DemandModel {
       }
   }
 
+  // Pantry reversal (doc 26 §4a — depletion visible in sell-in alone): a customer who just bought far above
+  // their consumption rate sits on a full shelf and under-orders next quarter (measured Q2'25: EVERY model
+  // over-forecast EVERY top account after the Q1'25 stocking wave). Consumption = trailing-four-quarter mean;
+  // next quarter = 2·consumption − lastQ, clamped to [0, 2·consumption]; beyond the reversal quarter the
+  // account returns to its consumption rate.
+  object PantryReversal extends DemandModel {
+    val key     = "pantry_reversal"
+    val version = 1
+    def predict(h: DemandHistory, horizon: Int): Vector[BigDecimal] = {
+      val quarters = h.qty.reverse.grouped(3).filter(_.size == 3).map(_.sum).toVector.reverse
+      if (quarters.size < 2) RunRate3.predict(h, horizon)
+      else {
+        val consumption = mean(quarters.takeRight(4))
+        val reversal    = (2 * consumption - quarters.last).max(BigDecimal(0)).min(2 * consumption)
+        Vector.tabulate(horizon)(i => r(if (i < 3) reversal / 3 else consumption / 3))
+      }
+    }
+  }
+
   // The registry (doc 26 §4) — code-defined; the loop ranks these mechanically, nothing is hand-picked.
   val registry: List[DemandModel] = List(
     SeasonalNaive,
@@ -233,6 +252,7 @@ object DemandModel {
     Depletion,
     OrderBook,
     RetailFunnel,
-    RetailFunnelMomentum
+    RetailFunnelMomentum,
+    PantryReversal
   )
 }

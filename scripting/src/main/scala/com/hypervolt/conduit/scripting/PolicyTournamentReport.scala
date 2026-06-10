@@ -93,11 +93,16 @@ object PolicyTournamentReport extends IOApp.Simple {
         }
     }
 
-  private def nowcastOne(company: UUID, closedMonths: Int): IO[Option[(BigDecimal, BigDecimal)]] =
+  // closed months come from the quarter origin's scoring; the REMAINING month is forecast from the freshest
+  // month boundary (June from data through May) — a nowcast that ignores the quarter's own closed months is
+  // two months stale by construction
+  private val freshOrigin = LocalDate.of(2026, 6, 1)
+
+  private def nowcastOne(company: UUID): IO[Option[(BigDecimal, BigDecimal)]] =
     (
-      PolicyRepo.evidence(company, nowcastOrigin).transact(xa),
+      PolicyRepo.evidence(company, freshOrigin).transact(xa),
       scoredRows(company, nowcastOrigin).transact(xa),
-      predRows(company, nowcastOrigin, closedMonths, 3).transact(xa)
+      predRows(company, freshOrigin, 0, 1).transact(xa)
     ).mapN { (evidence, scored, future) =>
       scored.values.headOption.map {
         case (_, actualClosed) =>
@@ -137,7 +142,7 @@ object PolicyTournamentReport extends IOApp.Simple {
           )
       )
       nowAccounts <- mrpAccountsAt(nowcastOrigin).transact(xa)
-      nowcasts    <- nowAccounts.traverse(nowcastOne(_, closedMonths = 2)).map(_.flatten)
+      nowcasts    <- nowAccounts.traverse(nowcastOne).map(_.flatten)
       fwd <- List(("Q3'26", 0, 3), ("Q4'26", 3, 6)).traverse {
         case (label, from, until) =>
           mrpAccountsAt(forwardOrigin)

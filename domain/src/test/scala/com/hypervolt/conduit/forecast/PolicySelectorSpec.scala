@@ -31,6 +31,11 @@ object PolicySelectorSpec extends SimpleIOSuite {
       expect(selected.key == "blend(ewma+holt_fast)")
   }
 
+  pureTest("thin evidence with an unforecastable winner still demotes to the run-rate") {
+    val evidence = List(o1, o2).flatMap(o => List(ev(o, "ewma", 250, 100), ev(o, "holt_fast", 300, 100)))
+    expect(PolicySelector.select(evidence) == Policy.single("runrate3"))
+  }
+
   pureTest("fewer than three origins of evidence degrades to the pooled-argmin single — never a blend") {
     val evidence = List(o1, o2).flatMap(o =>
       List(ev(o, "ewma", 120, 100), ev(o, "holt_fast", 80, 100), ev(o, "seasonal_naive", 101, 100))
