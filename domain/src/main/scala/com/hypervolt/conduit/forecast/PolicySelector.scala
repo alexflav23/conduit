@@ -71,6 +71,7 @@ object PolicySelector {
   private val GuardWape          = BigDecimal("1.5") // a worst origin past 150% error = unstable series
   private val UnforecastableWape = BigDecimal("0.5") // even the winner pools >50% = nothing here extrapolates
   private val DefaultMinOrigin   = 3
+  private val IncumbentEdge      = BigDecimal("0.8") // a challenger must beat the run-rate by >20% to take a series
 
   private final case class Scored(policy: Policy, pooled: BigDecimal, worstOrigin: BigDecimal)
 
@@ -88,8 +89,12 @@ object PolicySelector {
     else if (origins.size < minOrigins) {
       // thin evidence gets the same bounded-badness protection as the tournament: a winner whose own
       // (small) record pools past the unforecastable line must not extrapolate — the level run-rate does
-      val winner = complete.map(k => score(Policy.single(k), cells)).minBy(s => (s.pooled, s.policy.key))
-      if (winner.pooled > UnforecastableWape) Policy.single(Fallback) else winner.policy
+      val singles = complete.map(k => score(Policy.single(k), cells))
+      val winner  = singles.minBy(s => (s.pooled, s.policy.key))
+      val rr      = singles.find(_.policy.key == Fallback)
+      if (winner.pooled > UnforecastableWape || rr.exists(winner.pooled > _.pooled * IncumbentEdge))
+        Policy.single(Fallback)
+      else winner.policy
     } else {
       // an origin even the BEST single missed by >150% is an anomaly quarter (a one-off collapse, a data
       // artifact) — it punishes every candidate and drowns the regular-quarter signal, so it is dropped
@@ -149,8 +154,17 @@ object PolicySelector {
       .minBy(s => (s.worstOrigin, s.policy.weights.size, s.policy.key))
     // unstable winner OR an unforecastable series: a trend model fit on noise extrapolates the noise —
     // the bounded-badness answer is the level run-rate, which re-bases as fast as the channel does.
-    if (winner.worstOrigin > GuardWape || winner.pooled > UnforecastableWape) Policy.single(Fallback)
-    else winner.policy
+    // And the run-rate is the INCUMBENT (measured: at the account grain it beat the unconstrained
+    // tournament on both means) — a challenger takes a series only by beating it >20% on censored evidence.
+    val incumbent = singles.find(_.policy.key == Fallback)
+    val champion =
+      if (winner.worstOrigin > GuardWape || winner.pooled > UnforecastableWape) Policy.single(Fallback)
+      else
+        incumbent match {
+          case Some(inc) if winner.pooled > inc.pooled * IncumbentEdge => Policy.single(Fallback)
+          case _                                                       => winner.policy
+        }
+    champion
   }
 
   private def inverseWapeBlend(top: List[Scored]): Policy = {

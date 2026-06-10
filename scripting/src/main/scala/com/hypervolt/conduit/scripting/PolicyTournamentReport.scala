@@ -150,6 +150,17 @@ object PolicyTournamentReport extends IOApp.Simple {
             .flatMap(_.traverse(forwardOne(_, forwardOrigin, from, until)))
             .map(xs => (label, xs.foldLeft(BigDecimal(0))(_ + _)))
       }
+      baseline <- evalOrigins.traverse(o =>
+        sql"""SELECT COALESCE(SUM(ABS(f - a)), 0), COALESCE(SUM(a), 0), COALESCE(SUM(f), 0)
+              FROM (
+                SELECT ma.company_id, SUM(ma.forecast_qty) f, SUM(ma.actual_qty) a
+                FROM model_accuracy ma JOIN party p ON p.id = ma.company_id
+                WHERE p.display_name LIKE 'MRP: %' AND ma.origin_month = $o AND ma.model_key = 'runrate3'
+                GROUP BY ma.company_id) t"""
+          .query[(BigDecimal, BigDecimal, BigDecimal)]
+          .unique
+          .transact(xa)
+      )
       tam <-
         sql"""SELECT period_month, value FROM exogenous_series
                    WHERE series_key = 'uk_bev_registrations' ORDER BY period_month"""
@@ -171,12 +182,18 @@ object PolicyTournamentReport extends IOApp.Simple {
       val mrpTotal = f"${"MRP B2B total-level"}%-34s" + mrpPerOrigin.map {
         case (n, _, acts, tot) => if (n == 0) "       -" else pct((tot - acts).abs, acts)
       }.mkString
+      val baseWape = f"${"  baseline runrate3 per-acct"}%-34s" + baseline.map {
+        case (errs, acts, _) => if (acts <= 0) "       -" else pct(errs, acts)
+      }.mkString
+      val baseTotal = f"${"  baseline runrate3 total"}%-34s" + baseline.map {
+        case (_, acts, tot) => if (acts <= 0) "       -" else pct((tot - acts).abs, acts)
+      }.mkString
       val counts = f"${"MRP B2B accounts evaluated"}%-34s" + mrpPerOrigin.map {
         case (n, _, _, _) => f"$n%8d"
       }.mkString
       val nowActual   = nowcasts.map(_._1).foldLeft(BigDecimal(0))(_ + _)
       val nowForecast = nowcasts.map(_._2).foldLeft(BigDecimal(0))(_ + _)
-      println(((header +: chLines) ++ List(mrpWape, mrpTotal, counts)).mkString("\n"))
+      println(((header +: chLines) ++ List(mrpWape, mrpTotal, baseWape, baseTotal, counts)).mkString("\n"))
       println(
         s"\nNOWCAST Q2'26 (MRP B2B): Apr+May actual ${units(nowActual)} + June model ${units(nowForecast)}" +
           s" = projected quarter ${units(nowActual + nowForecast)} across ${nowcasts.size} accounts"
