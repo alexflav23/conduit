@@ -129,6 +129,14 @@ object ChannelMatrix extends IOApp.Simple {
             .transact(xa)
             .map(u => (sectorOf(name), u, priceOf(id)))
       }
+      d2c <-
+        sql"""SELECT period_month, value FROM exogenous_series
+                   WHERE series_key = 'stripe_d2c_gross_gbp' ORDER BY period_month"""
+          .query[(LocalDate, BigDecimal)]
+          .to[List]
+          .transact(xa)
+      refund <- sql"""SELECT COALESCE(AVG(value), 3.6) FROM exogenous_series
+                   WHERE series_key = 'stripe_d2c_refund_rate'""".query[BigDecimal].unique.transact(xa)
     } yield {
       val sectors                  = List("Wholesale/Distribution", "Energy", "Installers", "Online Retail")
       def k(x: BigDecimal): String = (x / 1000).setScale(1, RoundingMode.HALF_UP).toString + "k"
@@ -158,6 +166,22 @@ object ChannelMatrix extends IOApp.Simple {
       // year in H2 (Sep plate change 15.1%, Dec 12.5%) — the statistical floor carries no calendar, so the
       // seasonal expectation scales the Q2 projection by the market's quarter shares. Floor = models;
       // ceiling = market shape; the truth trades between them.
+      // D2C (Stripe checkout — invisible to MRPeasy): gross net of the measured refund rate; forward =
+      // the May level grown at the trailing-12-month compound monthly growth rate (its own measured curve)
+      val net      = (BigDecimal(100) - refund) / 100
+      val trailing = d2c.takeRight(12).map(_._2)
+      val mayLevel = trailing.lastOption.getOrElse(BigDecimal(0))
+      val cmgr =
+        if (trailing.size >= 2 && trailing.head > 0)
+          math.pow((trailing.last / trailing.head).toDouble, 1.0 / (trailing.size - 1))
+        else 1.0
+      val q2Gross = d2c.filter(r => r._1.getYear == 2026 && r._1.getMonthValue >= 4).map(_._2).sum + mayLevel
+      val q3Gross = (2 to 4).map(i => mayLevel * BigDecimal(math.pow(cmgr, i.toDouble))).foldLeft(BigDecimal(0))(_ + _)
+      println(
+        f"${"D2C (Stripe, net of refunds)"}%-24s Q2'26proj £${(q2Gross * net / 1000)
+          .setScale(1, RoundingMode.HALF_UP)}k | Q3'26 £${(q3Gross * net / 1000).setScale(1, RoundingMode.HALF_UP)}k" +
+          f" (CMGR +${(BigDecimal(cmgr) * 100 - 100).setScale(1, RoundingMode.HALF_UP)}%%/mo measured)"
+      )
       val q2Tot      = q2a.map(_._2).sum + q2f.map(_._2).sum
       val q3Seasonal = q2Tot * BigDecimal("25.93") / BigDecimal("21.84")
       val q4Seasonal = q2Tot * BigDecimal("30.34") / BigDecimal("21.84")
