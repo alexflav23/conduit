@@ -28,7 +28,7 @@ final case class Policy(weights: Map[String, BigDecimal]) {
 
   def predict(h: DemandHistory, horizon: Int): Vector[BigDecimal] = {
     val members = weights.toList.flatMap {
-      case (k, w) => DemandModel.registry.find(_.key == k).map(m => (m.predict(h, horizon), w))
+      case (k, w) => DemandModel.registry.find(_.key == k).map(m => (m.predictClamped(h, horizon), w))
     }
     if (members.isEmpty) DemandModel.SeasonalNaive.predict(h, horizon)
     else
@@ -48,10 +48,13 @@ object Policy {
 object PolicyRepo {
 
   // The censored evidence for a company: every scored (origin, period, model) cell strictly before the
-  // selection origin — the same no-leakage rule the predictions themselves obey.
+  // selection origin — the same no-leakage rule the predictions themselves obey. Aggregated to the ACCOUNT
+  // grain (summed over the account's SKUs): selection is per account, and an unaggregated row set would let
+  // the selector see one arbitrary variant's numbers per cell.
   def evidence(company: UUID, before: LocalDate): ConnectionIO[List[PolicyEvidence]] =
-    sql"""SELECT origin_month, period_month, model_key, forecast_qty, actual_qty
-          FROM model_accuracy WHERE company_id = $company AND origin_month < $before"""
+    sql"""SELECT origin_month, period_month, model_key, SUM(forecast_qty), SUM(actual_qty)
+          FROM model_accuracy WHERE company_id = $company AND origin_month < $before
+          GROUP BY origin_month, period_month, model_key"""
       .query[PolicyEvidence]
       .to[List]
 }

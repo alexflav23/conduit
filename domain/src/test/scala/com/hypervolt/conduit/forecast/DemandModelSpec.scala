@@ -74,4 +74,14 @@ object DemandModelSpec extends SimpleIOSuite with Checkers {
       expect(p(6) > p(0)) and // the summer seasonal lift survives the fit
       expect(short.length == 3)
   }
+
+  test("the universal clamp: no model forecasts a month beyond three times the series' largest month") {
+    forall(series) { qs =>
+      val h   = hist(qs)
+      val cap = qs.filter(_ > 0).maxOption.map(_ * 3)
+      DemandModel.registry
+        .map(m => expect(m.predictClamped(h, 6).forall(p => cap.forall(p <= _) || cap.isEmpty)))
+        .reduce(_ and _)
+    }
+  }
 }

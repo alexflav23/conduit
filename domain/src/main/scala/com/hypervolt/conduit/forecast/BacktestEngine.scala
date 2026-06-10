@@ -244,7 +244,7 @@ final class BacktestEngine[F[_]: Async](xa: Transactor[F]) {
     val program = DemandSeriesRepo.history(company, variant, origin).flatMap { h =>
       runs.traverse_ {
         case (model, runId) =>
-          model.predict(h, horizon).zipWithIndex.toList.traverse_ {
+          model.predictClamped(h, horizon).zipWithIndex.toList.traverse_ {
             case (qty, i) =>
               ForecastRunRepo.insertPrediction(runId, company, variant, origin.plusMonths(i.toLong), qty)
           }

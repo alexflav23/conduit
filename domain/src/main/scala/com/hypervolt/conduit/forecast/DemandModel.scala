@@ -28,6 +28,14 @@ trait DemandModel {
   def key: String
   def version: Int
   def predict(h: DemandHistory, horizon: Int): Vector[BigDecimal]
+
+  // The universal sanity clamp: no family may forecast a month beyond 3× the largest month the series has
+  // ever produced (measured: Holt-Winters multiplicative seasonality forecast 127× an account's actual on a
+  // spike-then-quiet history). Bounded badness is part of the model contract, not a caller's afterthought.
+  final def predictClamped(h: DemandHistory, horizon: Int): Vector[BigDecimal] = {
+    val cap = h.qty.maxOption.filter(_ > 0).map(_ * 3)
+    predict(h, horizon).map(p => cap.fold(p)(p.min))
+  }
 }
 
 object DemandModel {
