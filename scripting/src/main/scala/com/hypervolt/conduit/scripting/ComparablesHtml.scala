@@ -136,6 +136,14 @@ object ComparablesHtml extends IOApp.Simple {
             .transact(xa)
             .map(u => (sectorOf(name), u, priceOf(id)))
       }
+      // the uncovered tail: units dispatched this quarter to accounts OUTSIDE the covered MRP party set
+      // (new accounts, unattributed serials) — invisible in the covered rows, so stated, never hidden
+      allQ2 <-
+        sql"""SELECT COUNT(*)::numeric FROM serial_unit su JOIN dispatch d ON d.id = su.dispatch_id
+              WHERE COALESCE(d.delivered_at, d.date::timestamptz) >= '2026-04-01'"""
+          .query[BigDecimal]
+          .unique
+          .transact(xa)
       d2c <-
         sql"""SELECT period_month, value FROM exogenous_series
                    WHERE series_key = 'stripe_d2c_gross_gbp' ORDER BY period_month"""
@@ -191,6 +199,12 @@ ${rows.mkString("\n")}
       }
       val q2aT = q2actual.map(_._2).sum; val q2jT = junC.map(_._2).sum
       val q2mT = q2actual.map(r => r._2 * r._3).sum + junC.map(r => r._2 * r._3).sum
+      // tail scales the June model by its share of actuals-to-date; priced at the covered median
+      val tailA    = (allQ2 - q2aT).max(BigDecimal(0))
+      val tailJ    = if (q2aT > 0) (q2jT * tailA / q2aT).setScale(0, RoundingMode.HALF_UP) else BigDecimal(0)
+      val tailM    = (tailA + tailJ) * median
+      val allInU   = q2aT + q2jT + tailA + tailJ
+      val allInGbp = q2mT + tailM
 
       val q3Rows = sectors.map { sec =>
         val xs = q3C.filter(_._1 == sec)
@@ -233,6 +247,14 @@ ${q2Rows.mkString("\n")}
 <tr class='tot'><td>TOTAL B2B</td><td class='num'>${u(q2aT)}</td><td class='num'>${u(q2jT)}</td><td class='num'>${u(
         q2aT + q2jT
       )}</td><td class='num'>${gbp(q2mT)}</td></tr>
+<tr><td>Uncovered tail (accounts outside the 651 covered — new/unattributed)</td><td class='num'>${u(
+        tailA
+      )}</td><td class='num'>${u(tailJ)}</td><td class='num'>${u(tailA + tailJ)}</td><td class='num'>${gbp(
+        tailM
+      )}</td></tr>
+<tr class='tot'><td>ALL-IN B2B</td><td class='num'>${u(q2aT + tailA)}</td><td class='num'>${u(
+        q2jT + tailJ
+      )}</td><td class='num'>${u(allInU)}</td><td class='num'>${gbp(allInGbp)}</td></tr>
 <tr><td>D2C (Stripe, net of ${refund.setScale(
         1,
         RoundingMode.HALF_UP
