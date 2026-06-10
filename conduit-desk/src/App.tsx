@@ -12,6 +12,7 @@ import { Documents } from './Documents';
 import { Lifecycle } from './Lifecycle';
 import { Auditability } from './Auditability';
 import { Tax } from './Tax';
+import { Forecasting } from './Forecasting';
 
 const styles = stylex.create({
   page: { minHeight: '100vh', backgroundColor: colors.bg, color: colors.text, fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif', padding: '2rem' },
@@ -27,7 +28,7 @@ const styles = stylex.create({
 
 export function App() {
   const [token, setToken] = useState('dev:agent-e2e');
-  const [view, setView] = useState<'order' | 'dealdesk' | 'h6q' | 'flow' | 'supply' | 'shelf' | 'finance' | 'docs' | 'lifecycle' | 'audit' | 'tax'>('order');
+  const [view, setView] = useState<'order' | 'dealdesk' | 'h6q' | 'flow' | 'supply' | 'shelf' | 'finance' | 'docs' | 'lifecycle' | 'audit' | 'tax' | 'engine'>('order');
 
   return (
     <div {...stylex.props(styles.page)}>
@@ -44,6 +45,7 @@ export function App() {
         <button {...stylex.props(styles.tab, view === 'lifecycle' && styles.tabActive)} data-testid="tab-lifecycle" onClick={() => setView('lifecycle')}>Lifecycle</button>
         <button {...stylex.props(styles.tab, view === 'audit' && styles.tabActive)} data-testid="tab-audit" onClick={() => setView('audit')}>Audit</button>
         <button {...stylex.props(styles.tab, view === 'tax' && styles.tabActive)} data-testid="tab-tax" onClick={() => setView('tax')}>Tax</button>
+        <button {...stylex.props(styles.tab, view === 'engine' && styles.tabActive)} data-testid="tab-engine" onClick={() => setView('engine')}>Forecast Engine</button>
       </div>
       <div {...stylex.props(styles.tokenRow)}>
         <span {...stylex.props(styles.label)}>Auth token</span>
@@ -59,6 +61,7 @@ export function App() {
         : view === 'docs' ? <Documents token={token} />
         : view === 'lifecycle' ? <Lifecycle token={token} />
         : view === 'tax' ? <Tax token={token} />
+        : view === 'engine' ? <Forecasting token={token} />
         : view === 'audit' ? <Auditability token={token} />
         : <Auditability token={token} />}
     </div>
