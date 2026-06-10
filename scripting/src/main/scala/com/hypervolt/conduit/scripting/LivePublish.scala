@@ -20,7 +20,10 @@ object LivePublish extends IOApp.Simple {
   )
 
   override def run: IO[Unit] =
-    new LiveForecastService[IO](xa)
-      .publish(origin = LocalDate.of(2026, 6, 1), horizonMonths = 4)
-      .flatMap(n => IO.println(s"published $n forecast_entry rows"))
+    IO(LocalDate.now().withDayOfMonth(1)).flatMap(origin =>
+      new LiveForecastService[IO](xa)
+        // rest of the open quarter + the next full quarter
+        .publish(origin, horizonMonths = 6 - ((origin.getMonthValue - 1) % 3))
+        .flatMap(n => IO.println(s"published $n forecast_entry rows (origin $origin)"))
+    )
 }
