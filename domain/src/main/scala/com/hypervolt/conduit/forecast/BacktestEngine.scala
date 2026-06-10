@@ -42,8 +42,10 @@ object DemandSeriesRepo {
     monthlySeries(company, variant, origin.atStartOfDay())
       .flatMap(raw =>
         depletionContext(company, variant, origin).flatMap(ctx =>
-          dealContext(company, origin).map {
-            case (book, funnel, momentum) => zeroFill(raw, origin, ctx, book, funnel, momentum)
+          dealContext(company, origin).flatMap {
+            case (book, funnel, momentum) =>
+              mrpBookContext(company, variant, origin)
+                .map(zeroFill(raw, origin, ctx, book, funnel, momentum, _))
           }
         )
       )
@@ -104,17 +106,62 @@ object DemandSeriesRepo {
       .unique
       .map { case (shelf, vel) => (shelf.filter(_ > 0), vel.filter(_ > 0)) }
 
+  // The MRPeasy open book (the user's lag-structure point, doc 26): orders measurably sit days-to-weeks between
+  // creation and dispatch, differently per account. The open book = un-dispatched qty on orders created in the
+  // 60 days before the origin (older open lines are stale records, not demand); the ratio = the trailing-4-month
+  // measured share of dispatched qty that was already booked at its dispatch month's start. Both censored.
+  private def mrpBookContext(
+      company: UUID,
+      variant: UUID,
+      origin: LocalDate
+  ): ConnectionIO[(Option[BigDecimal], Option[BigDecimal])] =
+    sql"""SELECT
+            (SELECT SUM(GREATEST(ol.qty - COALESCE(shipped.q, 0), 0))::numeric
+             FROM order_line ol JOIN "order" o ON o.id = ol.order_id
+             LEFT JOIN LATERAL (
+               SELECT SUM(dl.qty) AS q FROM dispatch_line dl JOIN dispatch d ON d.id = dl.dispatch_id
+               WHERE dl.order_line_id = ol.id AND COALESCE(d.delivered_at, d.date::timestamptz) < $origin
+             ) shipped ON true
+             WHERE o.sold_to_party_id = $company AND ol.product_variant_id = $variant
+               AND o.created_at < $origin AND o.created_at >= ${origin.minusDays(60)}
+               AND o.status NOT IN ('cancelled', 'pending_ceo', 'draft')),
+            (SELECT SUM(CASE WHEN o.created_at < date_trunc('month', COALESCE(d.delivered_at, d.date::timestamptz))
+                             THEN dl.qty ELSE 0 END)::numeric / NULLIF(SUM(dl.qty), 0)
+             FROM dispatch_line dl
+             JOIN dispatch d ON d.id = dl.dispatch_id
+             JOIN order_line ol ON ol.id = dl.order_line_id
+             JOIN "order" o ON o.id = ol.order_id
+             WHERE o.sold_to_party_id = $company AND ol.product_variant_id = $variant
+               AND COALESCE(d.delivered_at, d.date::timestamptz) >= ${origin.minusMonths(4)}
+               AND COALESCE(d.delivered_at, d.date::timestamptz) < $origin)"""
+      .query[(Option[BigDecimal], Option[BigDecimal])]
+      .unique
+      .map { case (open, ratio) => (open.filter(_ > 0), ratio) }
+
   private def zeroFill(
       raw: List[(LocalDate, BigDecimal)],
       origin: LocalDate,
       ctx: (Option[BigDecimal], Option[BigDecimal]),
       book: (Option[BigDecimal], Option[BigDecimal], Option[BigDecimal]),
       funnel: Option[BigDecimal],
-      momentum: Option[BigDecimal]
+      momentum: Option[BigDecimal],
+      mrp: (Option[BigDecimal], Option[BigDecimal])
   ): DemandHistory =
     raw.headOption match {
       case None =>
-        DemandHistory(Vector.empty, Vector.empty, ctx._1, ctx._2, book._1, book._2, book._3, funnel, momentum)
+        DemandHistory(
+          Vector.empty,
+          Vector.empty,
+          ctx._1,
+          ctx._2,
+          book._1,
+          book._2,
+          book._3,
+          funnel,
+          momentum,
+          mrp._1,
+          mrp._2
+        )
       case Some((first, _)) =>
         val byMonth = raw.toMap
         val months = Iterator
@@ -130,7 +177,9 @@ object DemandSeriesRepo {
           book._2,
           book._3,
           funnel,
-          momentum
+          momentum,
+          mrp._1,
+          mrp._2
         )
     }
 

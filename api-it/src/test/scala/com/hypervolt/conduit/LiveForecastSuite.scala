@@ -164,6 +164,39 @@ object LiveForecastSuite extends IOSuite {
       expect(state._2.exists(_ <= 30)) and expect(events >= 1L)        // the reorder signal fired
   }
 
+  test("a measured near-JIT account earns its own reorder point — 25 days of runway is healthy, not a signal") { xa =>
+    val runway = new RunwayService[IO](xa)
+    for {
+      (vid, _) <- seedVariant(xa)
+      buyer    <- party(xa, "JIT Installer Ltd")
+      // three orders each dispatched two days after creation: the measured median order→dispatch lag is 2d,
+      // so the reorder point is max(2 + 7, floor) = 14 — not the global 30
+      _ <- List(LocalDate.of(2026, 1, 1), LocalDate.of(2026, 2, 1), LocalDate.of(2026, 3, 1)).traverse_ { m =>
+        orderAt(xa, buyer, vid, m, 50).flatMap(oid =>
+          sql"""INSERT INTO dispatch (dispatch_no, order_id, date)
+                VALUES (${"D-" + UUID.randomUUID()}, $oid, ${m.plusDays(16).atStartOfDay()})""".update.run.void
+            .transact(xa)
+        )
+      }
+      // shelf 12, velocity ≈ 14.7/mo → runway ≈ 25d: under the old global 30 this fired; for THIS account it's healthy
+      _  <- seedSerials(xa, buyer, vid, shipped = 100, activated = 88)
+      r1 <- runway.refresh(buyer, vid, Instant.now())
+      point <-
+        sql"""SELECT reorder_point_days FROM account_forecast_state
+              WHERE company_id = $buyer AND product_variant_id = $vid"""
+          .query[BigDecimal]
+          .unique
+          .transact(xa)
+      events <-
+        sql"SELECT count(*) FROM outbox_event WHERE event_type='forecast.account.runway' AND aggregate_id=$buyer"
+          .query[Long]
+          .unique
+          .transact(xa)
+    } yield expect(r1.exists(d => d > 14 && d <= 30)) and // the zone where global-vs-measured behaviour differs
+      expect(point.toInt == 14) and                       // the measured, clamped per-account point
+      expect(events == 0L)                                // near-JIT: no false alarm
+  }
+
   test("revenue is a contract-aware projection: units × the customer's tier, net of the expected rebate") { xa =>
     val live    = new LiveForecastService[IO](xa)
     val revenue = new RevenueProjectionService[IO](xa)

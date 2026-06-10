@@ -16,7 +16,9 @@ final case class DemandHistory(
     bookConversion: Option[BigDecimal] = None,  // share of an open book won within a quarter (pre-origin cohorts)
     newBusinessQ: Option[BigDecimal] = None,    // created-and-won-within-quarter run-rate (pre-origin quarters)
     funnelExpectedQ: Option[BigDecimal] = None, // the retail-funnel composed quarter expectation (doc 26 §4a)
-    funnelMomentumQ: Option[BigDecimal] = None  // the same funnel with created volume at last month's rate × 3
+    funnelMomentumQ: Option[BigDecimal] = None, // the same funnel with created volume at last month's rate × 3
+    mrpOpenBook: Option[BigDecimal] = None,     // MRPeasy: undispached charger qty on open orders at origin (≤60d old)
+    mrpBookRatio: Option[BigDecimal] = None     // measured share of a month's dispatches already booked at month start
 ) {
   def nonEmpty: Boolean = qty.exists(_ > 0)
 }
@@ -247,6 +249,24 @@ object DemandModel {
     }
   }
 
+  // MRP order book (the user's lag-structure point): the open un-dispatched MRPeasy book at origin IS next
+  // month's dispatch floor — orders sit measured days-to-weeks between creation and dispatch, differently per
+  // account. Month 1 = the open book + organic flow scaled by (1 − measured book-coverage ratio) so booked
+  // demand isn't double-counted; months 2+ fall back to the trailing-3 run rate. No book context → RunRate3.
+  object MrpOrderBook extends DemandModel {
+    val key     = "mrp_order_book"
+    val version = 1
+    def predict(h: DemandHistory, horizon: Int): Vector[BigDecimal] =
+      h.mrpOpenBook match {
+        case Some(book) =>
+          val trailing = h.qty.takeRight(3)
+          val runRate  = if (trailing.isEmpty) BigDecimal(0) else trailing.sum / trailing.length
+          val ratio    = h.mrpBookRatio.getOrElse(BigDecimal("0.1")).max(BigDecimal(0)).min(BigDecimal(1))
+          Vector.tabulate(horizon)(i => r(if (i == 0) book + runRate * (1 - ratio) else runRate))
+        case None => RunRate3.predict(h, horizon)
+      }
+  }
+
   // The registry (doc 26 §4) — code-defined; the loop ranks these mechanically, nothing is hand-picked.
   val registry: List[DemandModel] = List(
     SeasonalNaive,
@@ -261,6 +281,7 @@ object DemandModel {
     OrderBook,
     RetailFunnel,
     RetailFunnelMomentum,
-    PantryReversal
+    PantryReversal,
+    MrpOrderBook
   )
 }

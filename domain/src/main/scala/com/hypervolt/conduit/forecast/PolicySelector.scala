@@ -173,7 +173,8 @@ object PolicySelector {
     DemandModel.RetailFunnel.key,
     DemandModel.RetailFunnelMomentum.key,
     DemandModel.Depletion.key,
-    DemandModel.PantryReversal.key
+    DemandModel.PantryReversal.key,
+    DemandModel.MrpOrderBook.key
   )
 
   private def edgeFor(winner: Scored): BigDecimal =

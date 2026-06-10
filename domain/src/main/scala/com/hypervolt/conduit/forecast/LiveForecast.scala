@@ -82,9 +82,15 @@ final class LiveForecastService[F[_]: Async](xa: Transactor[F]) {
 // The soft-real-time runway projection (doc 26 §6, streaming layer): recomputed from the serial/activation log
 // (rebuildable, never authoritative). Velocity = trailing-6-month activations; runway = shelf ÷ velocity. When the
 // runway crosses the account's reorder point, `forecast.account.runway` fires — the sales signal with a date on it.
+// The reorder point is MEASURED per account (the user's lag-structure point: installers replenish near-JIT in
+// 1.6–5.7 days, retail runs 4× slower): median order→dispatch lag + safety, with the global 30 only as the
+// no-evidence fallback.
 final class RunwayService[F[_]: Async](xa: Transactor[F]) {
 
   private val defaultReorderPointDays = BigDecimal(30)
+  private val safetyDays              = BigDecimal(7)
+  private val reorderFloorDays        = BigDecimal(14)
+  private val reorderCapDays          = BigDecimal(60)
 
   def refresh(company: UUID, variant: UUID, asOf: Instant): F[Option[BigDecimal]] = {
     val origin = LocalDate.ofInstant(asOf, java.time.ZoneOffset.UTC).plusDays(1)
@@ -92,14 +98,30 @@ final class RunwayService[F[_]: Async](xa: Transactor[F]) {
       case (shelf, velocity) =>
         val runway =
           velocity.filter(_ > 0).map(v => (shelf / v * BigDecimal("30.44")).setScale(1, RoundingMode.HALF_UP))
-        upsertState(company, variant, shelf, velocity.getOrElse(BigDecimal(0)), runway, asOf) *>
-          (runway match {
-            case Some(d) if d <= defaultReorderPointDays => emitRunway(company, variant, shelf, d).as(runway)
-            case _                                       => runway.pure[ConnectionIO]
-          })
+        reorderPoint(company, origin).flatMap(point =>
+          upsertState(company, variant, shelf, velocity.getOrElse(BigDecimal(0)), runway, point, asOf) *>
+            (runway match {
+              case Some(d) if d <= point => emitRunway(company, variant, shelf, d).as(runway)
+              case _                     => runway.pure[ConnectionIO]
+            })
+        )
     }
     program.transact(xa)
   }
+
+  // The account's measured order→dispatch lag (median over the trailing year, ≥3 dispatched orders of evidence)
+  // + safety, clamped — a near-JIT installer reorders at ~14 days of runway, a slow lane earns a longer point.
+  private def reorderPoint(company: UUID, origin: LocalDate): ConnectionIO[BigDecimal] =
+    sql"""SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY lag_days)
+          FROM (SELECT GREATEST(EXTRACT(EPOCH FROM (MIN(d.date) - o.created_at)) / 86400.0, 0) AS lag_days
+                FROM dispatch d JOIN "order" o ON o.id = d.order_id
+                WHERE o.sold_to_party_id = $company
+                  AND d.date >= ${origin.minusMonths(12)} AND d.date < $origin
+                GROUP BY o.id, o.created_at) t
+          HAVING COUNT(*) >= 3"""
+      .query[BigDecimal]
+      .option
+      .map(_.fold(defaultReorderPointDays)(lag => (lag + safetyDays).max(reorderFloorDays).min(reorderCapDays)))
 
   private def shelfAndVelocity(
       company: UUID,
@@ -122,14 +144,16 @@ final class RunwayService[F[_]: Async](xa: Transactor[F]) {
       shelf: BigDecimal,
       velocity: BigDecimal,
       runway: Option[BigDecimal],
+      reorderPointDays: BigDecimal,
       asOf: Instant
   ): ConnectionIO[Int] =
     sql"""INSERT INTO account_forecast_state
             (company_id, product_variant_id, shelf_stock, velocity_ewma, runway_days, reorder_point_days, last_event_at)
-          VALUES ($company, $variant, $shelf, $velocity, $runway, $defaultReorderPointDays, $asOf)
+          VALUES ($company, $variant, $shelf, $velocity, $runway, $reorderPointDays, $asOf)
           ON CONFLICT (company_id, product_variant_id) DO UPDATE SET
             shelf_stock = EXCLUDED.shelf_stock, velocity_ewma = EXCLUDED.velocity_ewma,
-            runway_days = EXCLUDED.runway_days, last_event_at = EXCLUDED.last_event_at""".update.run
+            runway_days = EXCLUDED.runway_days, reorder_point_days = EXCLUDED.reorder_point_days,
+            last_event_at = EXCLUDED.last_event_at""".update.run
 
   private def emitRunway(company: UUID, variant: UUID, shelf: BigDecimal, runway: BigDecimal): ConnectionIO[Int] =
     OutboxRepo.append(
