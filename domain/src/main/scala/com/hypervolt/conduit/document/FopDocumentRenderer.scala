@@ -59,7 +59,24 @@ object FopDocumentRenderer {
     val fop = factory.newFop(MimeConstants.MIME_PDF, ua, out)
     val tf  = TransformerFactory.newInstance().newTransformer()
     tf.transform(new StreamSource(new StringReader(fo)), new SAXResult(fop.getDefaultHandler))
-    (out.toByteArray, fop.getResults.getPageCount)
+    (normalizeFileId(out.toByteArray), fop.getResults.getPageCount)
+  }
+
+  // FOP derives the PDF trailer /ID from the wall clock — the ONLY nondeterministic bytes in the document, and
+  // they broke the content_sha256 re-performability control on a second-boundary (flaky spec, three sightings).
+  // The hex strings are masked in place (same length, so every xref offset stays valid; the PDF remains
+  // spec-conformant — /ID is advisory).
+  private def normalizeFileId(bytes: Array[Byte]): Array[Byte] = {
+    val pdf = new String(bytes, java.nio.charset.StandardCharsets.ISO_8859_1)
+    val re  = "(/ID\\s*\\[\\s*<)([0-9A-Fa-f]+)(>\\s*<)([0-9A-Fa-f]+)(>\\s*\\])".r
+    val normalized = re.replaceAllIn(
+      pdf,
+      m =>
+        scala.util.matching.Regex.quoteReplacement(
+          m.group(1) + "0" * m.group(2).length + m.group(3) + "0" * m.group(4).length + m.group(5)
+        )
+    )
+    normalized.getBytes(java.nio.charset.StandardCharsets.ISO_8859_1)
   }
 
   private def esc(x: String): String =
