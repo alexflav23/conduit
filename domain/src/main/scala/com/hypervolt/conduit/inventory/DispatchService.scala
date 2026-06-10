@@ -70,6 +70,7 @@ final class DispatchService[F[_]: Async](xa: Transactor[F]) {
             _ <- trancheId.fold(Sync0)(t =>
               sql"UPDATE delivery_tranche SET status = 'invoiced' WHERE id = $t".update.run.void
             )
+            _ <- trancheId.fold(Sync0)(t => applyTrancheFreight(dispatchId, t, validated.map(_.qty).sum))
             _ <- OutboxRepo.append(
               event(
                 orderId,
@@ -176,6 +177,35 @@ final class DispatchService[F[_]: Async](xa: Transactor[F]) {
                 SELECT 'dispatch', product_variant_id, $loc, -$qty, 'dispatch', $line FROM order_line WHERE id = $line""".update.run.void
     }
   }
+
+  // The outbound mirror of the inbound rule (M9c): the shipping fee is DEFINED PER TRANCHE; each dispatch
+  // takes its proportional share, and the dispatch that completes the tranche takes the exact remainder —
+  // conserving by construction (Σ dispatch shipping_cost == tranche freight, doc 14). The tranche line also
+  // snapshots its roll-forward balance (on-hand after this fulfilment), the immutable as-of record.
+  private def applyTrancheFreight(dispatchId: UUID, trancheId: UUID, thisQty: Int): ConnectionIO[Unit] =
+    sql"""SELECT t.qty, t.qty_dispatched, t.freight_amount,
+                 (SELECT COALESCE(SUM(d.shipping_cost), 0) FROM dispatch d
+                  WHERE d.tranche_id = $trancheId AND d.id <> $dispatchId),
+                 ol.product_variant_id
+          FROM delivery_tranche t JOIN order_line ol ON ol.id = t.order_line_id
+          WHERE t.id = $trancheId"""
+      .query[(Int, Int, BigDecimal, BigDecimal, UUID)]
+      .option
+      .flatMap {
+        case Some((qty, dispatched, freight, prior, variant)) if freight > 0 =>
+          val share =
+            if (dispatched >= qty) freight - prior // the completing dispatch takes the exact remainder
+            else (freight * thisQty / qty).setScale(2, scala.math.BigDecimal.RoundingMode.HALF_UP)
+          sql"UPDATE dispatch SET shipping_cost = $share WHERE id = $dispatchId".update.run.void *>
+            snapshotBalance(trancheId, variant)
+        case Some((_, _, _, _, variant)) => snapshotBalance(trancheId, variant)
+        case None                        => Sync0
+      }
+
+  private def snapshotBalance(trancheId: UUID, variant: UUID): ConnectionIO[Unit] =
+    sql"""UPDATE delivery_tranche SET balance_after =
+            (SELECT COALESCE(SUM(qty_on_hand), 0) FROM stock_item WHERE product_variant_id = $variant)
+          WHERE id = $trancheId""".update.run.void
 
   private def event(orderId: UUID, eventType: String, payload: Json): OutboxEvent =
     OutboxEvent(
