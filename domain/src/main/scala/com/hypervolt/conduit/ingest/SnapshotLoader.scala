@@ -60,9 +60,10 @@ object SnapshotLoader {
 
   // dataset family → (dataset name, one parsed NDJSON row) → rows written (0 on conflict = idempotent re-load).
   private[ingest] val handlers: Map[String, (String, Json) => ConnectionIO[Int]] = Map(
-    "exogenous" -> exogenous,
-    "hubspot"   -> hubspot,
-    "mrpeasy"   -> mrpeasy
+    "exogenous"    -> exogenous,
+    "hubspot"      -> hubspot,
+    "mrpeasy"      -> mrpeasy,
+    "ghostbusters" -> ghostbusters
   )
 
   // ingest/exogenous/<series_key>.ndjson — {"period_month":"2024-01-01","value":123456,"known_at":"2024-02-05T00:00:00Z"}
@@ -108,6 +109,27 @@ object SnapshotLoader {
                   closed_at = EXCLUDED.closed_at, is_won = EXCLUDED.is_won,
                   is_closed = EXCLUDED.is_closed, amount = EXCLUDED.amount,
                   payment_method = EXCLUDED.payment_method""".update.run
+      }
+    }
+
+  // ingest/ghostbusters/activations.ndjson — the SELL-THROUGH half of the serial ledger (prod Athena
+  // charger_activation, first activation per V3 serial). The ship guard tolerates a 7-day clock skew but
+  // refuses activations materially before dispatch (refurb/RMA serials re-entering). Loads after mrpeasy
+  // (lexical order) so the serials exist.
+  private def ghostbusters(dataset: String, row: Json): ConnectionIO[Int] =
+    if (dataset != "activations") 0.pure[ConnectionIO]
+    else {
+      val c = row.hcursor
+      (
+        c.get[String]("serial").toOption,
+        c.get[String]("activated_at").toOption.flatMap(s => scala.util.Try(Instant.parse(s)).toOption)
+      ).tupled match {
+        case None => 0.pure[ConnectionIO]
+        case Some((serial, activatedAt)) =>
+          sql"""UPDATE serial_unit su SET activated_at = $activatedAt
+                FROM dispatch d
+                WHERE su.serial_no = $serial AND d.id = su.dispatch_id AND su.activated_at IS NULL
+                  AND $activatedAt >= COALESCE(d.delivered_at, d.date::timestamptz) - interval '7 days'""".update.run
       }
     }
 
