@@ -54,7 +54,8 @@ object RealBacktest extends IOApp.Simple {
           else 3
       ) *>
         engine.scoreOrigin(o, asOf = LocalDate.of(2026, 6, 1)) *>
-        IO.println(s"origin $o: fitted + scored")
+        engine.materializeSelections(o) *>
+        IO.println(s"origin $o: fitted + scored + materialized")
     ) *> IO.println("real backtest complete")
   }
 }

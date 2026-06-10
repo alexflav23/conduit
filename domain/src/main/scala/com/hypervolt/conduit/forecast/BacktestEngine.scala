@@ -370,6 +370,47 @@ final class BacktestEngine[F[_]: Async](xa: Transactor[F]) {
 
   def champion(company: UUID): F[Option[(String, BigDecimal)]] = ForecastRunRepo.champion(company).transact(xa)
 
+  // Materialize the tournament's choice per account for an origin (doc 26 §5): selection recomputed at read
+  // time took 21 minutes over the population; written at scoring time it is a millisecond query and the H6Q
+  // board serves it live. Latest selection wins — evidence and selection code both evolve.
+  def materializeSelections(origin: LocalDate): F[Int] =
+    sql"SELECT DISTINCT company_id FROM model_accuracy WHERE origin_month = $origin"
+      .query[UUID]
+      .to[List]
+      .transact(xa)
+      .flatMap(
+        _.traverse { company =>
+          val program = PolicyRepo.evidence(company, origin).flatMap { ev =>
+            sql"""SELECT model_key, SUM(forecast_qty), SUM(actual_qty)
+                  FROM model_accuracy WHERE company_id = $company AND origin_month = $origin
+                  GROUP BY model_key"""
+              .query[(String, BigDecimal, BigDecimal)]
+              .to[List]
+              .flatMap { rows =>
+                val byModel = rows.map { case (k, f, a) => k -> ((f, a)) }.toMap
+                byModel.values.headOption match {
+                  case None => 0.pure[ConnectionIO]
+                  case Some((_, actual)) =>
+                    val policy = PolicySelector.select(ev)
+                    val forecast = policy.weights.toList
+                      .map { case (k, w) => byModel.get(k).map(_._1).getOrElse(BigDecimal(0)) * w }
+                      .foldLeft(BigDecimal(0))(_ + _)
+                    val weightsJson = io.circe.Json
+                      .obj(policy.weights.toList.map { case (k, w) => k -> io.circe.Json.fromBigDecimal(w) }: _*)
+                      .noSpaces
+                    sql"""INSERT INTO policy_selection (origin_month, company_id, policy_key, weights, forecast_qty, actual_qty)
+                          VALUES ($origin, $company, ${policy.key}, $weightsJson::jsonb, $forecast, $actual)
+                          ON CONFLICT (origin_month, company_id) DO UPDATE SET
+                            policy_key = EXCLUDED.policy_key, weights = EXCLUDED.weights,
+                            forecast_qty = EXCLUDED.forecast_qty, actual_qty = EXCLUDED.actual_qty,
+                            selected_at = now()""".update.run
+                }
+              }
+          }
+          program.transact(xa)
+        }.map(_.sum)
+      )
+
   private def runsAt(origin: LocalDate): ConnectionIO[List[(UUID, String)]] =
     sql"SELECT id, model_key FROM forecast_run WHERE origin_month = $origin AND purpose = 'backtest'"
       .query[(UUID, String)]
