@@ -157,8 +157,18 @@ object SnapshotLoader {
                 .query[UUID]
                 .unique
           }
-          .flatMap(fam => sql"""INSERT INTO product_variant (family_id, sku, generation, product_class)
-                VALUES ($fam, $sku, 'mrp', 'charger') RETURNING id""".query[UUID].unique)
+          .flatMap { fam =>
+            // serialization-derived (the 0301 serial log): HV-PR-1070/117x/1180/137 are finished-goods trade
+            // SKUs that ship WITH serials; every other HV-PR code is a component (never serialized, bulk
+            // quantities to the manufacturing partner). Prefix alone misclassified 18k charger units as parts.
+            val serializedTradeSku = sku.matches("HV-PR-(1070|117[2-9]|1180|137).*")
+            val cls =
+              if (sku.startsWith("HV-PR") && !serializedTradeSku) "part"
+              else if (sku.startsWith("HYPV-HOLS") || sku.startsWith("GD1")) "accessory"
+              else "charger"
+            sql"""INSERT INTO product_variant (family_id, sku, generation, product_class)
+                VALUES ($fam, $sku, 'mrp', $cls) RETURNING id""".query[UUID].unique
+          }
     }
 
   private def mrpOrder(row: Json): ConnectionIO[Int] = {
@@ -226,8 +236,14 @@ object SnapshotLoader {
                             .getOrElse(Vector.empty)
                             .flatMap(_.asString)
                             .filter(_.startsWith("0301"))
-                          mrpVariant(sku).flatMap(variant =>
-                            serials.toList
+                          mrpVariant(sku).flatMap { variant =>
+                            val qty = num(lc, "qty").getOrElse(BigDecimal(serials.size))
+                            val line =
+                              sql"""INSERT INTO dispatch_line (dispatch_id, order_line_id, qty)
+                                    SELECT $dispatchId, ol.id, $qty FROM order_line ol
+                                    WHERE ol.order_id = $orderId AND ol.product_variant_id = $variant
+                                    LIMIT 1""".update.run
+                            line *> serials.toList
                               .traverse { s =>
                                 sql"""INSERT INTO serial_unit (serial_no, generation, product_variant_id,
                                                              dispatch_id, company_id, status)
@@ -235,7 +251,7 @@ object SnapshotLoader {
                                     ON CONFLICT (serial_no) DO NOTHING""".update.run
                               }
                               .map(_.sum)
-                          )
+                          }
                       }
                     }
                     .map(_.sum + 1)

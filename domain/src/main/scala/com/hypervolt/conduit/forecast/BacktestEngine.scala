@@ -15,24 +15,31 @@ import java.util.UUID
 object DemandSeriesRepo {
 
   // (company, variant) pairs with enough history to be forecastable as-of the origin (doc 26 §1: data-driven).
+  // Two demand sources union here: serialized dispatches (chargers — the ASC-606 basis) and order lines for
+  // non-serialized series. Parts and accessories are NOT charger demand (measured: moulded components shipped
+  // to a manufacturing partner read as a 39k-unit "order" until classified out).
   def forecastableKeys(origin: LocalDate, minOrders: Int): ConnectionIO[List[(UUID, UUID)]] =
     sql"""SELECT o.sold_to_party_id, ol.product_variant_id
           FROM order_line ol JOIN "order" o ON o.id = ol.order_id
+          JOIN product_variant pv ON pv.id = ol.product_variant_id
           WHERE o.created_at < $origin AND o.status NOT IN ('cancelled', 'pending_ceo', 'draft')
+            AND pv.product_class NOT IN ('part', 'accessory')
           GROUP BY o.sold_to_party_id, ol.product_variant_id
-          HAVING COUNT(DISTINCT o.id) >= $minOrders"""
+          HAVING COUNT(DISTINCT o.id) >= $minOrders
+          UNION
+          SELECT su.company_id, su.product_variant_id
+          FROM serial_unit su JOIN dispatch d ON d.id = su.dispatch_id
+          WHERE su.company_id IS NOT NULL AND COALESCE(d.delivered_at, d.date::timestamptz) < $origin
+          GROUP BY su.company_id, su.product_variant_id
+          HAVING COUNT(DISTINCT su.dispatch_id) >= $minOrders"""
       .query[(UUID, UUID)]
       .to[List]
 
   // The account×SKU monthly unit series, censored at the origin, zero-filled and contiguous from first demand.
+  // Serialized series use DISPATCH dates (the business date; MRPeasy order created_at is a record-entry date
+  // — measured: a quarter of real shipments read as a demand collapse on order dates); order lines otherwise.
   def history(company: UUID, variant: UUID, origin: LocalDate): ConnectionIO[DemandHistory] =
-    sql"""SELECT date_trunc('month', o.created_at)::date, SUM(ol.qty)::numeric
-          FROM order_line ol JOIN "order" o ON o.id = ol.order_id
-          WHERE o.sold_to_party_id = $company AND ol.product_variant_id = $variant
-            AND o.created_at < $origin AND o.status NOT IN ('cancelled', 'pending_ceo', 'draft')
-          GROUP BY 1 ORDER BY 1"""
-      .query[(LocalDate, BigDecimal)]
-      .to[List]
+    monthlySeries(company, variant, origin.atStartOfDay())
       .flatMap(raw =>
         depletionContext(company, variant, origin).flatMap(ctx =>
           dealContext(company, origin).map {
@@ -134,15 +141,75 @@ object DemandSeriesRepo {
       from: LocalDate,
       until: LocalDate
   ): ConnectionIO[Map[LocalDate, BigDecimal]] =
-    sql"""SELECT date_trunc('month', o.created_at)::date, SUM(ol.qty)::numeric
-          FROM order_line ol JOIN "order" o ON o.id = ol.order_id
-          WHERE o.sold_to_party_id = $company AND ol.product_variant_id = $variant
-            AND o.created_at >= $from AND o.created_at < $until
-            AND o.status NOT IN ('cancelled', 'pending_ceo', 'draft')
-          GROUP BY 1"""
-      .query[(LocalDate, BigDecimal)]
-      .to[List]
-      .map(_.toMap)
+    hasSerials(company, variant).flatMap {
+      case true =>
+        sql"""SELECT month, SUM(qty)::numeric FROM (
+                SELECT date_trunc('month', COALESCE(d.delivered_at, d.date::timestamptz))::date AS month,
+                       1::numeric AS qty
+                FROM serial_unit su JOIN dispatch d ON d.id = su.dispatch_id
+                WHERE su.company_id = $company AND su.product_variant_id = $variant
+                  AND COALESCE(d.delivered_at, d.date::timestamptz) >= GREATEST($from, $DispatchBasisCutover)
+                  AND COALESCE(d.delivered_at, d.date::timestamptz) < $until
+                UNION ALL
+                SELECT date_trunc('month', o.created_at)::date, ol.qty
+                FROM order_line ol JOIN "order" o ON o.id = ol.order_id
+                WHERE o.sold_to_party_id = $company AND ol.product_variant_id = $variant
+                  AND o.created_at >= $from AND o.created_at < LEAST($until, $DispatchBasisCutover)
+                  AND o.status NOT IN ('cancelled', 'pending_ceo', 'draft')
+              ) t GROUP BY 1""".query[(LocalDate, BigDecimal)].to[List].map(_.toMap)
+      case false =>
+        sql"""SELECT date_trunc('month', o.created_at)::date, SUM(ol.qty)::numeric
+              FROM order_line ol JOIN "order" o ON o.id = ol.order_id
+              WHERE o.sold_to_party_id = $company AND ol.product_variant_id = $variant
+                AND o.created_at >= $from AND o.created_at < $until
+                AND o.status NOT IN ('cancelled', 'pending_ceo', 'draft')
+              GROUP BY 1""".query[(LocalDate, BigDecimal)].to[List].map(_.toMap)
+    }
+
+  // Dispatch lines are the dispatch-dated demand record (the ASC-606 basis) wherever they exist; raw serial
+  // counts are NOT a demand series — V3 serialization ramped through 2024 and reads as phantom growth.
+  // MRPeasy shipment RECORDS have their own adoption ramp (measured: 2.6k → 8.3k → 13.7k units/quarter through
+  // Q4'24 against flat order volume) — so the series cuts over at the adoption boundary: order dates before,
+  // dispatch dates after. A fixed, documented splice beats a phantom 3× growth curve feeding every model.
+  private val DispatchBasisCutover = LocalDate.of(2025, 1, 1)
+
+  // The serial log carries the SHIPMENT's own account+variant attribution — orders are booked under one SKU
+  // and fulfilled under another (measured: a 2,000-unit account read as 62 through the order-line join), so
+  // any join through order lines mis-attributes cross-SKU fulfilment. Serials post-cutover, orders before.
+  private def hasSerials(company: UUID, variant: UUID): ConnectionIO[Boolean] =
+    sql"""SELECT EXISTS(
+            SELECT 1 FROM serial_unit WHERE company_id = $company AND product_variant_id = $variant)"""
+      .query[Boolean]
+      .unique
+
+  private def monthlySeries(
+      company: UUID,
+      variant: UUID,
+      origin: java.time.LocalDateTime
+  ): ConnectionIO[List[(LocalDate, BigDecimal)]] =
+    hasSerials(company, variant).flatMap {
+      case true =>
+        sql"""SELECT month, SUM(qty)::numeric FROM (
+                SELECT date_trunc('month', COALESCE(d.delivered_at, d.date::timestamptz))::date AS month,
+                       1::numeric AS qty
+                FROM serial_unit su JOIN dispatch d ON d.id = su.dispatch_id
+                WHERE su.company_id = $company AND su.product_variant_id = $variant
+                  AND COALESCE(d.delivered_at, d.date::timestamptz) >= $DispatchBasisCutover
+                  AND COALESCE(d.delivered_at, d.date::timestamptz) < $origin
+                UNION ALL
+                SELECT date_trunc('month', o.created_at)::date, ol.qty
+                FROM order_line ol JOIN "order" o ON o.id = ol.order_id
+                WHERE o.sold_to_party_id = $company AND ol.product_variant_id = $variant
+                  AND o.created_at < LEAST($origin, $DispatchBasisCutover)
+                  AND o.status NOT IN ('cancelled', 'pending_ceo', 'draft')
+              ) t GROUP BY 1 ORDER BY 1""".query[(LocalDate, BigDecimal)].to[List]
+      case false =>
+        sql"""SELECT date_trunc('month', o.created_at)::date, SUM(ol.qty)::numeric
+              FROM order_line ol JOIN "order" o ON o.id = ol.order_id
+              WHERE o.sold_to_party_id = $company AND ol.product_variant_id = $variant
+                AND o.created_at < $origin AND o.status NOT IN ('cancelled', 'pending_ceo', 'draft')
+              GROUP BY 1 ORDER BY 1""".query[(LocalDate, BigDecimal)].to[List]
+    }
 }
 
 object ForecastRunRepo {
