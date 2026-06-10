@@ -71,7 +71,9 @@ object PolicySelector {
   private val GuardWape          = BigDecimal("1.5") // a worst origin past 150% error = unstable series
   private val UnforecastableWape = BigDecimal("0.5") // even the winner pools >50% = nothing here extrapolates
   private val DefaultMinOrigin   = 3
-  private val IncumbentEdge      = BigDecimal("0.8") // a challenger must beat the run-rate by >20% to take a series
+  private val IncumbentEdge      = BigDecimal("0.8") // a STATISTICAL challenger must beat the run-rate by >20%
+  private val StructuralEdge     = BigDecimal("1.0") // structure (telemetry/book) only has to beat it at all —
+  // the 20% hurdle exists to stop curve-fit selection, and a shelf measurement is not a curve fit
 
   private final case class Scored(policy: Policy, pooled: BigDecimal, worstOrigin: BigDecimal)
 
@@ -92,7 +94,7 @@ object PolicySelector {
       val singles = complete.map(k => score(Policy.single(k), cells))
       val winner  = singles.minBy(s => (s.pooled, s.policy.key))
       val rr      = singles.find(_.policy.key == Fallback)
-      if (winner.pooled > UnforecastableWape || rr.exists(winner.pooled > _.pooled * IncumbentEdge))
+      if (winner.pooled > UnforecastableWape || rr.exists(winner.pooled > _.pooled * edgeFor(winner)))
         Policy.single(Fallback)
       else winner.policy
     } else {
@@ -141,8 +143,7 @@ object PolicySelector {
     // the structural hedge: each structural model (order book, retail funnel) paired with each top-2
     // statistical — structure that explains PART of a channel earns PART of the weight, even when it
     // can't win the pooled score alone
-    val structuralKeys =
-      Set(DemandModel.OrderBook.key, DemandModel.RetailFunnel.key, DemandModel.RetailFunnelMomentum.key)
+    val structuralKeys = StructuralModels
     val hedges = singles
       .filter(s => structuralKeys(s.policy.key))
       .filterNot(singles.take(3).contains)
@@ -161,11 +162,22 @@ object PolicySelector {
       if (winner.worstOrigin > GuardWape || winner.pooled > UnforecastableWape) Policy.single(Fallback)
       else
         incumbent match {
-          case Some(inc) if winner.pooled > inc.pooled * IncumbentEdge => Policy.single(Fallback)
-          case _                                                       => winner.policy
+          case Some(inc) if winner.pooled > inc.pooled * edgeFor(winner) => Policy.single(Fallback)
+          case _                                                         => winner.policy
         }
     champion
   }
+
+  private val StructuralModels = Set(
+    DemandModel.OrderBook.key,
+    DemandModel.RetailFunnel.key,
+    DemandModel.RetailFunnelMomentum.key,
+    DemandModel.Depletion.key,
+    DemandModel.PantryReversal.key
+  )
+
+  private def edgeFor(winner: Scored): BigDecimal =
+    if (winner.policy.weights.keys.exists(StructuralModels)) StructuralEdge else IncumbentEdge
 
   private def inverseWapeBlend(top: List[Scored]): Policy = {
     val inv   = top.map(s => s.policy.key -> BigDecimal(1) / s.pooled.max(BigDecimal("0.0001")))
