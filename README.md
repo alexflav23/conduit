@@ -1,93 +1,124 @@
-# conduit
+# Conduit
 
+Hypervolt's event-driven **master system of record**: CRM + orders + contract pricing (ADLP) + commission +
+inventory/traceability + double-entry ledger (TigerBeetle) + the self-improving revenue **forecast engine**.
 
+- **The spec** lives in [`spec/`](./spec) — read `spec/00_README.md` first.
+- **The engineering contract** (house conventions, milestones) is [`CLAUDE.md`](./CLAUDE.md).
+- **Design handoff**: `spec/27` (page-by-page feature map + live screenshots) → `spec/22` → `spec/20`.
 
-## Getting started
+Everything below is reproducible on a fresh machine: the repo carries its own data
+(git-versioned NDJSON snapshots in [`ingest/`](./ingest)) and an idempotent loader — **checkout → run → seeded**.
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
+## Prerequisites
 
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
+| Tool | Version | Notes |
+|---|---|---|
+| JDK | 19 (temurin) | or use `shell.nix` (nix + npins pins sbt/jdk) |
+| sbt | 1.12.x | |
+| Docker | any recent | compose v2 |
+| Node + yarn | Node ≥20, yarn 1.x | desk only |
+| Python 3 | ≥3.9 | feed scrapers only |
 
-## Add your files
+## Quick start (the whole stack, seeded)
 
-* [Create](https://docs.gitlab.com/user/project/repository/web_editor/#create-a-file) or [upload](https://docs.gitlab.com/user/project/repository/web_editor/#upload-a-file) files
-* [Add files using the command line](https://docs.gitlab.com/topics/git/add_files/#add-files-to-a-git-repository) or push an existing Git repository with the following command:
-
+```sh
+git clone https://github.com/alexflav23/conduit.git && cd conduit
+./run-local.sh          # sbt stage + docker compose up: postgres/pulsar/tigerbeetle/consul/keycloak/api/consumer
 ```
-cd existing_repo
-git remote add origin https://gitlab.com/hypervolt/conduit.git
-git branch -M main
-git push -uf origin main
+
+Up when: `curl localhost:9990/health` → `OK`. The API loads every `ingest/**/*.ndjson` snapshot at boot
+(deterministic + idempotent — re-boots converge to the same state). Optional demo fixtures (a CEO user, a
+seasonal demo account): `psql -h localhost -p 5532 -U conduit -d conduit -f scripts/demo-seed.sql` (pw `conduit`).
+
+**The desk (back-office UI):**
+
+```sh
+cd conduit-desk && yarn && yarn start    # vite on :3002, proxies /api → :8080
 ```
 
-## Integrate with your tools
+Sign in with a dev token (`dev:demo-ceo` after the demo seed; `dev:agent-e2e` after the e2e seed) — the dev
+door only works against non-prod backends. For Google Workspace sign-in set `VITE_GOOGLE_CLIENT_ID` (see
+`terraform/README.md` for the one-time Google Cloud Console setup).
 
-* [Set up project integrations](https://gitlab.com/hypervolt/conduit/-/settings/integrations)
+### Ports (compose; chosen to not collide with athena's defaults)
 
-## Collaborate with your team
+| 8080 API · 9990 health · 9464 API metrics · 9466 consumer metrics | 5532 postgres · 6650/8085 pulsar · 3022 tigerbeetle · 8500 consul · 8090 keycloak |
+|---|---|
 
-* [Invite team members and collaborators](https://docs.gitlab.com/user/project/members/)
-* [Create a new merge request](https://docs.gitlab.com/user/project/merge_requests/creating_merge_requests/)
-* [Automatically close issues from merge requests](https://docs.gitlab.com/user/project/issues/managing_issues/#closing-issues-automatically)
-* [Enable merge request approvals](https://docs.gitlab.com/user/project/merge_requests/approvals/)
-* [Set auto-merge](https://docs.gitlab.com/user/project/merge_requests/auto_merge/)
+## Tests
 
-## Test and Deploy
+```sh
+sbt test                 # unit (domain): money/allocate properties, models, selector, policy engine…
+sbt apiIt/test           # integration (testcontainers: postgres/pulsar/consul — needs Docker)
+sbt schemaCheck          # Avro BACKWARD-compat gate
+sbt fmt                  # scalafmt
+cd conduit-desk
+yarn build               # type-checks + builds the desk
+./run-e2e.sh             # FULL desk e2e: boots the API on the LOCAL postgres :5432 (not compose!), seeds
+                         # e2e/seed.sql, runs all 16 Playwright specs, tears down. Needs a local postgres
+                         # with a `conduit` db. NOTE: frees port 8080 (kills the compose API) — re-run
+                         # `docker compose up -d` afterwards.
+node scripts/capture-screens.mjs   # re-captures spec/design-assets/desk/*.png against the live API (:3002 + :8080)
+```
 
-Use the built-in continuous integration in GitLab.
+## The forecast engine (doc 26) — operating it
 
-* [Get started with GitLab CI/CD](https://docs.gitlab.com/ci/quick_start/)
-* [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/user/application_security/sast/)
-* [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/topics/autodevops/requirements/)
-* [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/user/clusters/agent/)
-* [Set up protected environments](https://docs.gitlab.com/ci/environments/protected_environments/)
+The engine is pure Scala inside this repo (no Python/ML infra). Postgres is the store; everything below
+talks to the **compose** DB (`localhost:5532`).
 
-***
+```sh
+# full refit: fit+score+materialize every origin (calendar-derived — quarter-close auto-extends), ~20 min
+sbt "scripting/runMain com.hypervolt.conduit.scripting.RealBacktest"
+# selection-only refit over the existing evidence ledger (~75 s) — for iterating on selector logic
+sbt "scripting/runMain com.hypervolt.conduit.scripting.Rematerialize"
+# the verification harness: 8-quarter WAPE matrix + nowcast/forward (THE means are the accept/reject metric)
+sbt "scripting/runMain com.hypervolt.conduit.scripting.PolicyTournamentReport"
+# publish the live rows the desk H6Q board reads (forecast_entry, append-only supersession)
+sbt "scripting/runMain com.hypervolt.conduit.scripting.LivePublish"
+# the board artifact: /tmp/conduit-comparables.html (business actuals, ASP panel, P80/P50/P20, pass-through β)
+sbt "scripting/runMain com.hypervolt.conduit.scripting.ComparablesHtml"
+```
 
-# Editing this README
+**House rule (memorize):** every model/selector change is judged by the 8-quarter backtest means from
+`PolicyTournamentReport` — improve or revert (including the reverted model's `model_accuracy` rows).
+Seven falsified ideas are documented in `spec/26` + the Forecast Engine desk tab; don't retry them.
 
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
+### Refreshing the data (the dual-run feeds)
 
-## Suggestions for a good README
+```sh
+scripts/refresh-feeds.sh   # activations delta + MRPeasy incremental + reload + rescore + republish + git commit
+```
 
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
+Needs (none of these live in this repo — they are estate credentials):
+- **prod tunnel** for activations: `ssh -fNL 15432:prod-athena.ct4y8vmbn3ed.eu-west-1.rds.amazonaws.com:5432
+  flav@bastion.prod.euw1.aws.hypervolt.co.uk` (skips gracefully when down)
+- `~/projects/hypervolt/athena/.env` (MRPeasy API keys) and `~/projects/hypervolt/ghost-busters/.env`
+  (Athena DB creds) — sourced by the script.
+- MRPeasy scraping is **incremental** (tail + 3,000-row recheck window); `MRPEASY_FULL=1` forces a full re-walk.
 
-## Name
-Choose a self-explaining name for your project.
+## Deploying (staging/prod on AWS, the athena pattern)
 
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
+Everything is written and `fmt`-clean under [`terraform/`](./terraform) — **read `terraform/README.md`**: the
+apply order (`roles-global → rds → records → tigerbeetle → api → consumer`), the SSM/Secrets contract, the
+one-time **Google Workspace OAuth setup** (Internal consent screen; the client id feeds
+`/<env>/conduit/GOOGLE_OAUTH_CLIENT_ID` + `VITE_GOOGLE_CLIENT_ID`), and `scripts/provision-pulsar.sh` for
+topics/subscriptions at deploy. `terraform init` needs the estate GitLab SSH key + AWS role. CI packaging and
+publish live in `.gitlab-ci.yml` + `scripts/publish*`.
 
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
+## Repo layout
 
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
+| Path | What |
+|---|---|
+| `domain/` | All domain logic: money/ledger core, pricing, inventory, forecast engine, access control |
+| `api/` | http4s/tapir server (:8080), Flyway migrations (`api/src/main/resources/db/migration/`) |
+| `consumer/` | Pulsar consumers + outbox relay + background fibers (supervised independently) |
+| `api-it/` | Integration suites (testcontainers) |
+| `scripting/` | Operational entrypoints (backtests, reports, publishers) |
+| `conduit-desk/` | The React/StyleX back-office (12 tabs incl. the Forecast Engine explainer) |
+| `ingest/` | Git-versioned NDJSON data snapshots (MRPeasy, activations, Stripe, SMMT, H6Q) — the data ships with the repo |
+| `spec/` | The full requirements + design corpus (00–27) |
+| `terraform/` | The complete AWS deploy (athena pattern) |
 
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
-
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
-
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
-
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
-
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
-
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
-
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
-
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
-
-## License
-For open source projects, say how it is licensed.
-
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+Git remote: `github` → `https://github.com/alexflav23/conduit.git`; push every green slice to **both**
+`m0-m1-foundations` and `main`.
