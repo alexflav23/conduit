@@ -158,7 +158,7 @@ export function Tax({ token }: { token: string }) {
         <div {...stylex.props(styles.row)}>
           <span {...stylex.props(styles.label)}>Jurisdiction</span>
           <input {...stylex.props(styles.input)} data-testid="tax-rate-juris" value={rateJuris} onChange={(e) => setRateJuris(e.target.value)} style={{ width: '70px' }} />
-          <button {...stylex.props(styles.button)} data-testid="tax-rates-load" onClick={loadRates}>Load rates</button>
+          <button {...stylex.props(styles.button)} data-testid="tax-rates-load" onClick={() => loadRates()}>Load rates</button>
         </div>
         <table {...stylex.props(styles.table)} data-testid="tax-rates-table">
           <thead><tr>

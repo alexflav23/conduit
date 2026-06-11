@@ -11,7 +11,21 @@ import java.util.UUID
 object AccessRepo {
 
   def loadPrincipal(keycloakId: String): ConnectionIO[Option[Principal]] =
-    findUser(keycloakId).flatMap {
+    findUser(keycloakId).flatMap(hydrate)
+
+  // Google-gated sign-in (doc 19 §B): a verified Workspace e-mail maps to the app_user by its unique e-mail.
+  // An unknown e-mail is AUTO-PROVISIONED with no assignments — authenticated but deny-by-default (doc 05):
+  // they can sign in and see nothing until an admin grants a role. Sign-in is gated by the domain; access by RBAC.
+  def loadPrincipalByEmail(email: String): ConnectionIO[Option[Principal]] =
+    sql"""INSERT INTO app_user (keycloak_id, name, email) VALUES (${"google:" + email}, $email, $email)
+          ON CONFLICT (email) DO NOTHING""".update.run *>
+      sql"SELECT id, team_id FROM app_user WHERE email = $email AND status = 'active'"
+        .query[(UUID, Option[UUID])]
+        .option
+        .flatMap(hydrate)
+
+  private def hydrate(user: Option[(UUID, Option[UUID])]): ConnectionIO[Option[Principal]] =
+    user match {
       case None => Option.empty[Principal].pure[ConnectionIO]
       case Some((userId, teamId)) =>
         for {

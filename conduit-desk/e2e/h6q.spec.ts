@@ -18,6 +18,7 @@ test('H6Q: an agent submits their portion; it shows in the demand matrix and rec
   await expect(page.getByTestId('h6q-cap-status')).toContainText('submitted');
 
   // demand matrix (finance viewer): all SKUs × all months at once — the rolled-up estimate is visible
+  await page.getByTestId('signout').click();
   await page.getByTestId('token').fill('dev:finance-e2e');
   await page.getByTestId('h6q-tab-board').click();
   await expect(page.getByTestId('h6q-matrix-row').first()).toBeVisible();

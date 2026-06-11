@@ -13,6 +13,7 @@ import { Lifecycle } from './Lifecycle';
 import { Auditability } from './Auditability';
 import { Tax } from './Tax';
 import { Forecasting } from './Forecasting';
+import { SignIn, sessionEmail, signOutGoogle } from './SignIn';
 
 const styles = stylex.create({
   page: { minHeight: '100vh', backgroundColor: colors.bg, color: colors.text, fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif', padding: '2rem' },
@@ -27,8 +28,20 @@ const styles = stylex.create({
 });
 
 export function App() {
-  const [token, setToken] = useState('dev:agent-e2e');
+  const [token, setTokenState] = useState(() => sessionStorage.getItem('conduit_token') ?? '');
   const [view, setView] = useState<'order' | 'dealdesk' | 'h6q' | 'flow' | 'supply' | 'shelf' | 'finance' | 'docs' | 'lifecycle' | 'audit' | 'tax' | 'engine'>('order');
+  const setToken = (t: string) => {
+    if (t) sessionStorage.setItem('conduit_token', t);
+    else sessionStorage.removeItem('conduit_token');
+    setTokenState(t);
+  };
+  const signOut = () => { signOutGoogle(); setToken(''); };
+
+  if (!token) return (
+    <div {...stylex.props(styles.page)}>
+      <SignIn onToken={setToken} />
+    </div>
+  );
 
   return (
     <div {...stylex.props(styles.page)}>
@@ -48,8 +61,8 @@ export function App() {
         <button {...stylex.props(styles.tab, view === 'engine' && styles.tabActive)} data-testid="tab-engine" onClick={() => setView('engine')}>Forecast Engine</button>
       </div>
       <div {...stylex.props(styles.tokenRow)}>
-        <span {...stylex.props(styles.label)}>Auth token</span>
-        <input {...stylex.props(styles.input)} data-testid="token" value={token} onChange={(e) => setToken(e.target.value)} />
+        <span {...stylex.props(styles.label)} data-testid="session-chip">{sessionEmail(token)}</span>
+        <button {...stylex.props(styles.tab)} data-testid="signout" onClick={signOut}>Sign out</button>
       </div>
       {view === 'order' ? <OrderDesk token={token} />
         : view === 'dealdesk' ? <DealDesk token={token} />

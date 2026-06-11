@@ -7,6 +7,7 @@ import cats.effect.std.Dispatcher
 import cats.syntax.all._
 import com.comcast.ip4s._
 import com.hypervolt.conduit.api.auth.AuthService
+import com.hypervolt.conduit.api.auth.GoogleTokenVerifier
 import com.hypervolt.conduit.api.routes.AccessRoutes
 import com.hypervolt.conduit.api.routes.AuditRoutes
 import com.hypervolt.conduit.api.routes.CommerceRoutes
@@ -78,7 +79,16 @@ object Main extends IOApp.Simple {
   override def run: IO[Unit] =
     resources.use {
       case (cfg, xa) =>
-        val auth           = new AuthService[IO](xa, devMode = cfg.env != "prod")
+        val googleVerifier = Option.when(cfg.googleAuth.enabled)(
+          new GoogleTokenVerifier[IO](
+            new com.auth0.jwk.GuavaCachedJwkProvider(
+              new com.auth0.jwk.UrlJwkProvider(new java.net.URL(GoogleTokenVerifier.JwksUrl))
+            ),
+            cfg.googleAuth.clientId,
+            cfg.googleAuth.workspaceDomain
+          )
+        )
+        val auth           = new AuthService[IO](xa, devMode = cfg.env != "prod", google = googleVerifier)
         val accessRoutes   = new AccessRoutes[IO](xa, auth).routes
         val pricingRoutes  = new PricingRoutes[IO](xa, auth).routes
         val commerceRoutes = new CommerceRoutes[IO](xa, auth).routes

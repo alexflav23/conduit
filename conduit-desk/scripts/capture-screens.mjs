@@ -26,10 +26,11 @@ const browser = await chromium.launch();
 const page = await browser.newPage({ viewport: { width: 1600, height: 1000 } });
 page.on('pageerror', (e) => console.log(`  pageerror: ${String(e).slice(0, 160)}`));
 await page.goto('http://localhost:3002/');
-await page.getByTestId('token').fill('dev:agent-e2e');
 
 for (const t of TABS) {
   try {
+    // identity per tab: sign out if signed in, then enter through the gate
+    if (await page.getByTestId('signout').isVisible().catch(() => false)) await page.getByTestId('signout').click();
     await page.getByTestId('token').fill(t.token ?? 'dev:agent-e2e');
     await page.getByTestId(t.tab).click({ timeout: 8000 });
     for (const c of t.click) {

@@ -21,6 +21,28 @@ Per-page sections follow. `[shot]` = screenshot file in `design-assets/desk/`.
 
 ---
 
+## 0. Sign in / Session — → doc 20 D1 (BUILT: Google Workspace domain gate)
+
+**Job:** staff-only entry. Google sign-in restricted to **hypervolt.co.uk** Workspace accounts — enforced
+**server-side** on every request (`GoogleTokenVerifier`: signature vs Google JWKS, audience = our OAuth
+client id, issuer, expiry, verified e-mail, and the `hd` hosted-domain claim — a personal gmail.com can
+never pass). Sign-in gates entry; **RBAC gates everything after** (a new domain account is auto-provisioned
+with zero grants and sees nothing until an admin assigns a role — doc 05 deny-by-default).
+
+| Feature | Control today | Mechanism | Notes for design |
+|---|---|---|---|
+| The gate | `signin-page` | shown whenever there is no session; the app never renders past it | Full-bleed branded card; this is the first thing every employee sees — make it worthy |
+| Google sign-in | `signin-google` | GIS button (`VITE_GOOGLE_CLIENT_ID`); credential = Google ID token, becomes the Bearer | Use Google's official button; design the surrounding card, not the button |
+| Wrong-account error | `signin-error` | GIS callback failure / non-domain account | Explain the fix ("use your hypervolt.co.uk account"), offer retry |
+| Dev door | `token` | `dev:<id>` input, honoured only by non-prod backends | Keep visually subordinate ("developers" divider); absent in prod builds is acceptable |
+| Session chip | `session-chip` | e-mail decoded from the ID token (or "developer session") | Identity always visible — doc 20 D1's session affordance |
+| Sign out | `signout` | clears the session (sessionStorage) + GIS auto-select; returns to the gate | One click, no confirm; the gate proves it worked |
+| Session expiry | — (gap) | Google ID tokens expire (~1h); a 401 mid-session currently surfaces as request errors | Design the re-auth interrupt: keep context, re-prompt, resume — do NOT lose form state |
+
+States: signed-out (the gate) · signing-in (GIS popup) · wrong-domain error · signed-in (chip) ·
+**expired-mid-task (the one that needs real design care)**. Spec: `e2e/signin.spec.ts` +
+`GoogleTokenVerifierSuite` (server side: 6 fail-closed cases).
+
 ## 1. Order Desk — `[D-order-desk.png]` → doc 20 D2/D12
 
 **Job:** place a compliant trade order in <60s, keyboard-only (doc 07 M4 acceptance). **Persona:** sales ops.
@@ -152,7 +174,8 @@ Numbers are currently baked at build time — design should assume a future API 
    threw (`rows.map is not a function`) — found live while capturing these screenshots on Shelf, Audit, Finance,
    H6Q. Guards added; the design system's data-table component must own the error/empty/forbidden states so
    individual pages can't regress.
-3. **Auth is a dev token box** (`token` testid) — D1 (login/session, Keycloak) is undesigned and unbuilt.
+3. **D1 sign-in is BUILT** (§0: Google Workspace domain gate, server-side enforced) — the remaining design
+   work is the gate's visual treatment and the **expired-mid-task re-auth interrupt** (§0 last row).
 4. **No worklist/home** (D2): the desk opens on Order Desk; doc 20's role-aware worklist is the intended landing.
 5. **Navigation is a flat 12-tab row** — doc 20's nav map groups by domain (Sell / Plan / Supply / Finance /
    Govern); the redesign should adopt that grouping or better.

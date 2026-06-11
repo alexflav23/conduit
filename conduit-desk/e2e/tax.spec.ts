@@ -45,7 +45,11 @@ test('Tax: maker-checker — tax_specialist proposes a rate (draft), cannot acti
   await expect(page.getByTestId('tax-propose-status')).toContainText('failed');
 
   // Switch to the CFO; the draft is still listed — activate it (maker-checker: proposer ≠ approver).
+  await page.getByTestId('signout').click();
   await page.getByTestId('token').fill('dev:ceo-e2e');
+  await page.getByTestId('tab-tax').click();
+  await page.getByTestId('tax-rate-juris').fill('FR');
+  await page.getByTestId('tax-rates-load').click();
   await page.getByTestId('tax-activate').first().click();
   await expect(page.getByTestId('tax-propose-status')).toContainText('activated');
 });

@@ -50,9 +50,25 @@ terraform apply
 ## Secrets (Secrets Manager, per env)
 
 - `<env>/conduit/rds-db-credentials/conduit.json` — DB creds (written by `rds/`)
-- `<env>/keycloak-configuration/conduit-api/*` — JWT/JWKS config
+- `<env>/keycloak-configuration/conduit-api/*` — JWT/JWKS config (Keycloak federation — later pass)
 - `<env>/conduit/stripe/*` — Stripe webhook signing secret (`STRIPE_WEBHOOK_SECRET`)
 - `<env>/conduit/xero/*` — Xero OAuth2 client credentials
+
+## Google Workspace sign-in (the first-pass production auth gate)
+
+The API verifies Google ID tokens server-side (`GoogleTokenVerifier`): audience = our OAuth client id,
+issuer = Google, `hd = hypervolt.co.uk`, verified e-mail, expiry. One-time Google Cloud Console setup
+(the ghost-busters pattern, enforcement moved server-side):
+
+1. **APIs & Services → OAuth consent screen** → User type **Internal** (restricts to the Workspace).
+2. **Credentials → Create credentials → OAuth client ID → Web application**:
+   - Authorized JavaScript origins: `https://conduit.hypervolt.com`, `https://staging-conduit.hypervolt.com`,
+     `http://localhost:3002` (dev). No redirect URI (Google Identity Services button flow).
+3. The client id (`…apps.googleusercontent.com`) is public, not a secret:
+   - SSM `/<env>/conduit/GOOGLE_OAUTH_CLIENT_ID` (flat name = env var, per the mk-env convention) → the API
+   - `VITE_GOOGLE_CLIENT_ID` at desk build time → the sign-in button
+4. RBAC stays the access gate: a domain account signs in but holds **zero grants** until an admin assigns a
+   role (auto-provisioned `app_user`, deny-by-default). Dev `dev:<id>` tokens are refused by prod backends.
 
 ## Not in Terraform
 

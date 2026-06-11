@@ -18,8 +18,10 @@ test('Lifecycle: finance replays an order — collection cycle + event timeline'
   await expect(page.getByTestId('life-timeline')).toContainText('order.invoiced');
   await expect(page.getByTestId('life-timeline')).toContainText('revenue.recognized');
 
-  // lineage precision: each event shows its origin + a complete UTC timestamp
-  await expect(page.getByTestId('life-origin').first()).toContainText('service:');
-  await expect(page.getByTestId('life-when').first()).toContainText('UTC');
-  await expect(page.getByTestId('life-when').first()).toContainText('2026-09-01 09:12:00');
+  // lineage precision on the SEEDED order.placed event (not .first() — other suites may legitimately add
+  // user-origin events to this order, e.g. a void; the timeline ordering is theirs to win)
+  const placed = page.getByTestId('life-event').filter({ hasText: 'order.placed' }).first();
+  await expect(placed.getByTestId('life-origin')).toContainText('service:');
+  await expect(placed.getByTestId('life-when')).toContainText('UTC');
+  await expect(placed.getByTestId('life-when')).toContainText('2026-09-01 09:12:00');
 });

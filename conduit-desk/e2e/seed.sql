@@ -128,16 +128,19 @@ BEGIN
   END IF;
   SELECT id INTO vlx FROM supplier WHERE name = 'Volex' LIMIT 1;
 
+  -- deterministic reset: the approve flow mutates commitments and consumes the proposal — re-seeding must
+  -- restore the exact fixture state, or the suite only passes on a virgin database
+  DELETE FROM po_proposal WHERE supplier_id = vlx AND product_variant_id = v_id;
+  DELETE FROM supply_commitment WHERE supplier_id = vlx AND product_variant_id = v_id;
+
   INSERT INTO supply_commitment (supplier_id, product_variant_id, target_date, qty, zone)
     SELECT vlx, v_id, d.dt, d.q, d.z FROM (VALUES
       (DATE '2026-07-06', 100, 'frozen'),
       (DATE '2026-09-07', 120, 'flex'),
-      (DATE '2026-12-28', 300, 'free')) AS d(dt, q, z)
-    ON CONFLICT (supplier_id, product_variant_id, target_date) DO NOTHING;
+      (DATE '2026-12-28', 300, 'free')) AS d(dt, q, z);
 
   INSERT INTO po_proposal (supplier_id, product_variant_id, target_date, demand_qty, committed_qty, available_qty, net_need, proposed_delta, blocked_qty, zone)
-    VALUES (vlx, v_id, DATE '2026-09-07', 200, 120, 30, 50, 24, 26, 'flex')
-    ON CONFLICT (supplier_id, product_variant_id, target_date) DO NOTHING;
+    VALUES (vlx, v_id, DATE '2026-09-07', 200, 120, 30, 50, 24, 26, 'flex');
 
   INSERT INTO commitment_warning (supplier_id, product_variant_id, target_date, zone, committed_qty, demand_qty, delta, source, severity, message)
     SELECT vlx, v_id, DATE '2026-07-06', 'frozen', 100, 150, 50, 'sales_input', 'block',

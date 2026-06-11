@@ -5,6 +5,7 @@ import { test, expect } from '@playwright/test';
 // and the tournament stepper walks its steps.
 test('Forecast Engine: explainer renders, depletion playground computes, tournament stepper steps', async ({ page }) => {
   await page.goto('/');
+  await page.getByTestId('token').fill('dev:agent-e2e');
   await page.getByTestId('tab-engine').click();
 
   // the pipeline section is open by default; the honesty rules expand on click

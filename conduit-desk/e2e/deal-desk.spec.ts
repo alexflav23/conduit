@@ -29,7 +29,10 @@ test('Deal Desk: price banding is explicit; agent proposes; only the CEO approve
   await expect(page.getByTestId('dd-error')).toContainText('403');
 
   // only the CEO may approve — timed (valid-to), volume-contingent (min volume), with a memo
+  await page.getByTestId('signout').click();
   await page.getByTestId('token').fill('dev:ceo-e2e');
+  await page.getByTestId('tab-dealdesk').click();
+  await page.getByTestId('load-pending').click();
   await page.getByTestId('dec-memo').fill('Approved for Octopus; 500-unit commitment');
   await page.getByTestId('dec-volume-min').fill('400');
   await page.getByTestId('approve-btn').click();

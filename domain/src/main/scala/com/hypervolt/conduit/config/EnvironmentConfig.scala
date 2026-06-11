@@ -40,6 +40,13 @@ final case class DocumentsConfig(bucket: String, endpoint: String, accessKey: St
   def usesEndpoint: Boolean = endpoint.nonEmpty
 }
 
+// Google Workspace domain-gated sign-in (the ghost-busters pattern, enforced SERVER-side): the desk sends a
+// Google ID token as the bearer; the API verifies signature (Google JWKS), audience (our OAuth client id) and
+// the `hd` hosted-domain claim. Empty client id → the verifier is not wired (dev tokens only).
+final case class GoogleAuthConfig(clientId: String, workspaceDomain: String) {
+  def enabled: Boolean = clientId.nonEmpty
+}
+
 final case class AppConfig(
     env: String,
     db: DbConfig,
@@ -49,7 +56,8 @@ final case class AppConfig(
     tigerbeetle: TigerBeetleConfig,
     xero: XeroConfig,
     stripe: StripeConfig,
-    documents: DocumentsConfig
+    documents: DocumentsConfig,
+    googleAuth: GoogleAuthConfig
 )
 
 object EnvironmentConfig {
@@ -94,6 +102,10 @@ object EnvironmentConfig {
         endpoint = docs.getString("endpoint"),
         accessKey = docs.getString("access_key"),
         secretKey = docs.getString("secret_key")
+      ),
+      googleAuth = GoogleAuthConfig(
+        clientId = hv.getConfig("auth").getString("google_client_id"),
+        workspaceDomain = hv.getConfig("auth").getString("workspace_domain")
       )
     )
   }
