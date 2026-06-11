@@ -10,7 +10,12 @@ only stubs today, inventories **what is already built vs. what must be designed*
 UX invariants** that fall out of the access/finance model, and defines the **Figma↔StyleX↔Code-Connect
 workflow**, deliverables, and acceptance bar.
 
-> **Read order for a designer:** this doc → doc 20 (desk screens) → doc 20-H6Q (the deepest board) →
+> **Start with [doc 27 — UI Feature Map](./27_UI_FEATURE_MAP.md):** the page-by-page, feature-by-feature map
+> of the desk **as built** — every control by testid, every API binding, every required state, with a real
+> screenshot of each page against the live API in `design-assets/desk/`. It is the concrete contract this
+> pack previously lacked.
+>
+> **Read order for a designer:** doc 27 (the concrete map) → this doc → doc 20 (desk screens) → doc 20-H6Q (the deepest board) →
 > doc 08 (companion app) → doc 05 (data layers, because they change what every screen is *allowed* to render).
 > Everything binds to the live API; **there is no mock data** — the desk already talks to a running backend.
 

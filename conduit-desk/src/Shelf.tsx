@@ -22,7 +22,7 @@ const styles = stylex.create({
 
 export function Shelf({ token }: { token: string }) {
   const [rows, setRows] = useState<any[]>([]);
-  const load = async () => { const r = await getShelfBoard(token); setRows(r.json ?? []); };
+  const load = async () => { const r = await getShelfBoard(token); setRows(Array.isArray(r.json) ? r.json : []); };
 
   return (
     <div {...stylex.props(styles.card)}>

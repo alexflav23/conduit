@@ -63,10 +63,10 @@ function Capture({ token }: { token: string }) {
     setCycle(mine.json.cycle);
     setAccounts(mine.json.accounts ?? []);
     if ((mine.json.accounts ?? []).length) setAccount(mine.json.accounts[0].company_id);
-    const v = await getVariants(token); setVariants(v.json ?? []);
+    const v = await getVariants(token); setVariants(Array.isArray(v.json) ? v.json : []);
     const sc = await getScenarios(token);
     const map: Record<string, string> = {};
-    (sc.json ?? []).forEach((s: any) => { if (!s.toggle_basis) map[s.type] = s.id; });
+    (Array.isArray(sc.json) ? sc.json : []).forEach((s: any) => { if (!s.toggle_basis) map[s.type] = s.id; });
     setScenarios(map);
   };
 
@@ -149,7 +149,7 @@ function Board({ token }: { token: string }) {
   const scenarioId = async (): Promise<string | null> => {
     if (scenario) return scenario;
     const s = await getScenarios(token);
-    const p50 = (s.json ?? []).find((x: any) => x.type === 'P50' && !x.toggle_basis);
+    const p50 = (Array.isArray(s.json) ? s.json : []).find((x: any) => x.type === 'P50' && !x.toggle_basis);
     const id = p50?.id ?? null; setScenario(id); return id;
   };
 
@@ -159,7 +159,7 @@ function Board({ token }: { token: string }) {
     if (!sc) { setError('no scenario'); return; }
     const m = await getCoverageMatrix(token, H6Q_MARKET, sc);
     if (m.status !== 200) { setError(`Matrix failed (${m.status})`); return; }
-    setMatrix(m.json ?? []); setLoaded(true);
+    setMatrix(Array.isArray(m.json) ? m.json : []); setLoaded(true);
   };
 
   const loadReconcile = async (group: 'branch' | 'agent') => {
@@ -168,7 +168,7 @@ function Board({ token }: { token: string }) {
     if (!sc) { setError('no scenario'); return; }
     const cov = await getCoverage(token, H6Q_MARKET, PERIOD, sc, group);
     if (cov.status !== 200) { setError(`Coverage failed (${cov.status})`); return; }
-    setRows(cov.json ?? []); setLoaded(true);
+    setRows(Array.isArray(cov.json) ? cov.json : []); setLoaded(true);
     const rec = await getReconcile(token, H6Q_MARKET, PERIOD, sc);
     setTies(rec.json?.ties ?? null);
   };

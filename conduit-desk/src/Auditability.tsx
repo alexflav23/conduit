@@ -32,11 +32,11 @@ export function Auditability({ token }: { token: string }) {
   const [invoiceNo, setInvoiceNo] = useState('INV-FLOW');
   const [lineage, setLineage] = useState<any | null>(null);
 
-  const loadPeriods = async () => { const r = await getPeriods(token); setPeriods(r.json ?? []); };
-  const loadRecs = async (id: string) => { const r = await getPeriodReconciliations(token, id); setRecs((m) => ({ ...m, [id]: r.json ?? [] })); };
+  const loadPeriods = async () => { const r = await getPeriods(token); setPeriods(Array.isArray(r.json) ? r.json : []); };
+  const loadRecs = async (id: string) => { const r = await getPeriodReconciliations(token, id); setRecs((m) => ({ ...m, [id]: Array.isArray(r.json) ? r.json : [] })); };
   const doClose = async (id: string) => { const r = await closePeriod(token, id); setPStatus(r.status === 200 ? 'closed' : `close failed: ${r.json?.message ?? r.status}`); await loadPeriods(); };
   const doLock = async (id: string) => { const r = await lockPeriod(token, id); setPStatus(r.status === 200 ? 'locked' : `lock blocked: ${r.json?.message ?? r.status}`); await loadPeriods(); };
-  const loadControls = async () => { const r = await getControls(token); setControls(r.json ?? []); };
+  const loadControls = async () => { const r = await getControls(token); setControls(Array.isArray(r.json) ? r.json : []); };
   const doRun = async (code: string) => { await runControl(token, code); await loadControls(); };
   const loadLineage = async () => { const r = await getLineage(token, invoiceNo); setLineage(r.json); };
 

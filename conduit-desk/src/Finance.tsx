@@ -33,7 +33,7 @@ export function Finance({ token }: { token: string }) {
   const [status, setStatus] = useState<string | null>(null);
 
   const loadPnl = async () => { const r = await getPnl(token, FINANCE_MARKET, period); setPnl(r.status === 200 ? r.json : null); };
-  const loadWf = async () => { const r = await getCashWaterfall(token, 'GBP'); setWf(r.json ?? []); };
+  const loadWf = async () => { const r = await getCashWaterfall(token, 'GBP'); setWf(Array.isArray(r.json) ? r.json : []); };
   const loadTerms = async () => {
     if (!party) return;
     const r = await getCreditTerms(token, party);
