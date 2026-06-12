@@ -45,6 +45,7 @@ object LedgerTransferCode {
   val Payment: Int      = 40 // cash application — settles AR (doc 13 §payments)
   val Reversal: Int     = 50 // invoice invalidation — negates a recognition (doc 13 §void, ASC 606)
   val Remeasure: Int    = 60 // ASC 830-20-35 period-end remeasurement delta (doc 28 §5.3)
+  val Settlement: Int   = 70 // IC settlement — cash legs + realized-FX reclass (doc 28 §5.4)
 }
 
 // TigerBeetle transfer flags (two-phase + linking).

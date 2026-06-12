@@ -109,17 +109,22 @@ final class IcRemeasurementService[F[_]: Async](xa: Transactor[F], ledger: Tiger
       asOf: LocalDate
   ): ConnectionIO[Either[String, (BigDecimal, BigDecimal, BigDecimal, BigDecimal, String)]] =
     (
-      // hedge-booked matches are LOCKED at the contracted rate (doc 28 §5.4b) — a fixed rate has no FX
-      // variability to absorb, so they never enter the remeasure base
+      // hedge-booked matches are LOCKED at the contracted rate (doc 28 §5.4b) and settled matches are GONE
+      // (doc 28 §5.4) — neither enters the remeasure base
       sql"""SELECT COALESCE(SUM(uplift_total - returned_uplift), 0),
                    COALESCE(SUM((uplift_total - returned_uplift) * COALESCE(booked_rate, 1)), 0)
             FROM ic_match
             WHERE procurement_entity_id = $pr AND operating_entity_id = $op AND currency = $txnCcy
-              AND reversed_at IS NULL AND COALESCE(rate_source, '') NOT LIKE 'hedge:%'"""
+              AND reversed_at IS NULL AND settlement_id IS NULL
+              AND COALESCE(rate_source, '') NOT LIKE 'hedge:%'"""
         .query[(BigDecimal, BigDecimal)]
         .unique,
-      sql"""SELECT COALESCE(SUM(delta), 0) FROM ic_remeasurement
-            WHERE procurement_entity_id = $pr AND operating_entity_id = $op"""
+      // the LIVE adjunct position: settlements consumed their prior-at-settle (the reclass cleared it)
+      sql"""SELECT COALESCE((SELECT SUM(delta) FROM ic_remeasurement
+                             WHERE procurement_entity_id = $pr AND operating_entity_id = $op), 0)
+                 - COALESCE((SELECT SUM(prior_deltas_at_settle) FROM ic_settlement
+                             WHERE procurement_entity_id = $pr AND operating_entity_id = $op
+                               AND status = 'settled'), 0)"""
         .query[BigDecimal]
         .unique,
       sql"""SELECT rate, as_of::text FROM exchange_rate

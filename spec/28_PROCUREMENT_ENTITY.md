@@ -147,7 +147,8 @@ entity-pair per currency, remeasure at the **closing rate**; post the **delta** 
 one posting per pair per period, reversible like everything else. **CTRL-IC-REMEASURE**: re-performs the
 computation from open matches + the closing rate and proves the posted delta matches to the minor unit.
 
-### 5.4 Settlement (`ic_settlement`)
+### 5.4 Settlement (`ic_settlement`) *(BUILT, V1_0_69 — full-set-per-pair; partial/explicit selection
+arrives with the desk UI)*
 A governed settlement run (maker-checker; treasury permission):
 1. **Select & net**: open matches per entity-pair per currency (full or partial, oldest-first or explicit
    selection — partial settlements reference exactly which matches/amounts they cover).
