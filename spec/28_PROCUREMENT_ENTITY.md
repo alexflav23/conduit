@@ -91,4 +91,117 @@ safe for every role.
 ## 4. Out of scope (later)
 Customs/VAT interplay on the flash hop beyond the existing TaxEngine import-tax quote; multi-hop chains
 (>1 intermediate); desk UI polish (gated tab lands with slice 3); Singapore entity seeding is **config**
-(orgconfig/terraform-time data), never a migration.
+(orgconfig/terraform-time data), never a migration. *(FX settlement and price evolution, originally listed
+here, are now specced — §5.)*
+
+## 5. FX & time — the IC balance lifecycle (M-IC-FX)
+
+**Requested 2026-06-12 (CEO):** prices evolve over time, and the inter-entity balances need FX settlement —
+clear concepts for spot rates, hedges, and the rest, at the highest standard of US GAAP and ASC 606.
+
+**The gap, stated honestly:** today the catalogue is denominated in the operating market's currency and the
+IC pair posts on that single-currency TigerBeetle ledger. That means the principal carries a
+foreign-currency monetary asset (IC_AR in GBP/EUR against a USD functional currency) with **no booked-rate
+stamp, no period-end remeasurement, no settlement lifecycle, and no realized/unrealized FX distinction**.
+The existing `fx_hedge` register (V1_0_25) fixes rates for costing — useful treasury machinery, but it is
+not ASC 815 hedge accounting. This section closes both gaps.
+
+### 5.0 The standards map
+| Standard | Governs | In Conduit |
+|---|---|---|
+| **ASC 606** | When control transfers (customer side) — and therefore **the instant that fixes everything** on the IC hop that mirrors it | dispatch = recognition = flash title (§2.2) |
+| **ASC 830** | Foreign currency: transaction-date measurement, period-end remeasurement of monetary balances, translation/CTA | §5.2–5.4; consolidation_run already handles translation + CTA |
+| **ASC 815** | Derivatives & hedge accounting: designation, effectiveness, OCI mechanics | §5.5 |
+| **IRC §482 / OECD TPG** | Arm's-length transfer prices, year-end true-ups | §5.6 |
+
+IC revenue is **not** ASC 606 revenue (eliminated at group) — but ASC 606 discipline is exactly what makes
+the FX model deterministic: control transfer at dispatch is one instant, and that instant fixes the
+catalogue version, the spot rate, and the batch genealogy together.
+
+### 5.1 One moment fixes everything
+The **dispatch instant** binds: (a) the catalogue version in effect (`effective_from::date`, built),
+(b) the **booked spot rate** (from `exchange_rate`, source + timestamp recorded — CTRL-FXRATE-COMPLETE),
+(c) the origin batches. Order-time quotes are estimates; dispatch binds. Nothing about a later price
+version, rate move, or hedge changes a booked match — corrections are new events (true-ups §5.6,
+remeasurements §5.3), never edits. `ic_match` gains: `booked_rate NUMERIC(18,8)`, `rate_source`,
+`principal_functional_ccy CHAR(3)`, `transfer_total_functional NUMERIC(18,4)` (the principal's-books
+measure of the same fact, fixed at the same instant).
+
+### 5.2 The currency model (who bears FX risk — and why it's the principal)
+- The catalogue stays denominated **per market in the operating currency**. This is the LRD model working
+  as designed: the limited-risk distributor buys in its own functional currency and bears no FX risk; the
+  **principal bears the FX exposure** — that is part of the economic substance that justifies the residual
+  margin sitting in Singapore (the TP documentation should say so explicitly).
+- TigerBeetle stays **transaction-currency** (one ledger per currency; the IC pair balances on the
+  operating-currency ledger). The principal's functional-currency view is a **measurement layer**: stamped
+  on `ic_match` at booking (§5.1) and maintained by remeasurement postings (§5.3) — there is no second
+  "shadow pair" in TB, so conservation laws stay single-currency per leg.
+- Law (joins doc 30 when pinned): **`FX_GAINLOSS` is the only account allowed to absorb rate movement.**
+  Conservation holds per currency per leg; any difference between booked, closing, and settled measures
+  lands in exactly one named place, with the rate and source on the posting.
+
+### 5.3 Period-end remeasurement (ASC 830-20-35)
+A period-close run (joins the M13b close calendar): for each open (unsettled, unreversed) IC balance per
+entity-pair per currency, remeasure at the **closing rate**; post the **delta** since last remeasurement to
+`FX_GAINLOSS:<principal>` (unrealized) against `IC_AR` remeasurement adjunct — delta method, append-only,
+one posting per pair per period, reversible like everything else. **CTRL-IC-REMEASURE**: re-performs the
+computation from open matches + the closing rate and proves the posted delta matches to the minor unit.
+
+### 5.4 Settlement (`ic_settlement`)
+A governed settlement run (maker-checker; treasury permission):
+1. **Select & net**: open matches per entity-pair per currency (full or partial, oldest-first or explicit
+   selection — partial settlements reference exactly which matches/amounts they cover).
+2. **Settle at settlement-date spot**: cash legs (principal receives the operating currency or the netted
+   functional equivalent — record which), and the **realized FX leg** = booked measure − settled measure,
+   cleared from unrealized first (the previously-remeasured portion reclassifies, no double counting).
+3. **One matched journal**: cash + IC_AR/IC_AP relief + realized FX, deterministic ids from the settlement
+   event, `ic_settlement` rows binding the settled matches (lineage closure — A2 — extends through
+   settlements; a settled match with no settlement legs, or vice versa, fails the control).
+**CTRL-IC-SETTLE-ZERO**: after a full settlement, the netted IC pair for the covered set is exactly zero
+and `Σ realized FX = Σ (booked − settled)` per currency.
+
+### 5.5 Hedges — three concepts, kept distinct (ASC 815)
+| Concept | Accounting | Conduit mechanism |
+|---|---|---|
+| **Undesignated economic hedge** (default) | Forward MTM through P&L each period — no hedge accounting, no documentation burden | `fx_hedge` row, `designation = 'economic'`; period-close MTM posting to FX_GAINLOSS |
+| **Designated cash-flow hedge** of forecasted IC purchases/settlements | Inception documentation (instrument, hedged item, risk, effectiveness method) **before** designation; effective portion → **OCI**; reclassified to earnings when the hedged item affects earnings (the settlement / the COGS) | `fx_hedge` + new `hedge_designation` (documentation ref, hedged-item link, effectiveness method, OCI account); reclass posting tied to the settlement/recognition event it hedged |
+| **Net-investment hedge** | Gain/loss → **CTA**, with translation | consolidation_run is already hedge-aware (locked rate where designated); designation row makes the CTA routing explicit |
+
+The existing rate-fixing/drawdown machinery (`notional_used`, CTRL-HEDGE-DRAWDOWN) is kept — it becomes
+the **capacity** model under whichever designation applies. A hedge with no designation row is `economic`
+by default: **fail-closed into the simplest correct treatment**, never silently into hedge accounting
+(which has documentation preconditions a default cannot satisfy).
+
+### 5.6 Price evolution & TP true-ups (§482/OECD — not ASC 606)
+- **Prospective** changes: already built — append-only catalogue versions, maker-checker, dispatch-date
+  binding (§5.1). A price change never touches an existing match.
+- **Retrospective** (year-end arm's-length true-up): a governed **`ic_true_up` event** — one matched
+  journal pair adjusting the period's aggregate uplift, allocated **conservingly** (largest-remainder, the
+  L1 allocator) across the period's matches *for TP documentation only* — the `ic_match` rows themselves
+  are never rewritten (L6). Eliminated at group; affects entity statutory P&L; flagged to the customs/VAT
+  interplay backlog (§4) since declared values may need adjustment notices.
+- Keep the concepts distinct: **customer-side retrospective rebates are ASC 606 variable consideration**
+  (doc 24, built); **IC true-ups are §482 compliance**. They look similar (retrospective, accrue-vs-settle)
+  and share machinery (conserving allocation, append-only events), but they answer different standards and
+  must never be conflated in the matrix (A3 gets a row for each).
+
+### 5.7 Slices & acceptance (test-first, in order)
+1. **Rate stamping** — `booked_rate`/`rate_source`/functional measures on `ic_match`; FlashTitle resolves
+   the dispatch-date rate fail-closed (no rate row → recognition blocks, like an unpriced hop).
+   *Accept:* two dispatches across a rate change carry different booked rates; missing rate blocks.
+2. **Remeasurement** — close-calendar run + CTRL-IC-REMEASURE. *Accept:* open balance remeasured across
+   two period closes posts only deltas; settled/voided matches drop out; control re-performs to the minor unit.
+3. **Settlement** — netting + realized FX + lineage. *Accept:* partial then full settlement; realized =
+   booked − settled with prior unrealized reclassified, not double-counted; CTRL-IC-SETTLE-ZERO;
+   JournalLawsSuite gains a `settle` tail and the void law still nets to zero pre-settlement.
+4. **Hedge designation** — the three-concept table; OCI mechanics + reclass for cash-flow hedges.
+   *Accept:* economic hedge MTMs through P&L; designated hedge routes effective portion to OCI and
+   reclassifies on the hedged settlement; undocumented designation is rejected (fail-closed to economic).
+5. **TP true-up** — `ic_true_up` + conserving allocation + A3 rows. *Accept:* true-up conserves, eliminates
+   at group, leaves ic_match untouched.
+
+**Sequencing vs doc 29:** A2 (lineage closure) lands first and is designed **settlement-aware** (the leg
+set it closes over includes future `ic_settlement` legs); slices 1–2 are cheap and make the balances honest,
+so they go right after A2; slice 3 before A3 (so the compliance matrix covers the full lifecycle);
+slices 4–5 follow A3. New laws ("one moment fixes everything"; "FX_GAINLOSS is the only absorber") join
+doc 30 with their pinning suites, per its amendment procedure.
