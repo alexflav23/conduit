@@ -128,9 +128,14 @@ about it.
   AuditQueryRepo, Consolidation).
 
 ## 4. Slices (test-first) & acceptance
-1. **P1 DemoBook + verifier** — `DemoBookSuite` green: all controls 0 violations on the seeded world; sums
-   match script arithmetic; one lineage walk reaches the CM PO. `sbt "scripting/runMain ...DemoSeed"`
-   against compose prints the proof table.
+1. **P1 DemoBook + verifier** *(BUILT)* — `DemoBookSuite` green: all controls 0 violations on the seeded
+   world; sums match script arithmetic; one lineage walk reaches the governed agreement + the ledger.
+   `sbt "scripting/runMain com.hypervolt.conduit.scripting.DemoSeed"` against compose prints the proof table.
+   As built: 11 fulfilled orders (4 Aurora on 90-day credit terms incl. the retrospective-rebate year,
+   3 ChargeWorks with accessories + commission, 2 Northern incl. the voided 25-unit expansion, BrightHome,
+   and the below-cost clearance — voided), 220 serials over 4 Luxshare batches with cost drift, restock
+   return with flash unwind + refund, DOA scrap, partial payment, 2 payouts, commission post/claw/true-up,
+   2-unit shrinkage count, Q2 VAT remittance, Aurora rebate accrue→settle, year-end USD consolidation.
 2. **P2 ProofRoutes + permission seeds** — route×role tests (403 walls; tamper 404s when env=prod).
 3. **P3 Desk: Laws + Journal Walk + Reconcile** — Vitest for the conservation strip; Playwright: walk one
    invoice to its CM PO, run one control, see green.
