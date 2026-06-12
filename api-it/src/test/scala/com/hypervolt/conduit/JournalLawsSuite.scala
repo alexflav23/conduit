@@ -162,7 +162,14 @@ object JournalLawsSuite extends IOSuite {
       r   <- rev.recognize(did)
       _   <- IO.raiseWhen(r.isLeft)(new RuntimeException(s"recognize failed: $r"))
       _   <- rev.recognize(did) // replay sprinkled in: the idempotency law rides every history
-      tail = rnd.nextInt(3) match { case 0 => "void"; case 1 => "return1"; case _ => "none" }
+      // the settle tail (doc 28 §5.4) is pair-grain: it settles ALL open matches of the world, which is
+      // exactly the production shape — earlier none-tail lifecycles get swept into the run
+      tail = rnd.nextInt(if (flashWorld) 4 else 3) match {
+        case 0 => "void"
+        case 1 => "return1"
+        case 3 => "settle"
+        case _ => "none"
+      }
     } yield Lifecycle(ord, ol, did, billTo, qty, price, landed, transfer, serials, tail)
   }
 
@@ -213,6 +220,18 @@ object JournalLawsSuite extends IOSuite {
           d   <- svc.disposition(rma, lid, "restock", None, w.checker)
           _   <- IO.raiseWhen(d.isLeft)(new RuntimeException(s"disposition failed: $d"))
         } yield ()
+      case "settle" =>
+        val svc = new com.hypervolt.conduit.intercompany.IcSettlementService[IO](xa, ledger)
+        svc.propose(w.sg, w.op, "GBP", java.time.LocalDate.now(), w.maker).map(_.toOption.get).flatMap { sid =>
+          svc.approve(sid, w.checker).flatMap {
+            // every open match may already be settled/voided by earlier tails — a legitimate no-op
+            case Left(e) if e.contains("nothing to settle") => IO.unit
+            case Left(e)                                    => IO.raiseError(new RuntimeException(s"settle failed: $e"))
+            // replay: a second approve must refuse (status guard), never double-post
+            case Right(_) =>
+              svc.approve(sid, w.checker).flatMap(r => IO.raiseWhen(r.isRight)(new RuntimeException("double settle")))
+          }
+        }
       case _ => IO.unit
     }
   }
@@ -291,8 +310,14 @@ object JournalLawsSuite extends IOSuite {
             bal(client, TbIds.accountId(s"IC_AP:${w.op}:${w.sg}")),
             bal(client, TbIds.accountId(s"IC_AR:${w.sg}:${w.op}"))
         ).tupled
+        // the global controls hold over whatever the generator produced — settlements included
+        runner = new com.hypervolt.conduit.close.ControlRunner[IO](xa)
+        settleCtrl  <- runner.run("CTRL-IC-SETTLE-ZERO", None).map(_.toOption.get.violations)
+        closureCtrl <- runner.run("CTRL-LINEAGE-CLOSURE", None).map(_.toOption.get.violations)
       } yield expect(checks.forall(identity)) and
-        expect(pair._1._2 - pair._1._1 == pair._2._1 - pair._2._2) and    // AP net credit == AR net debit, always
-        expect(voidZero.nonEmpty || lcs.forall(_.tail != "void") || true) // structural: evaluated above per-history
+        expect(pair._1._2 - pair._1._1 == pair._2._1 - pair._2._2) and        // AP net credit == AR net debit, always
+        expect(voidZero.nonEmpty || lcs.forall(_.tail != "void") || true) and // structural: evaluated above per-history
+        expect.same(settleCtrl, 0L) and
+        expect.same(closureCtrl, 0L)
   }
 }

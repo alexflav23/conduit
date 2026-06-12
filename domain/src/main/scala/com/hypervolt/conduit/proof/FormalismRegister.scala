@@ -34,7 +34,14 @@ object FormalismRegister {
       "For any valid lifecycle: COGS lands at transfer under flash title else landed; group margin = operating + principal with the IC pair in lockstep; unwound uplift carries the uplift's sign and never exceeds it; a fully-voided lifecycle nets every touched account to exactly zero.",
       "The Journal (single writer of gl_entry), the posters, FlashTitle, ic_match.",
       "The void bug (2026-06-12): reversal enumerated legs 0–3 only — the IC pair was left standing and inventory misstated by the markup. The margin sign law itself was mis-stated once and corrected by a generated counterexample.",
-      List(suite("JournalLawsSuite"), control("CTRL-INV-CONSERVATION"), control("CTRL-IC-MATCH"))
+      List(
+        suite("JournalLawsSuite"),
+        control("CTRL-INV-CONSERVATION"),
+        control("CTRL-IC-MATCH"),
+        control("CTRL-IC-REMEASURE"),
+        control("CTRL-HEDGE-LOCK"),
+        control("CTRL-IC-SETTLE-ZERO")
+      )
     ),
     Law(
       "L3",
