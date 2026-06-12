@@ -160,6 +160,25 @@ A governed settlement run (maker-checker; treasury permission):
 **CTRL-IC-SETTLE-ZERO**: after a full settlement, the netted IC pair for the covered set is exactly zero
 and `Σ realized FX = Σ (booked − settled)` per currency.
 
+### 5.4b Hedge-locked booking (slice 2b — the treasury reality)
+Hedges are negotiated **at the start of a fiscal period with 6–12 month validities**, fixing the rate for a
+pair for the window. The system encodes them as the existing `fx_hedge` register rows (pair, entity,
+contracted rate, `valid_from`/`valid_to`, notional capacity) — created at period start as treasury data,
+maker-checker like everything governed. They participate in the IC lifecycle as **rate-locks**:
+- **Booking**: `stampRate` resolves **hedge → spot → fail-closed**. A live hedge covering
+  (txn ccy → principal functional ccy) for the principal at the dispatch date, with remaining capacity ≥ the
+  uplift exposure, books the match at the **contracted rate** (`rate_source = 'hedge:<id>'`) and draws down
+  capacity. Insufficient capacity falls through to spot — never a partial split at the match grain.
+  Below-cost (negative-uplift) matches never draw a hedge.
+- **The drawdown is the live exposure**, atomic with the match row (redelivery cannot double-draw): a partial
+  return releases the unwound share; a void releases the remainder. `fx_hedge.ic_drawdown` tracks the
+  IC-booked exposure separately from `notional_used` (which M12 movements also consume), so
+  **CTRL-HEDGE-LOCK** can assert exact equality: per hedge, `ic_drawdown == Σ live hedge-booked exposure`.
+- **Remeasurement**: hedge-booked matches are **locked** — excluded from the §5.3 remeasure base entirely.
+  A fixed rate has no FX variability to absorb; any difference at settlement execution is realized in §5.4.
+  (This is the estate's existing hedge-locked treatment extended to the IC hop; full ASC 815 designation —
+  cash-flow OCI mechanics, effectiveness — remains slice 4/§5.5.)
+
 ### 5.5 Hedges — three concepts, kept distinct (ASC 815)
 | Concept | Accounting | Conduit mechanism |
 |---|---|---|

@@ -49,12 +49,16 @@ final class IcRemeasurementService[F[_]: Async](xa: Transactor[F], ledger: Tiger
   def run(asOf: LocalDate): F[Either[String, List[RemeasureLine]]] =
     pairs.transact(xa).flatMap(_.traverse(remeasure(asOf, _)).map(_.sequence.map(_.flatten)))
 
-  // Every (principal, operating, txn ccy) pair that ever flashed cross-currency — including fully-voided
-  // pairs, whose cumulative remeasurements must true back to zero.
+  // Every (principal, operating, txn ccy) pair with FLOATING cross-currency exposure — hedge-locked
+  // matches never remeasure (doc 28 §5.4b), so a fully-hedged pair does not even enter the run; pairs with
+  // remeasurement history stay in, so a fully-voided pair trues its cumulative deltas back to zero.
   private def pairs: ConnectionIO[List[(UUID, UUID, String, String)]] =
     sql"""SELECT DISTINCT m.procurement_entity_id, m.operating_entity_id, m.currency, e.functional_currency
           FROM ic_match m JOIN entity e ON e.id = m.procurement_entity_id
-          WHERE e.functional_currency <> m.currency"""
+          WHERE e.functional_currency <> m.currency AND COALESCE(m.rate_source, '') NOT LIKE 'hedge:%'
+          UNION
+          SELECT r.procurement_entity_id, r.operating_entity_id, r.txn_currency, r.functional_currency
+          FROM ic_remeasurement r"""
       .query[(UUID, UUID, String, String)]
       .to[List]
 
@@ -105,11 +109,13 @@ final class IcRemeasurementService[F[_]: Async](xa: Transactor[F], ledger: Tiger
       asOf: LocalDate
   ): ConnectionIO[Either[String, (BigDecimal, BigDecimal, BigDecimal, BigDecimal, String)]] =
     (
+      // hedge-booked matches are LOCKED at the contracted rate (doc 28 §5.4b) — a fixed rate has no FX
+      // variability to absorb, so they never enter the remeasure base
       sql"""SELECT COALESCE(SUM(uplift_total - returned_uplift), 0),
                    COALESCE(SUM((uplift_total - returned_uplift) * COALESCE(booked_rate, 1)), 0)
             FROM ic_match
             WHERE procurement_entity_id = $pr AND operating_entity_id = $op AND currency = $txnCcy
-              AND reversed_at IS NULL"""
+              AND reversed_at IS NULL AND COALESCE(rate_source, '') NOT LIKE 'hedge:%'"""
         .query[(BigDecimal, BigDecimal)]
         .unique,
       sql"""SELECT COALESCE(SUM(delta), 0) FROM ic_remeasurement
