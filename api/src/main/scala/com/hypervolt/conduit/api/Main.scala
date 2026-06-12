@@ -118,6 +118,9 @@ object Main extends IOApp.Simple {
         val taxRoutes         = new com.hypervolt.conduit.api.routes.TaxRoutes[IO](xa, auth).routes
         val procurementRoutes = new com.hypervolt.conduit.api.routes.ProcurementRoutes[IO](xa, auth).routes
         val structureRoutes   = new com.hypervolt.conduit.api.routes.EntityStructureRoutes[IO](xa, auth).routes
+        // the Tamper Sandbox shares the dev-token gate: it exists only outside prod (doc 31 §2.5)
+        val proofRoutes =
+          new com.hypervolt.conduit.api.routes.ProofRoutes[IO](xa, auth, tamperEnabled = cfg.env != "prod").routes
         // PII key-encryption-key: from the secrets-injected PII_KEK (base64, 32 bytes) in prod; dev falls back to a
         // fixed local key (doc 19 §B.1/§B.3). The KEK only WRAPS per-subject DEKs; it never touches plaintext PII.
         val piiKek = sys.env
@@ -135,7 +138,7 @@ object Main extends IOApp.Simple {
             "/" -> (HealthRoutes
               .routes[
                 IO
-              ] <+> accessRoutes <+> pricingRoutes <+> commerceRoutes <+> dealDeskRoutes <+> h6qRoutes <+> icRoutes <+> creditRoutes <+> auditRoutes <+> stripeRoutes <+> documentRoutes <+> attachmentRoutes <+> voidRoutes <+> lifecycleRoutes <+> taxRoutes <+> procurementRoutes <+> structureRoutes <+> privacyRoutes)
+              ] <+> accessRoutes <+> pricingRoutes <+> commerceRoutes <+> dealDeskRoutes <+> h6qRoutes <+> icRoutes <+> creditRoutes <+> auditRoutes <+> stripeRoutes <+> documentRoutes <+> attachmentRoutes <+> voidRoutes <+> lifecycleRoutes <+> taxRoutes <+> procurementRoutes <+> structureRoutes <+> privacyRoutes <+> proofRoutes)
           ).orNotFound
         val host      = Ipv4Address.fromString(cfg.http.host).getOrElse(ipv4"0.0.0.0")
         val apiPort   = Port.fromInt(cfg.http.port).getOrElse(port"8080")
