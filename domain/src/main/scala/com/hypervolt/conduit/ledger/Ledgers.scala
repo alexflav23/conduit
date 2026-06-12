@@ -33,6 +33,8 @@ object LedgerAccountCode {
   val InvWriteOff: Int       = 18 // inventory write-off / shrinkage / found → P&L (the INV counterpart)
   val RebateAccrual: Int =
     19 // retrospective volume-rebate liability (contra-revenue) — accrued, drawn down on settlement (doc 24 §5.5)
+  val FxGainLoss: Int  = 20 // the ONLY account allowed to absorb rate movement (doc 28 §5.2) — unrealized + realized FX
+  val IcRemeasure: Int = 21 // remeasurement adjunct to the IC receivable — functional-ledger side of ASC 830-20-35
 }
 
 object LedgerTransferCode {
@@ -42,6 +44,7 @@ object LedgerTransferCode {
   val Intercompany: Int = 30 // intercompany movement leg (doc 13 §3.3)
   val Payment: Int      = 40 // cash application — settles AR (doc 13 §payments)
   val Reversal: Int     = 50 // invoice invalidation — negates a recognition (doc 13 §void, ASC 606)
+  val Remeasure: Int    = 60 // ASC 830-20-35 period-end remeasurement delta (doc 28 §5.3)
 }
 
 // TigerBeetle transfer flags (two-phase + linking).

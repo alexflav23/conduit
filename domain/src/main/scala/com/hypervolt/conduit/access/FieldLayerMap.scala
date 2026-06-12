@@ -73,6 +73,11 @@ object FieldLayerMap {
     ("ic_match", "rate_source")               -> DataLayer.InterEntity,
     ("ic_match", "principal_functional_ccy")  -> DataLayer.InterEntity,
     ("ic_match", "transfer_total_functional") -> DataLayer.InterEntity,
+    ("ic_remeasurement", "open_txn")          -> DataLayer.InterEntity,
+    ("ic_remeasurement", "closing_rate")      -> DataLayer.InterEntity,
+    ("ic_remeasurement", "carrying_before")   -> DataLayer.InterEntity,
+    ("ic_remeasurement", "measured")          -> DataLayer.InterEntity,
+    ("ic_remeasurement", "delta")             -> DataLayer.InterEntity,
     // legal documents (doc 17 §9): the money on the artefact is commercial; the rest is logistics/identity.
     ("document", "total_amount") -> DataLayer.Commercial,
     ("document", "currency")     -> DataLayer.Commercial,
