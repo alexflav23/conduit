@@ -21,8 +21,54 @@ object FlashTitle {
       market: UUID,
       priceListId: Option[UUID],
       transferTotal: BigDecimal,
-      source: String // 'catalogue' | policy method code
+      source: String, // 'catalogue' | policy method code
+      // doc 28 §5.1 — stamped by stampRate before posting: the dispatch instant binds the booked spot rate
+      // into the principal's functional currency alongside the price version and the genealogy.
+      bookedRate: BigDecimal = BigDecimal(1),
+      rateSource: String = "identity",
+      principalCcy: String = "",
+      transferTotalFunctional: BigDecimal = BigDecimal(0)
   )
+
+  // One moment fixes everything (doc 28 §5.1): same-currency hops stamp the identity rate; a cross-currency
+  // hop books the latest provenanced spot ON OR BEFORE the dispatch date — and with no rate row it FAILS
+  // CLOSED at recognition, exactly like an unpriced hop (the LRD bears no FX; the principal's measure must
+  // exist the instant control transfers, not be backfilled).
+  def stampRate(ctx: FlashCtx, txnCurrency: String, asOf: java.time.LocalDate): ConnectionIO[Either[String, FlashCtx]] =
+    sql"SELECT functional_currency FROM entity WHERE id = ${ctx.procurementEntity}".query[String].unique.flatMap {
+      principalCcy =>
+        if (principalCcy == txnCurrency)
+          ctx
+            .copy(
+              bookedRate = BigDecimal(1),
+              rateSource = "identity",
+              principalCcy = principalCcy,
+              transferTotalFunctional = ctx.transferTotal
+            )
+            .asRight[String]
+            .pure[ConnectionIO]
+        else
+          sql"""SELECT rate, as_of::text FROM exchange_rate
+                WHERE base = $txnCurrency AND quote = $principalCcy AND rate_type = 'spot' AND as_of <= $asOf
+                ORDER BY as_of DESC LIMIT 1"""
+            .query[(BigDecimal, String)]
+            .option
+            .map {
+              case None =>
+                s"no $txnCurrency->$principalCcy spot rate on or before $asOf — an unrated cross-currency hop fails closed (doc 28 §5.1)"
+                  .asLeft[FlashCtx]
+              case Some((rate, rateDate)) =>
+                ctx
+                  .copy(
+                    bookedRate = rate,
+                    rateSource = s"spot:$rateDate",
+                    principalCcy = principalCcy,
+                    transferTotalFunctional =
+                      (ctx.transferTotal * rate).setScale(4, scala.math.BigDecimal.RoundingMode.HALF_UP)
+                  )
+                  .asRight[String]
+            }
+    }
 
   // Resolve the dispatch's transfer total as-of the recognition date. Catalogue prices every variant or the
   // whole dispatch falls back to the (from=principal, to=operating) policy; no price anywhere -> Left.
@@ -107,10 +153,12 @@ object FlashTitle {
     val prLeg = prLegId.map(BigDecimal(_))
     originBatches(dispatchId).flatMap(batches => sql"""INSERT INTO ic_match
               (dispatch_id, order_id, operating_entity_id, procurement_entity_id, price_list_id, currency,
-               landed_total, transfer_total, uplift_total, origin_batch_ids, op_leg_tb_transfer_id, pr_leg_tb_transfer_id)
+               landed_total, transfer_total, uplift_total, origin_batch_ids, op_leg_tb_transfer_id, pr_leg_tb_transfer_id,
+               booked_rate, rate_source, principal_functional_ccy, transfer_total_functional)
             VALUES ($dispatchId, $orderId, $operatingEntity, ${flash.procurementEntity}, ${flash.priceListId},
                     $currency, $landedTotal, ${flash.transferTotal}, ${flash.transferTotal - landedTotal},
-                    $batches, $opLeg, $prLeg)
+                    $batches, $opLeg, $prLeg,
+                    ${flash.bookedRate}, ${flash.rateSource}, ${flash.principalCcy}, ${flash.transferTotalFunctional})
             ON CONFLICT (dispatch_id) DO NOTHING""".update.run)
   }
 

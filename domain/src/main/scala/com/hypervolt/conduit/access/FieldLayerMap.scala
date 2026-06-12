@@ -68,6 +68,11 @@ object FieldLayerMap {
     ("ic_match", "price_list_id")         -> DataLayer.InterEntity,
     ("ic_match", "origin_batch_ids")      -> DataLayer.InterEntity,
     ("ic_match", "elimination_group_id")  -> DataLayer.InterEntity,
+    // doc 28 §5.1 — the booked-FX stamp on the hop is principal-side truth, same wall as the prices
+    ("ic_match", "booked_rate")               -> DataLayer.InterEntity,
+    ("ic_match", "rate_source")               -> DataLayer.InterEntity,
+    ("ic_match", "principal_functional_ccy")  -> DataLayer.InterEntity,
+    ("ic_match", "transfer_total_functional") -> DataLayer.InterEntity,
     // legal documents (doc 17 §9): the money on the artefact is commercial; the rest is logistics/identity.
     ("document", "total_amount") -> DataLayer.Commercial,
     ("document", "currency")     -> DataLayer.Commercial,
