@@ -166,6 +166,20 @@ Numbers are currently baked at build time — design should assume a future API 
 
 ---
 
+## 12b. Proof — (new; spec = **doc 31**, the full page-by-page contract)
+
+The interactive formal proof, gated `view:proof_center` (admin/ceo/finance/auditor). Five pages: **Laws**
+(doc 30 live register, controls re-run on click — green is earned per click, never cached), **Journal Walk**
+(invoice → DR/CR leg cards → lineage chain to the CM PO; conservation strip recomputed client-side;
+inter_entity legs ABSENT for non-holders — the wall demonstrated live), **ASC 606** (five-step walkthrough on
+a real order; = doc 29 A3's surface), **Reconcile** (trial balance, gl_vs_tb, eliminations, CTA), **Tamper
+Sandbox** (non-prod only: corrupt → control names the break → restore). Design notes: this is the room where
+the CTO/auditor lives — density like Finance, but each panel pairs *figure + the control that polices it*;
+DR/CR cards want a distinctive double-entry visual (paired, mirrored on reversal); violation rows are the one
+place semantic-red is load-bearing.
+
+---
+
 ## 13. Cross-cutting gaps the design must close (found while building this map)
 
 1. **The four states are mostly missing.** Pages render happy-path only. Every feature table row needs
