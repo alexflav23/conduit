@@ -91,6 +91,8 @@ object FlashTitle {
             .map(total => FlashCtx(procurementEntity, market, None, total, method))
       }
 
+  // Leg ids are claims (doc 29 A2): present iff the leg was posted — a zero uplift posts nothing, so the
+  // match records NULL legs and CTRL-LINEAGE-CLOSURE never chases a transfer that never existed.
   def recordMatch(
       dispatchId: UUID,
       orderId: UUID,
@@ -98,16 +100,19 @@ object FlashTitle {
       flash: FlashCtx,
       currency: String,
       landedTotal: BigDecimal,
-      opLegId: BigInt,
-      prLegId: BigInt
-  ): ConnectionIO[Int] =
+      opLegId: Option[BigInt],
+      prLegId: Option[BigInt]
+  ): ConnectionIO[Int] = {
+    val opLeg = opLegId.map(BigDecimal(_))
+    val prLeg = prLegId.map(BigDecimal(_))
     originBatches(dispatchId).flatMap(batches => sql"""INSERT INTO ic_match
               (dispatch_id, order_id, operating_entity_id, procurement_entity_id, price_list_id, currency,
                landed_total, transfer_total, uplift_total, origin_batch_ids, op_leg_tb_transfer_id, pr_leg_tb_transfer_id)
             VALUES ($dispatchId, $orderId, $operatingEntity, ${flash.procurementEntity}, ${flash.priceListId},
                     $currency, $landedTotal, ${flash.transferTotal}, ${flash.transferTotal - landedTotal},
-                    $batches, ${BigDecimal(opLegId)}, ${BigDecimal(prLegId)})
+                    $batches, $opLeg, $prLeg)
             ON CONFLICT (dispatch_id) DO NOTHING""".update.run)
+  }
 
   private def variantQtys(dispatchId: UUID): ConnectionIO[List[(UUID, Int)]] =
     sql"""SELECT ol.product_variant_id, SUM(dl.qty)::int
@@ -140,11 +145,20 @@ object FlashTitle {
       .option
 
   // Full void: stamp the reversal on the match (append-only row, columns only ever NULL -> value once).
-  def stampReversal(dispatchId: UUID, reversalId: UUID, opLeg: BigInt, prLeg: BigInt): ConnectionIO[Int] =
+  // Reversal legs are claims like the originals: None when the uplift was zero and nothing posted.
+  def stampReversal(
+      dispatchId: UUID,
+      reversalId: UUID,
+      opLeg: Option[BigInt],
+      prLeg: Option[BigInt]
+  ): ConnectionIO[Int] = {
+    val op = opLeg.map(BigDecimal(_))
+    val pr = prLeg.map(BigDecimal(_))
     sql"""UPDATE ic_match
           SET reversed_at = now(), reversal_id = $reversalId,
-              rev_op_leg_tb_transfer_id = ${BigDecimal(opLeg)}, rev_pr_leg_tb_transfer_id = ${BigDecimal(prLeg)}
+              rev_op_leg_tb_transfer_id = $op, rev_pr_leg_tb_transfer_id = $pr
           WHERE dispatch_id = $dispatchId AND reversed_at IS NULL""".update.run
+  }
 
   // Partial return: the per-unit uplift share for a serial's dispatch (uniform over the dispatched units),
   // accumulated on the match so CTRL-IC-MATCH can prove Σ(unwound) <= uplift_total.

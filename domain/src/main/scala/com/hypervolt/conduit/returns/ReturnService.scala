@@ -219,7 +219,7 @@ final class ReturnService[F[_]: Async](xa: Transactor[F], ledger: TigerBeetleLed
           case Right(_) =>
             val cost = line.unitLandedCost.getOrElse(BigDecimal(0))
             val invLeg = choice match {
-              case "restock" | "refurbish" if line.entityId.isDefined && cost > 0 =>
+              case "restock" | "refurbish" if line.entityId.isDefined && minor(cost) > 0 =>
                 journal.postOne(
                   Instant.now(),
                   Posting(
@@ -230,7 +230,7 @@ final class ReturnService[F[_]: Async](xa: Transactor[F], ledger: TigerBeetleLed
                     Currency.GBP,
                     minor(cost)
                   )
-                )
+                ) *> claimRestock(lineId)
               case _ => Async[F].unit
             }
             // doc 28 §2.5: a returned unit under flash title unwinds its pro-rata share of the IC uplift —
@@ -240,7 +240,7 @@ final class ReturnService[F[_]: Async](xa: Transactor[F], ledger: TigerBeetleLed
               case ("restock" | "refurbish", Some(sid)) =>
                 com.hypervolt.conduit.intercompany.FlashTitle.upliftShareForSerial(sid).transact(xa).flatMap {
                   case None => Async[F].unit
-                  case Some((dispatchId, op, pr, share)) if share != 0 =>
+                  case Some((dispatchId, op, pr, share)) if minor(share.abs) > 0 =>
                     val e2     = Some(op)
                     val pe     = Some(pr)
                     val icAp   = JournalAccount(s"IC_AP:$op:$pr", LedgerAccountCode.Intercompany, e2)
@@ -256,7 +256,7 @@ final class ReturnService[F[_]: Async](xa: Transactor[F], ledger: TigerBeetleLed
                         Posting(lineId, 2, opPair._1, opPair._2, Currency.GBP, amt),
                         Posting(lineId, 3, prPair._1, prPair._2, Currency.GBP, amt)
                       )
-                    ) *> com.hypervolt.conduit.intercompany.FlashTitle
+                    ) *> claimUnwind(lineId) *> com.hypervolt.conduit.intercompany.FlashTitle
                       .accumulateReturnedUplift(dispatchId, share)
                       .transact(xa)
                       .void
@@ -365,8 +365,13 @@ final class ReturnService[F[_]: Async](xa: Transactor[F], ledger: TigerBeetleLed
               _ <-
                 if (rule.commissionTreatment == "claw") clawCommission(rmaId).transact(xa).flatMap(effectClaw)
                 else ().pure[F]
+              refundArTid  = Option.when(minor(refund) > 0)(BigDecimal(TbIds.transferId(rmaId, 10)))
+              refundVatTid = Option.when(minor(vat) > 0)(BigDecimal(TbIds.transferId(rmaId, 11)))
+              legacyGroup  = refundArTid.map(_.toBigInt.toString)
               _ <-
-                sql"UPDATE rma SET status='refunded', tb_reversal_group=${TbIds.transferId(rmaId, 10).toString}, updated_at=now() WHERE id=$rmaId".update.run
+                sql"""UPDATE rma SET status='refunded', tb_reversal_group=$legacyGroup,
+                        refund_ar_transfer_id=$refundArTid, refund_vat_transfer_id=$refundVatTid, updated_at=now()
+                      WHERE id=$rmaId""".update.run
                   .transact(xa)
               _ <-
                 OutboxRepo
@@ -427,6 +432,17 @@ final class ReturnService[F[_]: Async](xa: Transactor[F], ledger: TigerBeetleLed
     }
 
   // ----- helpers -----
+
+  // Lineage claims (doc 29 A2): the posted legs' deterministic ids land on the line so
+  // CTRL-LINEAGE-CLOSURE can walk gl_entry back to this disposition. Stamped iff posted.
+  private def claimRestock(lineId: UUID): F[Unit] =
+    sql"""UPDATE rma_line SET restock_tb_transfer_id = ${BigDecimal(TbIds.transferId(lineId, 1))}
+          WHERE id = $lineId""".update.run.transact(xa).void
+
+  private def claimUnwind(lineId: UUID): F[Unit] =
+    sql"""UPDATE rma_line SET unwind_op_tb_transfer_id = ${BigDecimal(TbIds.transferId(lineId, 2))},
+                              unwind_pr_tb_transfer_id = ${BigDecimal(TbIds.transferId(lineId, 3))}
+          WHERE id = $lineId""".update.run.transact(xa).void
 
   private def vatRateFor(rmaId: UUID): ConnectionIO[BigDecimal] =
     sql"""SELECT COALESCE(MAX(tr.rate_percent), 0) FROM rma_line rl

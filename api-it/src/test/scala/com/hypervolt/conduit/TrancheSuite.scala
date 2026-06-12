@@ -165,8 +165,11 @@ object TrancheSuite extends IOSuite {
       _  <- alloc.allocate(ln, Some(t), e, v, 300, serialised = false)
       d1 <- disp.dispatch(o, Some(t), None, None, List(DispatchLineInput(ln, 200, Nil)))
       d2 <- disp.dispatch(o, Some(t), None, None, List(DispatchLineInput(ln, 100, Nil))) // completes the tranche
+      // keyed by dispatched qty (200-unit leg first), not by id — UUID order is random and was a flake
       costs <-
-        sql"SELECT shipping_cost FROM dispatch WHERE tranche_id = $t ORDER BY id"
+        sql"""SELECT d.shipping_cost FROM dispatch d
+              JOIN dispatch_line dl ON dl.dispatch_id = d.id
+              WHERE d.tranche_id = $t ORDER BY dl.qty DESC"""
           .query[BigDecimal]
           .to[List]
           .transact(xa)

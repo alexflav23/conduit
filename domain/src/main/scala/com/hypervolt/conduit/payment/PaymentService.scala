@@ -155,7 +155,15 @@ final class PaymentService[F[_]: Async](xa: Transactor[F], ledger: TigerBeetleLe
             transferCode = LedgerTransferCode.Payment
           )
         )
-        ledger.createAccounts(accounts) *> journal.post(Instant.now(), postings).as(().asRight[String])
+        // The payout legs had no fact table at all — the claim row closes the lineage (doc 29 A2).
+        val bankTid = Option.when(minor(gross - fee) > 0)(BigDecimal(TbIds.transferId(ev, 0)))
+        val feeTid  = Option.when(minor(fee) > 0)(BigDecimal(TbIds.transferId(ev, 1)))
+        ledger.createAccounts(accounts) *> journal.post(Instant.now(), postings) *>
+          sql"""INSERT INTO payment_payout (payout_ref, bank_tb_transfer_id, fee_tb_transfer_id)
+                VALUES ($payoutRef, $bankTid, $feeTid)
+                ON CONFLICT (payout_ref) DO NOTHING""".update.run
+            .transact(xa)
+            .as(().asRight[String])
     }
 
   // Refund (doc 13 §void): money goes back to the customer — the reverse of a settlement. DR AR:<bill_to> /

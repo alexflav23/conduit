@@ -112,13 +112,17 @@ final class StockOpsService[F[_]: Async](xa: Transactor[F], ledger: TigerBeetleL
             val entity = entityOpt.getOrElse(new UUID(0L, 0L))
             for {
               vs <- variances(countId).transact(xa)
-              _  <- vs.traverse_ { case (variant, variance) => ledgerForVariance(entity, variant, variance) }
-              _  <- postCount(countId, location, entity, approver).transact(xa)
+              _ <- vs.traverse_ {
+                case (lineId, variant, variance) => ledgerForVariance(entity, lineId, variant, variance)
+              }
+              _ <- postCount(countId, location, entity, approver).transact(xa)
             } yield ().asRight[String]
           }
       }
 
-  private def ledgerForVariance(entity: UUID, variant: UUID, variance: Int): F[Unit] =
+  // The variance event is the count LINE — a deterministic id (replay no-op, doc 30 L4; a random UUID here
+  // was an uncontrolled posting) claimed on the line so CTRL-LINEAGE-CLOSURE walks gl_entry back to the count.
+  private def ledgerForVariance(entity: UUID, lineId: UUID, variant: UUID, variance: Int): F[Unit] =
     if (variance == 0) Async[F].unit
     else
       variantCost(variant).flatMap { unit =>
@@ -127,13 +131,18 @@ final class StockOpsService[F[_]: Async](xa: Transactor[F], ledger: TigerBeetleL
         val (debit, credit) =
           if (variance < 0) (writeOffLeg(entity), invLeg(entity))
           else (invLeg(entity), writeOffLeg(entity))
-        journal.postOne(Instant.now(), Posting(UUID.randomUUID(), 0, debit, credit, Currency.GBP, amount))
+        if (amount <= 0) Async[F].unit
+        else
+          journal.postOne(Instant.now(), Posting(lineId, 0, debit, credit, Currency.GBP, amount)) *>
+            sql"UPDATE stock_count_line SET tb_transfer_id = ${BigDecimal(TbIds.transferId(lineId, 0))} WHERE id = $lineId".update.run
+              .transact(xa)
+              .void
       }
 
   private def postCount(countId: UUID, location: UUID, entity: UUID, approver: UUID): ConnectionIO[Unit] =
     variances(countId).flatMap { vs =>
       vs.traverse_ {
-        case (variant, variance) =>
+        case (_, variant, variance) =>
           sql"""INSERT INTO stock_movement (type, product_variant_id, location_id, entity_id, qty, ref_type, ref_id, reason_code, actor_user_id)
               VALUES ('count_correction', $variant, $location, $entity, $variance, 'stock_count', $countId, 'cycle_count', $approver)""".update.run.void *>
             sql"UPDATE stock_item SET qty_on_hand = qty_on_hand + $variance, updated_at = now() WHERE entity_id = $entity AND product_variant_id = $variant AND location_id = $location".update.run.void
@@ -190,8 +199,10 @@ final class StockOpsService[F[_]: Async](xa: Transactor[F], ledger: TigerBeetleL
       .query[(UUID, UUID, UUID, List[String], Int, UUID, String)]
       .option
 
-  private def variances(countId: UUID): ConnectionIO[List[(UUID, Int)]] =
-    sql"SELECT product_variant_id, variance FROM stock_count_line WHERE count_id = $countId".query[(UUID, Int)].to[List]
+  private def variances(countId: UUID): ConnectionIO[List[(UUID, UUID, Int)]] =
+    sql"SELECT id, product_variant_id, variance FROM stock_count_line WHERE count_id = $countId"
+      .query[(UUID, UUID, Int)]
+      .to[List]
 
   private def costOf(serials: List[String], variant: UUID, qty: Int): F[BigDecimal] =
     if (serials.nonEmpty)

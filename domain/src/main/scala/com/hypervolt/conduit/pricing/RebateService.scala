@@ -190,7 +190,8 @@ final class RebateService[F[_]: Async](xa: Transactor[F], ledger: TigerBeetleLed
                   ccy,
                   delta
                 )
-              ) *> emit(agreementId, "pricing.rebate.accrued", Json.obj("earned" -> earned.toString.asJson))
+              ) *> (claimPosting(agreementId, "accrue", id) *>
+                emit(agreementId, "pricing.rebate.accrued", Json.obj("earned" -> earned.toString.asJson)))
                 .transact(xa)
                 .void
             }
@@ -227,12 +228,14 @@ final class RebateService[F[_]: Async](xa: Transactor[F], ledger: TigerBeetleLed
               if (delta == 0) Async[F].unit
               else if (delta > 0)
                 journal.postOne(asOf, Posting(id, 0, revenueAcc, accrualAcc, ccy, delta)) *>
-                  emit(agreementId, "pricing.rebate.accrued", Json.obj("expected" -> expected.toString.asJson))
+                  (claimPosting(agreementId, "trueup_up", id) *>
+                    emit(agreementId, "pricing.rebate.accrued", Json.obj("expected" -> expected.toString.asJson)))
                     .transact(xa)
                     .void
               else
                 journal.postOne(asOf, Posting(id, 0, accrualAcc, revenueAcc, ccy, -delta)) *>
-                  emit(agreementId, "pricing.rebate.trued_up", Json.obj("expected" -> expected.toString.asJson))
+                  (claimPosting(agreementId, "trueup_down", id) *>
+                    emit(agreementId, "pricing.rebate.trued_up", Json.obj("expected" -> expected.toString.asJson)))
                     .transact(xa)
                     .void
             }
@@ -306,11 +309,19 @@ final class RebateService[F[_]: Async](xa: Transactor[F], ledger: TigerBeetleLed
                 minor(amount)
               )
             ) *> (RebateRepo.markApproved(settlementId, approver) *>
+              claimPosting(agreementId, "settle", id) *>
               emit(agreementId, "pricing.rebate.settled", Json.obj("amount" -> amount.toString.asJson)))
               .transact(xa)
               .as(().asRight[String])
         }
     }
+
+  // Rebate ids are deterministic (TB no-op on re-run) but were never persisted — reproducible-by-design is
+  // not traceable-by-SQL. The claim row lets CTRL-LINEAGE-CLOSURE walk each posted movement back here.
+  private def claimPosting(agreementId: UUID, kind: String, eventId: UUID): ConnectionIO[Int] =
+    sql"""INSERT INTO rebate_posting (tb_transfer_id, agreement_id, kind)
+          VALUES (${BigDecimal(TbIds.transferId(eventId, 0))}, $agreementId, $kind)
+          ON CONFLICT (tb_transfer_id) DO NOTHING""".update.run
 
   private def emit(agreementId: UUID, eventType: String, payload: Json): ConnectionIO[Int] =
     OutboxRepo.append(

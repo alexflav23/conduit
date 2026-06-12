@@ -189,7 +189,14 @@ final class InvoiceReversalService[F[_]: Async](xa: Transactor[F], ledger: Tiger
       reason: String,
       actor: String,
       causedBy: Option[UUID]
-  ): ConnectionIO[Either[String, InvoiceReversalResult]] =
+  ): ConnectionIO[Either[String, InvoiceReversalResult]] = {
+    // Claims iff posted (doc 29 A2): each reversal leg's id is recorded exactly when the Journal posted it.
+    val claim          = (leg: Int, amount: BigDecimal) => Option.when(minor(amount) > 0)(BigDecimal(TbIds.transferId(rid, leg)))
+    val revArTid       = claim(0, h.revenueExVat)
+    val revVatTid      = claim(1, h.vat)
+    val revCogsTid     = claim(2, h.flashLanded.getOrElse(h.cogs))
+    val revCarriageTid = claim(3, h.shipping)
+    val revUpliftLeg   = (l: Int) => h.flashUplift.filter(u => minor(u.abs) > 0).map(_ => TbIds.transferId(rid, l))
     for {
       // cancellations carry the genealogy (doc 28 §2.5): the match row is stamped with the reversal thread
       _ <-
@@ -197,20 +204,20 @@ final class InvoiceReversalService[F[_]: Async](xa: Transactor[F], ledger: Tiger
           .filter(_ => h.flashProcurement.isDefined)
           .traverse_(d =>
             com.hypervolt.conduit.intercompany.FlashTitle
-              .stampReversal(d, rid, TbIds.transferId(rid, 4), TbIds.transferId(rid, 5))
+              .stampReversal(d, rid, revUpliftLeg(4), revUpliftLeg(5))
           )
       _ <- sql"""INSERT INTO invoice_reversal
                 (id, order_invoice_id, order_id, dispatch_id, invoice_no, kind, reason, currency,
                  reversed_revenue_ex_vat, reversed_vat, reversed_cogs,
-                 rev_ar_transfer_id, rev_vat_transfer_id, rev_cogs_transfer_id, created_by)
+                 rev_ar_transfer_id, rev_vat_transfer_id, rev_cogs_transfer_id, rev_carriage_transfer_id, created_by)
               VALUES ($rid, $orderInvoiceId, ${h.orderId}, ${h.dispatchId}, ${h.invoiceNo}, $kind, $reason, ${h.currency},
                  ${h.revenueExVat}, ${h.vat}, ${h.cogs},
-                 ${TbIds.transferId(rid, 0).toString}::numeric, ${TbIds.transferId(rid, 1).toString}::numeric,
-                 ${TbIds.transferId(rid, 2).toString}::numeric, $actor)""".update.run
+                 $revArTid, $revVatTid, $revCogsTid, $revCarriageTid, $actor)""".update.run
       _ <- sql"""UPDATE order_invoice SET status = 'void', voided_at = now(), void_reason = $reason, void_kind = $kind
               WHERE id = $orderInvoiceId""".update.run
       _ <- OutboxRepo.append(event(rid, orderInvoiceId, h, kind, reason, causedBy, actor))
     } yield InvoiceReversalResult(rid, h.invoiceNo, kind, h.revenueExVat + h.vat, "void").asRight[String]
+  }
 
   // correlation = rid (the cycle thread, which is also this event's id); causation = the void request that triggered it.
   private def event(

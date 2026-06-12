@@ -329,6 +329,14 @@ final class RevenueRecognitionService[F[_]: Async](xa: Transactor[F], ledger: Ti
     // Under flash title (doc 28) the operating entity's COGS — the figure its P&L reports — is the TRANSFER
     // price; the landed/uplift decomposition lives ONLY in ic_match, behind the inter_entity wall.
     val opCogs = ctx.flash.fold(ctx.cogs)(_.transferTotal)
+    // Claims iff posted (doc 29 A2): the Journal drops zero-amount legs, so a stamped id with no gl mirror
+    // would be a false claim CTRL-LINEAGE-CLOSURE rightly rejects.
+    def claim(leg: Int, amount: BigDecimal) =
+      Option.when(minor(amount) > 0)(BigDecimal(TbIds.transferId(dispatchId, leg)))
+    val arTid       = claim(0, ctx.rev)
+    val vatTid      = claim(1, vatAmt)
+    val cogsTid     = claim(2, ctx.cogs)
+    val carriageTid = claim(3, ctx.shipping)
     sql"""INSERT INTO revenue_recognition
             (dispatch_id, order_id, invoice_no, entity_id, currency, revenue_ex_vat, vat, cogs, gross_margin,
              vat_jurisdiction, tax_quote_id, shipping_cost, ar_transfer_id, vat_transfer_id, cogs_transfer_id,
@@ -338,14 +346,12 @@ final class RevenueRecognitionService[F[_]: Async](xa: Transactor[F], ledger: Ti
              ${h.entityId}, ${h.currency}, ${ctx.rev}, $vatAmt, $opCogs, ${ctx.rev - opCogs}, ${h.jurisdiction},
              (SELECT id FROM tax_quote WHERE order_invoice_id = ${ctx.invoiceId} AND context = 'invoice'
                 ORDER BY determined_at DESC LIMIT 1),
-             ${ctx.shipping},
-             ${TbIds.transferId(dispatchId, 0).bigInteger.toString}::numeric,
-             ${TbIds.transferId(dispatchId, 1).bigInteger.toString}::numeric,
-             ${TbIds.transferId(dispatchId, 2).bigInteger.toString}::numeric,
-             ${TbIds.transferId(dispatchId, 3).bigInteger.toString}::numeric)
+             ${ctx.shipping}, $arTid, $vatTid, $cogsTid, $carriageTid)
           ON CONFLICT (dispatch_id) DO NOTHING""".update.run
       .flatTap { _ =>
-        ctx.flash.traverse_(f =>
+        ctx.flash.traverse_ { f =>
+          val upliftLeg =
+            (l: Int) => Option.when(minor((f.transferTotal - ctx.cogs).abs) > 0)(TbIds.transferId(dispatchId, l))
           h.entityId.traverse_(op =>
             com.hypervolt.conduit.intercompany.FlashTitle.recordMatch(
               dispatchId,
@@ -354,11 +360,11 @@ final class RevenueRecognitionService[F[_]: Async](xa: Transactor[F], ledger: Ti
               f,
               h.currency,
               ctx.cogs,
-              TbIds.transferId(dispatchId, 4),
-              TbIds.transferId(dispatchId, 5)
+              upliftLeg(4),
+              upliftLeg(5)
             )
           )
-        )
+        }
       }
       .flatMap { n =>
         OutboxRepo

@@ -33,15 +33,21 @@ object CommissionRepo {
       amount: BigDecimal,
       currency: String,
       status: String,
-      tbTransferId: String,
+      tbTransferId: Option[String],
       kind: String = "accrual"
   ): ConnectionIO[Int] =
     sql"""INSERT INTO commission_entry
             (id, agent_id, scheme_id, order_id, basis_amount, rate_applied, amount, currency, kind, status, tb_transfer_id)
           VALUES ($entryId, $agentId, $schemeId, $orderId, $basis, $rate, $amount, $currency, $kind, $status, $tbTransferId)""".update.run
 
-  def setStatus(entryId: UUID, status: String): ConnectionIO[Int] =
-    sql"UPDATE commission_entry SET status = $status WHERE id = $entryId".update.run
+  // The post/claw settle transfer is its own posting with its own deterministic id — claimed alongside the
+  // status flip so the lineage closes over the two-phase pair (doc 29 A2).
+  def setStatus(entryId: UUID, status: String, settleTransferId: Option[BigInt] = None): ConnectionIO[Int] = {
+    val settle = settleTransferId.map(BigDecimal(_))
+    sql"""UPDATE commission_entry SET status = $status,
+            settle_tb_transfer_id = COALESCE($settle, settle_tb_transfer_id)
+          WHERE id = $entryId""".update.run
+  }
 
   def postedTotal(agentId: UUID): ConnectionIO[BigDecimal] =
     sql"SELECT COALESCE(SUM(amount), 0) FROM commission_entry WHERE agent_id = $agentId AND status = 'posted'"

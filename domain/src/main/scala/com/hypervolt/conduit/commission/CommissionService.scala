@@ -60,7 +60,7 @@ final class CommissionService[F[_]: Async](xa: Transactor[F], ledger: TigerBeetl
           amount,
           currency,
           "pending",
-          transferId.toString
+          Option.when(minor(amount) > 0)(transferId.toString)
         )
         .transact(xa)
         .as(entryId)
@@ -68,11 +68,11 @@ final class CommissionService[F[_]: Async](xa: Transactor[F], ledger: TigerBeetl
 
   def post(entryId: UUID, amount: BigDecimal): F[Unit] =
     journal.postPending(Instant.now(), entryId, 1, (entryId, 0), minor(amount)) *>
-      CommissionRepo.setStatus(entryId, "posted").transact(xa).void
+      CommissionRepo.setStatus(entryId, "posted", Some(TbIds.transferId(entryId, 1))).transact(xa).void
 
   def claw(entryId: UUID): F[Unit] =
     journal.voidPending(Instant.now(), entryId, 2, (entryId, 0)) *>
-      CommissionRepo.setStatus(entryId, "clawed").transact(xa).void
+      CommissionRepo.setStatus(entryId, "clawed", Some(TbIds.transferId(entryId, 2))).transact(xa).void
 
   // Statement reconciliation: posted commission entries for an agent must equal the COMM_PAYABLE posted credits.
   def statementTotal(agentId: UUID): F[BigDecimal] = CommissionRepo.postedTotal(agentId).transact(xa)
@@ -117,7 +117,8 @@ final class CommissionService[F[_]: Async](xa: Transactor[F], ledger: TigerBeetl
           delta,
           currency,
           "posted",
-          transferId.toString,
+          // a zero delta posts nothing — the claim must be empty too, or lineage closure chases a ghost
+          Option.when(absMinor > 0)(transferId.toString),
           kind = "true_up_adjustment"
         )
         .transact(xa)

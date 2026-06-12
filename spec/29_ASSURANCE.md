@@ -29,7 +29,7 @@ sequence, assert the global laws:
 “Proven” = laws that thousands of generated histories cannot break — the standard the money core already
 meets (`allocate` conservation). New laws discovered while writing A3 join the table.
 
-### A2. Lineage closure as a shipped control — `CTRL-LINEAGE-CLOSURE`
+### A2. Lineage closure as a shipped control — `CTRL-LINEAGE-CLOSURE` *(BUILT, V1_0_64)*
 One re-performable control, both directions, NO orphans:
 - forward: any GL/P&L figure → `gl_entry` rows → TB transfer ids → source event (dispatch / reversal / RMA /
   payment / rebate) → business document (order, invoice, PO, batch, RMA);
@@ -38,6 +38,18 @@ One re-performable control, both directions, NO orphans:
 Registered in the controls register (re-performable by auditors on live data). The api-it suite proves it
 DETECTS corruption: seed a lifecycle, delete one leg / orphan one transfer → control fails with the precise
 identity of the break.
+
+**As built:** the pre-work was a claims audit of all 11 posting services — six sites posted legs whose ids
+were computed-but-ephemeral (RMA refund/restock/unwind, stock-count variances — which also used a *random*
+event id, an L4 violation —, Stripe payout, rebate accrue/true-up/settle, commission settle, reversal
+carriage). Every leg now has a claim home, stamped **iff posted** (the Journal drops zero-amount legs, so an
+unconditional stamp is a false claim; the claim test mirrors the Journal's minor-unit test exactly).
+`ledger_claim` (one row per claimed leg, the **settlement-aware extension point** — M-IC-FX legs UNION in
+here) + `lineage_closure_violation` (kinds: `missing_leg` / `orphan_transfer` / `one_sided_mirror` /
+`incomplete_fact`, each naming fact table + id + leg). Companions `CTRL-IC-MATCH` (exact decomposition,
+sign-carrying unwind bound, leg genealogy) and `CTRL-IC-CATALOGUE` (no self-approved/unapproved/overlapping
+active lists) registered alongside. `LineageClosureSuite`: 3 closure worlds (flash void; return unwind;
+payments+payout+commission incl. zero-delta true-up+stock count) + 5 seeded-corruption detection tests.
 
 ### A3. The ASC-606 compliance matrix (auditor-consumable)
 A spec table mapping the five steps to mechanism + pinning test/control id:
