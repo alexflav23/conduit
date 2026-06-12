@@ -44,7 +44,10 @@ private final case class ReversalHead(
     vatJurisdiction: String,
     cogs: BigDecimal,
     shipping: BigDecimal,
-    dispatchId: Option[UUID]
+    dispatchId: Option[UUID],
+    flashLanded: Option[BigDecimal], // ic_match decomposition: the physical leg posted LANDED
+    flashUplift: Option[BigDecimal], // and the uplift pair carried the markup (doc 28 §2.5)
+    flashProcurement: Option[UUID]
 )
 
 // Invoice invalidation (doc 13 §void, ASC 606). The immutable-log rule: never edit or delete an invoice — append
@@ -111,13 +114,38 @@ final class InvoiceReversalService[F[_]: Async](xa: Transactor[F], ledger: Tiger
                   val cogs = JournalAccount(s"COGS:$entity", LedgerAccountCode.CosClearing, e)
                   val cAcc = JournalAccount(s"CARRIAGE_ACCRUAL:$entity", LedgerAccountCode.CarriageAccrual, e)
                   val cExp = JournalAccount(s"CARRIAGE_EXPENSE:$entity", LedgerAccountCode.CarriageExpense, e)
+                  // Under flash title (doc 28 §2.5) the ORIGINAL leg 2 posted at LANDED (the physical
+                  // relief) and the markup rode the uplift pair — the reversal must mirror that split, or
+                  // inventory mis-states by the markup and the principal keeps margin on a cancelled sale.
+                  val physicalCogs = h.flashLanded.getOrElse(h.cogs)
+                  val flashLegs = (h.flashUplift, h.flashProcurement).tupled.toList.flatMap {
+                    case (uplift, p) =>
+                      val pe     = Some(p)
+                      val icAp   = JournalAccount(s"IC_AP:$entity:$p", LedgerAccountCode.Intercompany, e)
+                      val icAr   = JournalAccount(s"IC_AR:$p:$entity", LedgerAccountCode.Intercompany, pe)
+                      val margin = JournalAccount(s"IC_MARGIN:$p", LedgerAccountCode.IcMargin, pe)
+                      val amt    = minor(uplift.abs)
+                      val opPair = if (uplift >= 0) (icAp, cogs) else (cogs, icAp)
+                      val prPair = if (uplift >= 0) (margin, icAr) else (icAr, margin)
+                      List(
+                        Posting(rid, 4, opPair._1, opPair._2, ccy, amt, transferCode = LedgerTransferCode.Reversal),
+                        Posting(rid, 5, prPair._1, prPair._2, ccy, amt, transferCode = LedgerTransferCode.Reversal)
+                      )
+                  }
+                  val flashAccounts = h.flashProcurement.toList.flatMap { p =>
+                    List(
+                      LedgerAccount(TbIds.accountId(s"IC_AP:$entity:$p"), ledgerId, LedgerAccountCode.Intercompany),
+                      LedgerAccount(TbIds.accountId(s"IC_AR:$p:$entity"), ledgerId, LedgerAccountCode.Intercompany),
+                      LedgerAccount(TbIds.accountId(s"IC_MARGIN:$p"), ledgerId, LedgerAccountCode.IcMargin)
+                    )
+                  }
                   val postings = List(
                     Posting(rid, 0, rev, ar, ccy, minor(h.revenueExVat), transferCode = LedgerTransferCode.Reversal),
                     Posting(rid, 1, vat, ar, ccy, minor(h.vat), transferCode = LedgerTransferCode.Reversal),
-                    Posting(rid, 2, inv, cogs, ccy, minor(h.cogs), transferCode = LedgerTransferCode.Reversal),
+                    Posting(rid, 2, inv, cogs, ccy, minor(physicalCogs), transferCode = LedgerTransferCode.Reversal),
                     Posting(rid, 3, cAcc, cExp, ccy, minor(h.shipping), transferCode = LedgerTransferCode.Reversal)
-                  )
-                  ledger.createAccounts(accounts) *>
+                  ) ++ flashLegs
+                  ledger.createAccounts(accounts ++ flashAccounts) *>
                     journal.post(Instant.now(), postings) *>
                     record(rid, orderInvoiceId, h, kind, reason, actor, causedBy).transact(xa)
               }
@@ -141,10 +169,12 @@ final class InvoiceReversalService[F[_]: Async](xa: Transactor[F], ledger: Tiger
     sql"""SELECT i.order_id, o.entity_id, o.bill_to_party_id, o.txn_currency, i.status, i.invoice_no,
                  COALESCE(rr.revenue_ex_vat, i.total_ex_vat), COALESCE(rr.vat, i.vat_total),
                  COALESCE(rr.vat_jurisdiction, 'GB'), COALESCE(rr.cogs, 0),
-                 COALESCE(rr.shipping_cost, 0), rr.dispatch_id
+                 COALESCE(rr.shipping_cost, 0), rr.dispatch_id,
+                 m.landed_total, m.uplift_total, m.procurement_entity_id
           FROM order_invoice i
             JOIN "order" o ON o.id = i.order_id
             LEFT JOIN revenue_recognition rr ON rr.invoice_no = i.invoice_no
+            LEFT JOIN ic_match m ON m.dispatch_id = rr.dispatch_id AND m.reversed_at IS NULL
           WHERE i.id = $orderInvoiceId"""
       .query[ReversalHead]
       .option
@@ -161,6 +191,14 @@ final class InvoiceReversalService[F[_]: Async](xa: Transactor[F], ledger: Tiger
       causedBy: Option[UUID]
   ): ConnectionIO[Either[String, InvoiceReversalResult]] =
     for {
+      // cancellations carry the genealogy (doc 28 §2.5): the match row is stamped with the reversal thread
+      _ <-
+        h.dispatchId
+          .filter(_ => h.flashProcurement.isDefined)
+          .traverse_(d =>
+            com.hypervolt.conduit.intercompany.FlashTitle
+              .stampReversal(d, rid, TbIds.transferId(rid, 4), TbIds.transferId(rid, 5))
+          )
       _ <- sql"""INSERT INTO invoice_reversal
                 (id, order_invoice_id, order_id, dispatch_id, invoice_no, kind, reason, currency,
                  reversed_revenue_ex_vat, reversed_vat, reversed_cogs,

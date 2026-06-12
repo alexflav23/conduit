@@ -233,7 +233,40 @@ final class ReturnService[F[_]: Async](xa: Transactor[F], ledger: TigerBeetleLed
                 )
               case _ => Async[F].unit
             }
-            invLeg *> postDisposition(rmaId, line, choice, locationId, actor).transact(xa).as(().asRight[String])
+            // doc 28 §2.5: a returned unit under flash title unwinds its pro-rata share of the IC uplift —
+            // the operating entity's COGS comes back down to landed for that unit, and the principal gives
+            // back exactly its share of the markup. The genealogy accumulates on the match (returned_uplift).
+            val flashUnwind = (choice, line.serialId) match {
+              case ("restock" | "refurbish", Some(sid)) =>
+                com.hypervolt.conduit.intercompany.FlashTitle.upliftShareForSerial(sid).transact(xa).flatMap {
+                  case None => Async[F].unit
+                  case Some((dispatchId, op, pr, share)) if share != 0 =>
+                    val e2     = Some(op)
+                    val pe     = Some(pr)
+                    val icAp   = JournalAccount(s"IC_AP:$op:$pr", LedgerAccountCode.Intercompany, e2)
+                    val icAr   = JournalAccount(s"IC_AR:$pr:$op", LedgerAccountCode.Intercompany, pe)
+                    val margin = JournalAccount(s"IC_MARGIN:$pr", LedgerAccountCode.IcMargin, pe)
+                    val cogsA  = JournalAccount(s"COGS:$op", LedgerAccountCode.CosClearing, e2)
+                    val amt    = minor(share.abs)
+                    val opPair = if (share >= 0) (icAp, cogsA) else (cogsA, icAp)
+                    val prPair = if (share >= 0) (margin, icAr) else (icAr, margin)
+                    journal.post(
+                      Instant.now(),
+                      List(
+                        Posting(lineId, 2, opPair._1, opPair._2, Currency.GBP, amt),
+                        Posting(lineId, 3, prPair._1, prPair._2, Currency.GBP, amt)
+                      )
+                    ) *> com.hypervolt.conduit.intercompany.FlashTitle
+                      .accumulateReturnedUplift(dispatchId, share)
+                      .transact(xa)
+                      .void
+                  case Some(_) => Async[F].unit
+                }
+              case _ => Async[F].unit
+            }
+            invLeg *> flashUnwind *> postDisposition(rmaId, line, choice, locationId, actor)
+              .transact(xa)
+              .as(().asRight[String])
         }
     }
 

@@ -35,7 +35,9 @@ private final case class DispatchHead(
     entityId: Option[UUID],
     billTo: UUID,
     currency: String,
-    jurisdiction: String
+    jurisdiction: String,
+    procurementParent: Option[UUID], // entity.procurement_parent_id — present = the flash-title hop applies
+    marketId: Option[UUID]
 )
 private final case class RecogCtx(
     head: DispatchHead,
@@ -45,7 +47,8 @@ private final case class RecogCtx(
     qty: Int,
     invoiceId: Option[UUID],
     asOf: LocalDate,
-    vatRate: BigDecimal // the order's implied VAT rate — the fallback for an entity-less order (no engine)
+    vatRate: BigDecimal,                                                  // the order's implied VAT rate — the fallback for an entity-less order (no engine)
+    flash: Option[com.hypervolt.conduit.intercompany.FlashTitle.FlashCtx] // doc 28 §2.2 — the priced internal hop
 )
 
 // ASC 606 revenue recognition on dispatch (doc 04 §Ledger, doc 13). On delivery, control transfers and revenue is
@@ -95,6 +98,14 @@ final class RevenueRecognitionService[F[_]: Async](xa: Transactor[F], ledger: Ti
   private def post(dispatchId: UUID, ctx: RecogCtx, vatAmt: BigDecimal): F[Unit] = {
     val entity   = ctx.head.entityId.getOrElse(zero)
     val ledgerId = Ledgers.forCurrency(Currency.fromCode(ctx.head.currency).get)
+    val flashAccounts = ctx.flash.toList.flatMap { f =>
+      val p = f.procurementEntity
+      List(
+        LedgerAccount(TbIds.accountId(s"IC_AP:$entity:$p"), ledgerId, LedgerAccountCode.Intercompany),
+        LedgerAccount(TbIds.accountId(s"IC_AR:$p:$entity"), ledgerId, LedgerAccountCode.Intercompany),
+        LedgerAccount(TbIds.accountId(s"IC_MARGIN:$p"), ledgerId, LedgerAccountCode.IcMargin)
+      )
+    }
     val accounts = List(
       LedgerAccount(ar(ctx.head.billTo), ledgerId, LedgerAccountCode.Ar),
       LedgerAccount(revenue(entity), ledgerId, LedgerAccountCode.Revenue),
@@ -103,7 +114,7 @@ final class RevenueRecognitionService[F[_]: Async](xa: Transactor[F], ledger: Ti
       LedgerAccount(inv(entity), ledgerId, LedgerAccountCode.Inv),
       LedgerAccount(carriageExp(entity), ledgerId, LedgerAccountCode.CarriageExpense),
       LedgerAccount(carriageAccr(entity), ledgerId, LedgerAccountCode.CarriageAccrual)
-    )
+    ) ++ flashAccounts
     val ccy        = Currency.fromCode(ctx.head.currency).get
     val occurredAt = ctx.asOf.atStartOfDay(ZoneOffset.UTC).toInstant
     val e          = Some(entity)
@@ -143,7 +154,42 @@ final class RevenueRecognitionService[F[_]: Async](xa: Transactor[F], ledger: Ti
         minor(ctx.shipping)
       )
     )
-    ledger.createAccounts(accounts) *> journal.post(occurredAt, postings) *>
+    // legs 4+5 — the flash-title uplift pair (doc 28 §2.2): operating COGS tops up to the TRANSFER price
+    // against an IC payable; the principal books exactly the markup. A below-cost catalogue (negative
+    // uplift) posts the same pair flipped. Eliminates at group; leg ids deterministic from (dispatch, leg).
+    val flashPostings = ctx.flash.toList.flatMap { f =>
+      val p      = f.procurementEntity
+      val pe     = Some(p)
+      val uplift = f.transferTotal - ctx.cogs
+      val amt    = minor(uplift.abs)
+      val opPair =
+        if (uplift >= 0)
+          (
+            JournalAccount(s"COGS:$entity", LedgerAccountCode.CosClearing, e),
+            JournalAccount(s"IC_AP:$entity:$p", LedgerAccountCode.Intercompany, e)
+          )
+        else
+          (
+            JournalAccount(s"IC_AP:$entity:$p", LedgerAccountCode.Intercompany, e),
+            JournalAccount(s"COGS:$entity", LedgerAccountCode.CosClearing, e)
+          )
+      val prPair =
+        if (uplift >= 0)
+          (
+            JournalAccount(s"IC_AR:$p:$entity", LedgerAccountCode.Intercompany, pe),
+            JournalAccount(s"IC_MARGIN:$p", LedgerAccountCode.IcMargin, pe)
+          )
+        else
+          (
+            JournalAccount(s"IC_MARGIN:$p", LedgerAccountCode.IcMargin, pe),
+            JournalAccount(s"IC_AR:$p:$entity", LedgerAccountCode.Intercompany, pe)
+          )
+      List(
+        Posting(dispatchId, 4, opPair._1, opPair._2, ccy, amt),
+        Posting(dispatchId, 5, prPair._1, prPair._2, ccy, amt)
+      )
+    }
+    ledger.createAccounts(accounts) *> journal.post(occurredAt, postings ++ flashPostings) *>
       record(dispatchId, ctx, vatAmt).transact(xa).void
   }
 
@@ -181,11 +227,32 @@ final class RevenueRecognitionService[F[_]: Async](xa: Transactor[F], ledger: Ti
           asOf(dispatchId),
           orderVatRate(dispatchId)
         ).tupled
-          .map {
-            case (None, _, _, _, _, _, _, _) => "unknown dispatch".asLeft[Option[RecogCtx]]
+          .flatMap {
+            case (None, _, _, _, _, _, _, _) =>
+              "unknown dispatch".asLeft[Option[RecogCtx]].pure[ConnectionIO]
             case (Some(h), rev, c, ship, qty, inv, d, vr) =>
-              Some(RecogCtx(h, rev, c, ship, qty, inv, d, vr)).asRight[String]
+              flashHop(dispatchId, h, c, rev, qty, d).map(
+                _.map(f => Some(RecogCtx(h, rev, c, ship, qty, inv, d, vr, f)))
+              )
           }
+    }
+
+  // The flash-title hop (doc 28 §2.2): present iff the selling entity has a procurement parent. Pricing fails
+  // CLOSED — an unpriced internal sale blocks recognition (a governance error, not a landed-cost default).
+  private def flashHop(
+      dispatchId: UUID,
+      h: DispatchHead,
+      landed: BigDecimal,
+      rev: BigDecimal,
+      qty: Int,
+      asOf: LocalDate
+  ): ConnectionIO[Either[String, Option[com.hypervolt.conduit.intercompany.FlashTitle.FlashCtx]]] =
+    (h.entityId, h.procurementParent, h.marketId) match {
+      case (Some(op), Some(parent), Some(market)) =>
+        com.hypervolt.conduit.intercompany.FlashTitle
+          .resolve(dispatchId, op, parent, market, landed, rev, qty, asOf)
+          .map(_.map(Some(_)))
+      case _ => Option.empty[com.hypervolt.conduit.intercompany.FlashTitle.FlashCtx].asRight[String].pure[ConnectionIO]
     }
 
   private def shippingCost(dispatchId: UUID): ConnectionIO[BigDecimal] =
@@ -204,7 +271,8 @@ final class RevenueRecognitionService[F[_]: Async](xa: Transactor[F], ledger: Ti
     sql"SELECT count(*) FROM revenue_recognition WHERE dispatch_id = $dispatchId".query[Int].unique.map(_ > 0)
 
   private def head(dispatchId: UUID): ConnectionIO[Option[DispatchHead]] =
-    sql"""SELECT o.id, o.entity_id, o.bill_to_party_id, o.txn_currency, COALESCE(e.jurisdiction, 'GB')
+    sql"""SELECT o.id, o.entity_id, o.bill_to_party_id, o.txn_currency, COALESCE(e.jurisdiction, 'GB'),
+                 e.procurement_parent_id, o.market_id
           FROM dispatch d JOIN "order" o ON o.id = d.order_id LEFT JOIN entity e ON e.id = o.entity_id
           WHERE d.id = $dispatchId"""
       .query[DispatchHead]
@@ -258,13 +326,16 @@ final class RevenueRecognitionService[F[_]: Async](xa: Transactor[F], ledger: Ti
 
   private def record(dispatchId: UUID, ctx: RecogCtx, vatAmt: BigDecimal): ConnectionIO[Int] = {
     val h = ctx.head
+    // Under flash title (doc 28) the operating entity's COGS — the figure its P&L reports — is the TRANSFER
+    // price; the landed/uplift decomposition lives ONLY in ic_match, behind the inter_entity wall.
+    val opCogs = ctx.flash.fold(ctx.cogs)(_.transferTotal)
     sql"""INSERT INTO revenue_recognition
             (dispatch_id, order_id, invoice_no, entity_id, currency, revenue_ex_vat, vat, cogs, gross_margin,
              vat_jurisdiction, tax_quote_id, shipping_cost, ar_transfer_id, vat_transfer_id, cogs_transfer_id,
              carriage_transfer_id)
           VALUES ($dispatchId, ${h.orderId},
              (SELECT invoice_no FROM order_invoice WHERE order_id = ${h.orderId} ORDER BY issued_at DESC LIMIT 1),
-             ${h.entityId}, ${h.currency}, ${ctx.rev}, $vatAmt, ${ctx.cogs}, ${ctx.rev - ctx.cogs}, ${h.jurisdiction},
+             ${h.entityId}, ${h.currency}, ${ctx.rev}, $vatAmt, $opCogs, ${ctx.rev - opCogs}, ${h.jurisdiction},
              (SELECT id FROM tax_quote WHERE order_invoice_id = ${ctx.invoiceId} AND context = 'invoice'
                 ORDER BY determined_at DESC LIMIT 1),
              ${ctx.shipping},
@@ -272,32 +343,49 @@ final class RevenueRecognitionService[F[_]: Async](xa: Transactor[F], ledger: Ti
              ${TbIds.transferId(dispatchId, 1).bigInteger.toString}::numeric,
              ${TbIds.transferId(dispatchId, 2).bigInteger.toString}::numeric,
              ${TbIds.transferId(dispatchId, 3).bigInteger.toString}::numeric)
-          ON CONFLICT (dispatch_id) DO NOTHING""".update.run.flatMap { n =>
-      OutboxRepo
-        .append(
-          OutboxEvent(
-            UUID.randomUUID(),
-            "revenue.recognized",
-            1,
-            "order",
-            h.orderId,
-            h.orderId.toString,
-            None,
-            None,
-            None,
-            Json.obj(
-              "dispatch_id"      -> dispatchId.toString.asJson,
-              "revenue_ex_vat"   -> ctx.rev.toString.asJson,
-              "vat"              -> vatAmt.toString.asJson,
-              "vat_jurisdiction" -> h.jurisdiction.asJson,
-              "cogs"             -> ctx.cogs.toString.asJson,
-              "gross_margin"     -> (ctx.rev - ctx.cogs).toString.asJson
-            ),
-            Instant.now(),
-            "service:revenue-recognition"
+          ON CONFLICT (dispatch_id) DO NOTHING""".update.run
+      .flatTap { _ =>
+        ctx.flash.traverse_(f =>
+          h.entityId.traverse_(op =>
+            com.hypervolt.conduit.intercompany.FlashTitle.recordMatch(
+              dispatchId,
+              h.orderId,
+              op,
+              f,
+              h.currency,
+              ctx.cogs,
+              TbIds.transferId(dispatchId, 4),
+              TbIds.transferId(dispatchId, 5)
+            )
           )
         )
-        .as(n)
-    }
+      }
+      .flatMap { n =>
+        OutboxRepo
+          .append(
+            OutboxEvent(
+              UUID.randomUUID(),
+              "revenue.recognized",
+              1,
+              "order",
+              h.orderId,
+              h.orderId.toString,
+              None,
+              None,
+              None,
+              Json.obj(
+                "dispatch_id"      -> dispatchId.toString.asJson,
+                "revenue_ex_vat"   -> ctx.rev.toString.asJson,
+                "vat"              -> vatAmt.toString.asJson,
+                "vat_jurisdiction" -> h.jurisdiction.asJson,
+                "cogs"             -> ctx.cogs.toString.asJson,
+                "gross_margin"     -> (ctx.rev - ctx.cogs).toString.asJson
+              ),
+              Instant.now(),
+              "service:revenue-recognition"
+            )
+          )
+          .as(n)
+      }
   }
 }

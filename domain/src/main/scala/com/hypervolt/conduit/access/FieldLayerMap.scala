@@ -56,6 +56,18 @@ object FieldLayerMap {
     ("tp_document", "transfer_unit_price")         -> DataLayer.InterEntity,
     ("tp_document", "lot_landed_unit_cost")        -> DataLayer.InterEntity,
     ("tp_document", "markup_or_margin_pct")        -> DataLayer.InterEntity,
+    // the central price catalogue + flash-title matches (doc 28) — the ENTIRE structure is inter_entity-walled:
+    // outside the principal, nobody learns the catalogue exists, let alone the markup or the match chain.
+    ("transfer_price_list", "unit_price") -> DataLayer.InterEntity,
+    ("transfer_price_list", "currency")   -> DataLayer.InterEntity,
+    ("transfer_price_list", "status")     -> DataLayer.InterEntity,
+    ("transfer_price_list", "market_id")  -> DataLayer.InterEntity,
+    ("ic_match", "landed_total")          -> DataLayer.InterEntity,
+    ("ic_match", "transfer_total")        -> DataLayer.InterEntity,
+    ("ic_match", "uplift_total")          -> DataLayer.InterEntity,
+    ("ic_match", "price_list_id")         -> DataLayer.InterEntity,
+    ("ic_match", "origin_batch_ids")      -> DataLayer.InterEntity,
+    ("ic_match", "elimination_group_id")  -> DataLayer.InterEntity,
     // legal documents (doc 17 §9): the money on the artefact is commercial; the rest is logistics/identity.
     ("document", "total_amount") -> DataLayer.Commercial,
     ("document", "currency")     -> DataLayer.Commercial,
