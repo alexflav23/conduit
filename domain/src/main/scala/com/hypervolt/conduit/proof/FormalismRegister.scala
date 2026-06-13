@@ -133,9 +133,14 @@ object FormalismRegister {
       "L12",
       "Reproducibility",
       "Same data + same code produce bit-identical output, on any machine. Data pinned by ingest git SHA; deterministic ids make replay byte-stable.",
-      "git-NDJSON ingest snapshots; the Fingerprint manifest (doc 29 slice D).",
-      "The 2026-06-12 two-machines question — honestly recorded as believed-not-proven until slice D lands.",
-      List(control("CTRL-TAX-REPRO"), gate("CTRL-REPRO (doc 29 D — planned)"))
+      "git-NDJSON ingest snapshots; the Fingerprint manifest (id-independent count+sum digest folded with the ingest SHA); the refresher commits ingest/fingerprint.json per cycle (doc 29 D).",
+      "The 2026-06-12 two-machines question — now settled: a (scope, ingest SHA) producing two distinct digests is non-determinism or drift, and CTRL-REPRO surfaces it.",
+      List(
+        control("CTRL-REPRO"),
+        control("CTRL-TAX-REPRO"),
+        suite("FingerprintSpec"),
+        suite("ReproSuite (stable twice; drift detected)")
+      )
     ),
     Law(
       "L13",

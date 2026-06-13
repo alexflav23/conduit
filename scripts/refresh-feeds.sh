@@ -36,6 +36,14 @@ echo "  reloaded"
 echo "[4/4] rescore + republish"
 sbt -batch "scripting/runMain com.hypervolt.conduit.scripting.RealBacktest" \
     "scripting/runMain com.hypervolt.conduit.scripting.LivePublish" 2>&1 | grep -E "complete|published"
+
+echo "[4b/4] reproducibility fingerprint (doc 29 D)"
+# record + print the canonical digest of the money tables at THIS ingest SHA; same data+code ⇒ same digest
+# (CTRL-REPRO polices it). Committed alongside the snapshot so any future drift is a visible diff.
+INGEST_SHA="$(git rev-parse --short HEAD)" sbt -batch \
+    "scripting/runMain com.hypervolt.conduit.scripting.FingerprintReport" 2>&1 | grep -E '"digest"' \
+    | tee ingest/fingerprint.json
+
 echo "[5/5] commit refreshed snapshots"
 git add ingest/ 2>/dev/null
 if ! git diff --cached --quiet 2>/dev/null; then

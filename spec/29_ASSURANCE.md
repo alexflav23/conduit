@@ -155,10 +155,16 @@ ANDs; empty = unconstrained. Wired through `Grant`/`Target`/`PolicyEngine`/`Scop
 sbt-scoverage wired; honest baseline published; CI gate ≥90% branch on the money path
 (`ledger`, `money`, `revenue`, `intercompany`, `batch`); visibility-only elsewhere (no vanity gates).
 
-## Slice D — reproducibility, proven
-`scripting/Fingerprint` (canonical per-table row/sum digest + ingest git SHA); the refresher commits
-`ingest/fingerprint.json` per run; **CTRL-REPRO** compares a rebuild-from-git against the manifest.
-Retroactively settles the 2026-06-12 cross-machine question; prospectively makes drift visible in git.
+## Slice D — reproducibility, proven *(BUILT — `Fingerprint`/`FingerprintService`, `CTRL-REPRO`)*
+`Fingerprint` digests the money tables' **id-independent aggregates** (count + numeric sum per key) folded
+with the ingest git SHA — invariant to row order and to the demo book's fresh-UUID churn, sensitive only to
+money. `FingerprintService` records a `reproduction_manifest` row (V1_0_73); the refresher's step `[4b/4]`
+runs `FingerprintReport` and commits `ingest/fingerprint.json` per cycle, so the digest sits in git beside
+the snapshot it fingerprints. **CTRL-REPRO** surfaces any `(scope, git_sha)` that produced more than one
+distinct digest — same code + data reproducing differently is non-determinism or drift. `FingerprintSpec`
+(pure: order/id invariance, money sensitivity, SHA binding — 5✓) + `ReproSuite` (the demo book fingerprints
+identically twice despite id churn; a seeded drift fails the control then clears — 2✓). Retroactively
+settles the 2026-06-12 cross-machine question; prospectively makes drift a visible git diff.
 
 ## Slice E — perf floors
 Asserted with generous margins, env-skippable locally, watched in CI: policy_selection reads <1s;
