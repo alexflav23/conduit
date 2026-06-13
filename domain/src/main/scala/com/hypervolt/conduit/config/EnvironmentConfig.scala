@@ -49,6 +49,7 @@ final case class GoogleAuthConfig(clientId: String, workspaceDomain: String) {
 
 final case class AppConfig(
     env: String,
+    shadow: Boolean,
     db: DbConfig,
     http: HttpConfig,
     adminPort: Int,
@@ -77,6 +78,8 @@ object EnvironmentConfig {
     val docs   = hv.getConfig("documents")
     AppConfig(
       env = hv.getString("env"),
+      // shadow dual-run (doc 33 §5): when true, outbound effectors are muted (recorded, not sent). Absent ⇒ false.
+      shadow = hv.hasPath("shadow") && hv.getBoolean("shadow"),
       db = DbConfig(
         host = db.getString("host"),
         port = db.getInt("port"),

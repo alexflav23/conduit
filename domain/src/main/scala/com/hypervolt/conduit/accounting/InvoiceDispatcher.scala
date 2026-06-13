@@ -3,8 +3,11 @@ package com.hypervolt.conduit.accounting
 import cats.effect.Async
 import cats.syntax.all._
 import com.hypervolt.conduit.event.IdempotentConsumer
+import com.hypervolt.conduit.shadow.ShadowGuard
 import doobie.implicits._
 import doobie.util.transactor.Transactor
+import io.circe.Json
+import io.circe.syntax._
 import java.util.UUID
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
@@ -15,7 +18,8 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 final class InvoiceDispatcher[F[_]: Async](
     xa: Transactor[F],
     consumer: AccountingConsumer[F],
-    consumerGroup: String = "conduit-xero-invoicer-1"
+    consumerGroup: String = "conduit-xero-invoicer-1",
+    shadow: ShadowGuard[F]
 ) {
 
   private val logger = Slf4jLogger.getLogger[F]
@@ -32,10 +36,17 @@ final class InvoiceDispatcher[F[_]: Async](
 
   private def voidExternal(invoiceNo: String, reason: String): F[Unit] =
     InvoiceProjectionRepo.externalId(invoiceNo).transact(xa).flatMap { ext =>
-      consumer.voidInvoice(ext.getOrElse(invoiceNo), invoiceNo, reason).flatMap {
-        case Right(_)  => logger.info(s"invoice $invoiceNo voided in the accounting system")
-        case Left(msg) => Async[F].raiseError(new RuntimeException(s"accounting void failed for $invoiceNo: $msg"))
-      }
+      // Outbound: muted in shadow (recorded, not sent) — the void never reaches the accounting system.
+      shadow
+        .outbound("xero.invoice.void", invoiceNo, Json.obj("reason" -> reason.asJson))(
+          consumer.voidInvoice(ext.getOrElse(invoiceNo), invoiceNo, reason)
+        )
+        .flatMap {
+          case None           => logger.info(s"[shadow] suppressed accounting void for $invoiceNo")
+          case Some(Right(_)) => logger.info(s"invoice $invoiceNo voided in the accounting system")
+          case Some(Left(msg)) =>
+            Async[F].raiseError(new RuntimeException(s"accounting void failed for $invoiceNo: $msg"))
+        }
     }
 
   private def push(invoiceNo: String): F[Unit] =
@@ -43,13 +54,19 @@ final class InvoiceDispatcher[F[_]: Async](
       case None =>
         logger.warn(s"order.invoiced for unknown invoice_no=$invoiceNo — skipping")
       case Some(req) =>
-        consumer.createInvoice(req).flatMap {
-          case Right(externalId) =>
-            InvoiceProjectionRepo.setExternalId(invoiceNo, externalId).transact(xa).void *>
-              logger.info(s"invoice $invoiceNo pushed to accounting system as $externalId")
-          case Left(msg) =>
-            logger.error(s"accounting consumer rejected invoice $invoiceNo: $msg") *>
-              Async[F].raiseError(new RuntimeException(s"accounting push failed for $invoiceNo: $msg"))
-        }
+        // Outbound: the Xero create is muted in shadow; the external-id stamp only happens on a real push.
+        shadow
+          .outbound("xero.invoice.create", invoiceNo, Json.obj("invoice_no" -> invoiceNo.asJson))(
+            consumer.createInvoice(req)
+          )
+          .flatMap {
+            case None => logger.info(s"[shadow] suppressed accounting push for $invoiceNo")
+            case Some(Right(externalId)) =>
+              InvoiceProjectionRepo.setExternalId(invoiceNo, externalId).transact(xa).void *>
+                logger.info(s"invoice $invoiceNo pushed to accounting system as $externalId")
+            case Some(Left(msg)) =>
+              logger.error(s"accounting consumer rejected invoice $invoiceNo: $msg") *>
+                Async[F].raiseError(new RuntimeException(s"accounting push failed for $invoiceNo: $msg"))
+          }
     }
 }

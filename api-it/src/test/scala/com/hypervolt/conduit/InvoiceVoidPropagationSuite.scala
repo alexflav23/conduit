@@ -7,6 +7,7 @@ import cats.syntax.all._
 import com.hypervolt.conduit.accounting.AccountingConsumer
 import com.hypervolt.conduit.accounting.InvoiceDispatcher
 import com.hypervolt.conduit.accounting.InvoiceRequest
+import com.hypervolt.conduit.shadow.ShadowGuard
 import com.hypervolt.conduit.ledger.Ledgers
 import com.hypervolt.conduit.ledger.LedgerAccount
 import com.hypervolt.conduit.ledger.LedgerAccountCode
@@ -141,8 +142,9 @@ object InvoiceVoidPropagationSuite extends IOSuite {
           def voidInvoice(externalRef: String, invoiceNo: String, reason: String): IO[Either[String, Unit]] =
             recorded.update(_ :+ invoiceNo).as(Right(()))
         }
-        val dispatcher = new InvoiceDispatcher[IO](xa, fake, s"void-group-${UUID.randomUUID()}")
-        val eid        = UUID.randomUUID()
+        val dispatcher =
+          new InvoiceDispatcher[IO](xa, fake, s"void-group-${UUID.randomUUID()}", ShadowGuard.disabled[IO])
+        val eid = UUID.randomUUID()
         for {
           d1   <- dispatcher.handleVoid(eid, "INV-XERO-1", "mistake")
           d2   <- dispatcher.handleVoid(eid, "INV-XERO-1", "mistake") // redelivery — deduped on event_id

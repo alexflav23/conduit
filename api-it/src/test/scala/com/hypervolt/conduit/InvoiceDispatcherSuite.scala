@@ -6,6 +6,7 @@ import cats.effect.Resource
 import com.hypervolt.conduit.accounting.AccountingConsumer
 import com.hypervolt.conduit.accounting.InvoiceDispatcher
 import com.hypervolt.conduit.accounting.InvoiceRequest
+import com.hypervolt.conduit.shadow.ShadowGuard
 import doobie.implicits._
 import doobie.postgres.implicits._
 import doobie.hikari.HikariTransactor
@@ -62,7 +63,8 @@ object InvoiceDispatcherSuite extends IOSuite {
       for {
         _    <- setup(xa, invoiceNo)
         seen <- Ref.of[IO, List[InvoiceRequest]](Nil)
-        dispatcher = new InvoiceDispatcher[IO](xa, fakeConsumer(seen), s"test-${UUID.randomUUID()}")
+        dispatcher =
+          new InvoiceDispatcher[IO](xa, fakeConsumer(seen), s"test-${UUID.randomUUID()}", ShadowGuard.disabled[IO])
         first  <- dispatcher.handle(eventId, invoiceNo)
         second <- dispatcher.handle(eventId, invoiceNo) // redelivery — must be a no-op
         reqs   <- seen.get

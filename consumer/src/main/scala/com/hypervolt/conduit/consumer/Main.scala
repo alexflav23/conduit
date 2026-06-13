@@ -71,8 +71,10 @@ object Main extends IOApp.Simple {
     resources.use {
       case (cfg, xa, pulsar, http, tb) =>
         XeroAccountingConsumer.build[IO](http, cfg.xero).flatMap { (accounting: AccountingConsumer[IO]) =>
-          val ledger               = TigerBeetleLedger.fromClient[IO](tb)
-          val dispatcher           = new InvoiceDispatcher[IO](xa, accounting)
+          val ledger = TigerBeetleLedger.fromClient[IO](tb)
+          // shadow dual-run (doc 33 §5): mute the outbound Xero push/void when hypervolt.shadow is on.
+          val shadowGuard          = com.hypervolt.conduit.shadow.ShadowGuard[IO](xa, cfg.shadow)
+          val dispatcher           = new InvoiceDispatcher[IO](xa, accounting, shadow = shadowGuard)
           val xeroConsumer         = new XeroInvoiceConsumer[IO](pulsar, dispatcher)
           val revConsumer          = new RevenueRecognitionConsumer[IO](pulsar, new RevenueRecognitionService[IO](xa, ledger))
           val stripeHandler        = new StripePaymentHandler[IO](new PaymentService[IO](xa, ledger))
