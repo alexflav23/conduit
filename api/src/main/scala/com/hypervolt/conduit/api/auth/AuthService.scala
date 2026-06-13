@@ -9,23 +9,30 @@ import doobie.util.transactor.Transactor
 import io.circe.Codec
 import io.circe.generic.semiauto.deriveCodec
 
-// Resolves the authenticated Principal from a bearer token. Two doors, both server-side:
-//  - Google ID token (the Workspace domain gate, GoogleTokenVerifier) → principal by verified e-mail;
-//  - `dev:<keycloak_id>` in non-prod only, so tests and the desk e2e run without live Google.
-// Keycloak-federated JWTs come later (doc 19); the Google gate is the first-pass production door.
+// Resolves the authenticated Principal from a bearer token. Doors, all server-side, tried in order:
+//  - `dev:<keycloak_id>` in non-prod only, so tests and the desk e2e run without live auth;
+//  - Keycloak-federated OIDC JWT (P2.4, KeycloakJwtVerifier) → principal by `sub` (the keycloak id);
+//  - Google ID token (the Workspace domain gate, GoogleTokenVerifier) → principal by verified e-mail.
+// Keycloak and Google tokens are distinguished by issuer (each verifier rejects the other's), so both can run
+// during the cutover from the Google-only first-pass door to Keycloak (doc 05/19).
 final class AuthService[F[_]: Async](
     xa: Transactor[F],
     devMode: Boolean,
-    google: Option[GoogleTokenVerifier[F]] = None
+    google: Option[GoogleTokenVerifier[F]] = None,
+    keycloak: Option[KeycloakJwtVerifier[F]] = None
 ) {
 
   def resolve(token: String): F[Option[Principal]] =
     devKeycloakId(token) match {
       case Some(kc) => AccessRepo.loadPrincipal(kc).transact(xa)
       case None =>
-        google
-          .flatTraverse(_.verify(token))
-          .flatMap(_.flatTraverse(email => AccessRepo.loadPrincipalByEmail(email).transact(xa)))
+        keycloak.flatTraverse(_.verify(token)).flatMap {
+          case Some(sub) => AccessRepo.loadPrincipal(sub).transact(xa)
+          case None =>
+            google
+              .flatTraverse(_.verify(token))
+              .flatMap(_.flatTraverse(email => AccessRepo.loadPrincipalByEmail(email).transact(xa)))
+        }
     }
 
   private def devKeycloakId(token: String): Option[String] =
