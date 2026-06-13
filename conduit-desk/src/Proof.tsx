@@ -6,6 +6,7 @@ import {
   runProofControl,
   getProofTrialBalance,
   getProofJournal,
+  getProofAsc606,
   proofTamper,
   proofTamperRestore,
 } from './api';
@@ -51,6 +52,15 @@ const styles = stylex.create({
   td: { padding: '0.32rem 0.6rem', borderBottom: `1px solid ${colors.border}` },
   tdNum: { padding: '0.32rem 0.6rem', borderBottom: `1px solid ${colors.border}`, textAlign: 'right' },
   empty: { color: colors.muted, fontSize: '0.85rem', fontStyle: 'italic' },
+  step: { borderLeft: `3px solid ${colors.accent}`, paddingLeft: '0.9rem', marginBottom: '1rem' },
+  stepHead: { display: 'flex', gap: '0.5rem', alignItems: 'baseline', marginBottom: '0.3rem' },
+  stepNo: { color: colors.accent, fontWeight: 700, fontSize: '0.78rem' },
+  stepTitle: { fontWeight: 600 },
+  explain: { color: colors.muted, fontSize: '0.84rem', lineHeight: 1.5, marginBottom: '0.4rem' },
+  pinrow: { display: 'flex', gap: '0.35rem', flexWrap: 'wrap', marginTop: '0.35rem' },
+  pinTag: { border: `1px solid ${colors.border}`, borderRadius: '999px', padding: '0.1rem 0.5rem', fontSize: '0.72rem', fontFamily: 'monospace', color: colors.muted },
+  detail: { fontSize: '0.82rem', color: colors.text, marginTop: '0.3rem' },
+  wallNote: { color: colors.accent, fontSize: '0.78rem', fontStyle: 'italic' },
 });
 
 const arr = (x: any) => (Array.isArray(x) ? x : []);
@@ -208,6 +218,100 @@ function Reconcile({ token }: { token: string }) {
   );
 }
 
+// ASC 606, step by step (doc 31 §2.3 — the surface of doc 29 A3). The five steps for ONE real order, live,
+// each citing the laws/controls that pin it; the principal/LRD flash overlay appears only for inter_entity
+// holders (the wall is absence). The same row source as the spec matrix, so page and spec cannot drift.
+function Asc606({ token }: { token: string }) {
+  const [orderId, setOrderId] = useState('');
+  const [b, setB] = useState<any | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const load = async () => {
+    setErr(null);
+    const r = await getProofAsc606(token, orderId.trim());
+    if (r.status !== 200) { setErr(r.json?.message ?? `could not load (${r.status})`); setB(null); return; }
+    setB(r.json);
+  };
+  const pins = (p: any) => (
+    <div {...stylex.props(styles.pinrow)}>
+      {arr(p).map((x: string, i: number) => <span key={i} {...stylex.props(styles.pinTag)}>{x}</span>)}
+    </div>
+  );
+  const step = (no: string, key: string, title: string, body: React.ReactNode) => {
+    const s = b?.[key];
+    if (!s) return null;
+    return (
+      <div {...stylex.props(styles.step)} data-testid={`asc606-${key}`}>
+        <div {...stylex.props(styles.stepHead)}><span {...stylex.props(styles.stepNo)}>STEP {no}</span><span {...stylex.props(styles.stepTitle)}>{title}</span></div>
+        <div {...stylex.props(styles.explain)}>{s.explain}</div>
+        {body}
+        {pins(s.pins)}
+      </div>
+    );
+  };
+  const ags = arr(b?.step1_identify_contract?.price_agreements);
+  const lines = arr(b?.step2_performance_obligations?.lines);
+  const reb = b?.step3_transaction_price?.rebate;
+  const alloc = b?.step4_allocation?.line_total_check;
+  const recogs = arr(b?.step5_recognition?.recognitions);
+  const reversals = arr(b?.step5_recognition?.reversals);
+  const flash = b?.step5_recognition_flash;
+  return (
+    <div {...stylex.props(styles.card)}>
+      <div {...stylex.props(styles.section)}>ASC 606 — the five steps for one real order, each pinned to its law and control</div>
+      <div {...stylex.props(styles.row)}>
+        <span {...stylex.props(styles.label)}>Order id</span>
+        <input {...stylex.props(styles.input)} data-testid="asc606-order" value={orderId} onChange={(e) => setOrderId(e.target.value)} placeholder="order uuid" />
+        <button {...stylex.props(styles.button)} data-testid="asc606-load" onClick={load}>Walk the contract</button>
+        {err && <span {...stylex.props(styles.label)} data-testid="asc606-err">{err}</span>}
+      </div>
+      {b && (
+        <>
+          <div {...stylex.props(styles.detail)} data-testid="asc606-order-head">
+            <strong>{b.order?.order_no}</strong> · {b.order?.customer} · {b.order?.currency} {b.order?.total_inc_vat} inc VAT
+          </div>
+          {step('1', 'step1_identify_contract', 'Identify the contract',
+            <div {...stylex.props(styles.detail)}>
+              customer PO: {b.step1_identify_contract?.customer_po_number ?? '—'}
+              {ags.map((a: any, i: number) => (
+                <div key={i}>· agreement <strong>{a.name}</strong> ({a.volume_basis}, {a.status}) — {arr(a.bands).length} band(s)</div>
+              ))}
+            </div>)}
+          {step('2', 'step2_performance_obligations', 'Performance obligations',
+            <div {...stylex.props(styles.detail)}>
+              {lines.map((l: any, i: number) => <div key={i}>· {l.qty}× {l.sku} @ {l.unit_price_ex_vat} — {l.status}{l.tranches > 0 ? ` (${l.tranches} tranche(s))` : ''}</div>)}
+            </div>)}
+          {step('3', 'step3_transaction_price', 'Transaction price (variable consideration)',
+            <div {...stylex.props(styles.detail)} data-testid="asc606-rebate">
+              {reb && reb !== null
+                ? <>retrospective rebate — accrual outstanding {reb.accrual_outstanding}; {arr(reb.settlements).length} settlement(s)</>
+                : <span {...stylex.props(styles.label)}>no variable consideration on this order</span>}
+            </div>)}
+          {step('4', 'step4_allocation', 'Allocation',
+            <div {...stylex.props(styles.detail)}>Σ lines {alloc?.sum_of_lines} = subtotal {alloc?.subtotal_ex_vat} (conserving allocate)</div>)}
+          {step('5', 'step5_recognition', 'Recognition at control transfer',
+            <div {...stylex.props(styles.detail)}>
+              {recogs.map((r: any, i: number) => <div key={i}>· recognized {r.invoice_no}: rev {r.revenue_ex_vat} / VAT {r.vat} / COGS {r.cogs} → margin {r.gross_margin}</div>)}
+              {reversals.map((r: any, i: number) => <div key={i} {...stylex.props(styles.wallNote)}>· reversed ({r.kind}): {r.reason}</div>)}
+            </div>)}
+          {/* the principal/LRD overlay — present ONLY for inter_entity holders (absence is the wall) */}
+          {flash ? (
+            <div {...stylex.props(styles.step)} data-testid="asc606-flash">
+              <div {...stylex.props(styles.stepHead)}><span {...stylex.props(styles.stepNo)}>OVERLAY</span><span {...stylex.props(styles.stepTitle)}>Principal / LRD (inter-entity)</span></div>
+              <div {...stylex.props(styles.explain)}>{flash.explain}</div>
+              {arr(flash.matches).map((m: any, i: number) => (
+                <div key={i} {...stylex.props(styles.detail)}>· landed {m.landed_total} → transfer {m.transfer_total} (uplift {m.uplift_total}{m.reversed ? ', reversed' : ''})</div>
+              ))}
+              {pins(flash.pins)}
+            </div>
+          ) : (
+            <div {...stylex.props(styles.wallNote)} data-testid="asc606-no-flash">Principal/LRD decomposition is not visible at your data layer.</div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 // The Tamper Sandbox (doc 31 §2.5) — non-prod only; in prod the endpoints 404 and the buttons surface that.
 function Tamper({ token }: { token: string }) {
   const [log, setLog] = useState<string[]>([]);
@@ -249,7 +353,7 @@ function Tamper({ token }: { token: string }) {
 }
 
 export function Proof({ token }: { token: string }) {
-  const [page, setPage] = useState<'laws' | 'walk' | 'reconcile' | 'tamper'>('laws');
+  const [page, setPage] = useState<'laws' | 'walk' | 'asc606' | 'reconcile' | 'tamper'>('laws');
   const tab = (id: typeof page, label: string) => (
     <button {...stylex.props(styles.subtab, page === id && styles.subtabActive)} data-testid={`proof-nav-${id}`} onClick={() => setPage(id)}>{label}</button>
   );
@@ -258,11 +362,13 @@ export function Proof({ token }: { token: string }) {
       <div {...stylex.props(styles.subnav)}>
         {tab('laws', 'The Laws')}
         {tab('walk', 'Journal Walk')}
+        {tab('asc606', 'ASC 606')}
         {tab('reconcile', 'Reconcile')}
         {tab('tamper', 'Tamper Sandbox')}
       </div>
       {page === 'laws' ? <Laws token={token} />
         : page === 'walk' ? <JournalWalk token={token} />
+        : page === 'asc606' ? <Asc606 token={token} />
         : page === 'reconcile' ? <Reconcile token={token} />
         : <Tamper token={token} />}
     </div>

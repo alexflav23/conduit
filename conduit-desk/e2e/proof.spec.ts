@@ -28,6 +28,25 @@ test('Proof: laws re-run green, the journal walk balances, the tamper sandbox is
   await expect(page.getByTestId('proof-tamper-control').or(page.getByText('developer session'))).toBeVisible();
 });
 
+// ASC 606 (doc 31 §2.3): the five steps for a real order, and the wall — finance (no inter_entity) sees the
+// recognition but NOT the principal/LRD decomposition. ORD-FLOW is the seeded sale (fixed id).
+test('Proof: the ASC-606 walkthrough renders the five steps; the LRD overlay is walled from finance', async ({ page }) => {
+  await page.goto('/');
+  await page.getByTestId('token').fill('dev:finance-e2e');
+  await page.getByTestId('tab-proof').click();
+  await page.getByTestId('proof-nav-asc606').click();
+
+  await page.getByTestId('asc606-order').fill('33333333-3333-3333-3333-333333333333');
+  await page.getByTestId('asc606-load').click();
+
+  await expect(page.getByTestId('asc606-order-head')).toContainText('ORD-FLOW');
+  await expect(page.getByTestId('asc606-step1_identify_contract')).toBeVisible();
+  await expect(page.getByTestId('asc606-step5_recognition')).toContainText('INV-FLOW');
+  // the wall: finance has no inter_entity, so the principal/LRD decomposition is absent, not shown
+  await expect(page.getByTestId('asc606-no-flash')).toBeVisible();
+  await expect(page.getByTestId('asc606-flash')).not.toBeVisible();
+});
+
 // The admin path: the full corrupt → named → restore loop the CTO watches live.
 test('Proof: an admin breaks a leg, the control names the break, restore returns it to green', async ({ page }) => {
   await page.goto('/');

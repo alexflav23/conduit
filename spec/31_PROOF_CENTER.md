@@ -93,7 +93,7 @@ gl rows → TB ids → events → invoice document → order → customer PO →
 Conservation strip at the top: Σ debits == Σ credits per currency, recomputed client-side from the rows on
 screen — the viewer's own browser verifies the books.
 
-### 2.3 ASC 606, step by step *(this page IS doc 29 A3's deliverable surface)*
+### 2.3 ASC 606, step by step *(BUILT — `Proof.tsx` ASC 606 page; this IS doc 29 A3's deliverable surface)*
 The five-step matrix as an interactive walkthrough bound to a real demo order:
 | Step | Shown live |
 |---|---|
@@ -143,8 +143,11 @@ about it.
    flash legs walled for non-inter_entity holders) with the **conservation strip recomputed client-side**.
    Reconcile: the trial balance with the balanced proof. Tamper: the corrupt→named→restore loop (admin only;
    404 in prod). `e2e/proof.spec.ts` (finance walks + re-runs; admin drives the full tamper loop).
-4. **P4 Desk: ASC-606 walkthrough** (closes doc 29 A3 — the spec matrix lands in 29 simultaneously,
-   generated from the same row source) **+ Tamper Sandbox** — Playwright: tamper → named violation → restore.
+4. **P4 Desk: ASC-606 walkthrough** *(BUILT)* — the ASC 606 sub-page binds `GET /proof/asc606/{order}`: the
+   five steps for a real order, each citing its pinning law/control ids; the principal/LRD overlay renders
+   only for inter_entity holders (absence is the wall — the holder-sees/non-holder-doesn't pair is pinned in
+   `ProofRoutesSuite` over the DemoBook's flash order). The **Tamper Sandbox** shipped in P3. `proof.spec.ts`
+   covers the five-step render + the finance wall (no flash overlay) alongside the tamper loop.
 
 **Milestone acceptance:** on a fresh `docker compose up`, one command seeds the book; the CTO opens the
 Proof tab, re-runs every control to green, walks an invoice from P&L to the CM purchase order, watches a
