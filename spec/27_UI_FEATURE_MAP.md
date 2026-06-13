@@ -166,7 +166,7 @@ Numbers are currently baked at build time — design should assume a future API 
 
 ---
 
-## 12b. Proof — (new; spec = **doc 31**, the full page-by-page contract)
+## 12b. Proof — (BUILT, `Proof.tsx`; spec = **doc 31**, the full page-by-page contract)
 
 The interactive formal proof, gated `view:proof_center` (admin/ceo/finance/auditor). Five pages: **Laws**
 (doc 30 live register, controls re-run on click — green is earned per click, never cached), **Journal Walk**

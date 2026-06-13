@@ -72,6 +72,55 @@ object Asc606Walkthrough {
           .map(Option(_))
     }
 
+  // The Journal Walk (spec doc 31 §2.2): the COMPLETE gl_entry leg set for an invoice's order — every DR/CR
+  // card, so the desk recomputes Σ debits == Σ credits per currency in the viewer's own browser. The flash
+  // uplift legs (account role 7/11) are included only for inter_entity holders: the wall is absence (L7).
+  def journalForInvoice(invoiceNo: String, includeInterEntity: Boolean): ConnectionIO[Json] =
+    sql"""SELECT g.tb_transfer_id::text, g.side, g.account_key, g.account_role, g.currency, g.amount_minor,
+                 g.phase, g.transfer_code, g.event_id::text, g.posted
+          FROM gl_entry g
+          WHERE g.event_id IN (
+            SELECT DISTINCT rr.dispatch_id FROM revenue_recognition rr
+              JOIN order_invoice i ON i.invoice_no = rr.invoice_no WHERE i.invoice_no = $invoiceNo
+            UNION
+            SELECT ivr.id FROM invoice_reversal ivr
+              JOIN order_invoice i ON i.id = ivr.order_invoice_id WHERE i.invoice_no = $invoiceNo)
+          ORDER BY g.transfer_code, g.tb_transfer_id, g.side"""
+      .query[(String, String, String, Int, String, BigDecimal, String, Int, String, Boolean)]
+      .to[List]
+      .map { rows =>
+        // role 7 = Intercompany, 11 = IcMargin — the flash uplift pair lives behind the wall
+        val visible = if (includeInterEntity) rows else rows.filterNot(r => r._4 == 7 || r._4 == 11)
+        val legs = visible.map {
+          case (tid, side, key, role, ccy, amt, phase, code, ev, posted) =>
+            Json.obj(
+              "tb_transfer_id" -> tid.asJson,
+              "side"           -> side.asJson,
+              "account_key"    -> key.asJson,
+              "account_role"   -> role.asJson,
+              "currency"       -> ccy.asJson,
+              "amount"         -> (amt / 100).asJson,
+              "phase"          -> phase.asJson,
+              "transfer_code"  -> code.asJson,
+              "event_id"       -> ev.asJson,
+              "posted"         -> posted.asJson
+            )
+        }
+        // the conservation proof, also recomputed client-side from the cards on screen
+        val byCcy = visible.filter(_._10).groupBy(_._5).map {
+          case (ccy, rs) =>
+            val dr = rs.filter(_._2 == "debit").map(_._6).sum / 100
+            val cr = rs.filter(_._2 == "credit").map(_._6).sum / 100
+            Json.obj(
+              "currency" -> ccy.asJson,
+              "debits"   -> dr.asJson,
+              "credits"  -> cr.asJson,
+              "balanced" -> (dr == cr).asJson
+            )
+        }
+        Json.obj("invoice_no" -> invoiceNo.asJson, "legs" -> legs.asJson, "conservation" -> byCcy.toList.asJson)
+      }
+
   private def head(orderId: UUID): ConnectionIO[Option[
     (String, String, String, BigDecimal, BigDecimal, BigDecimal, String, Option[UUID], Option[String], Option[UUID])
   ]] =

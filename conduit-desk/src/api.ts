@@ -284,6 +284,31 @@ export function activateSellingEntity(token: string, id: string) {
   return call(`/api/v1/tax/selling-entities/${id}/activate`, token, 'POST');
 }
 
+// ----- M-Proof (doc 31): the Proof Center — laws, the journal walk, ASC-606, reconcile, the tamper sandbox -----
+
+export function getProofLaws(token: string) {
+  return call('/api/v1/proof/laws', token, 'GET');
+}
+export function runProofControl(token: string, code: string) {
+  return call(`/api/v1/proof/controls/${code}/run`, token, 'POST');
+}
+export function getProofTrialBalance(token: string, entityId: string) {
+  return call(`/api/v1/proof/trial-balance/${entityId}`, token, 'GET');
+}
+export function getProofAsc606(token: string, orderId: string) {
+  return call(`/api/v1/proof/asc606/${orderId}`, token, 'GET');
+}
+export function getProofJournal(token: string, invoiceNo: string) {
+  return call(`/api/v1/proof/journal/${encodeURIComponent(invoiceNo)}`, token, 'GET');
+}
+export function proofTamper(token: string, kind: string) {
+  return call(`/api/v1/proof/tamper/${kind}`, token, 'POST');
+}
+export function proofTamperRestore(token: string) {
+  return call('/api/v1/proof/tamper-restore', token, 'POST');
+}
+// The journal walk reuses the lineage explorer's data (figure → ledger transfers → events → document).
+
 export function getVatExposure(token: string, entityId?: string) {
   const q = entityId ? `?entity_id=${encodeURIComponent(entityId)}` : '';
   return call(`/api/v1/tax/vat/exposure${q}`, token, 'GET');

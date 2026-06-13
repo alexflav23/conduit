@@ -137,8 +137,12 @@ about it.
    return with flash unwind + refund, DOA scrap, partial payment, 2 payouts, commission post/claw/true-up,
    2-unit shrinkage count, Q2 VAT remittance, Aurora rebate accrue→settle, year-end USD consolidation.
 2. **P2 ProofRoutes + permission seeds** — route×role tests (403 walls; tamper 404s when env=prod).
-3. **P3 Desk: Laws + Journal Walk + Reconcile** — Vitest for the conservation strip; Playwright: walk one
-   invoice to its CM PO, run one control, see green.
+3. **P3 Desk: Laws + Journal Walk + Reconcile + Tamper** *(BUILT)* — the `Proof` tab (gated `view:proof_center`),
+   four sub-pages over the live API. Laws: the doc-30 register with per-pin re-run (green earned per click).
+   Journal Walk: an invoice's DR/CR leg cards from a new `GET /proof/journal/{invoiceNo}` (gl_entry legs,
+   flash legs walled for non-inter_entity holders) with the **conservation strip recomputed client-side**.
+   Reconcile: the trial balance with the balanced proof. Tamper: the corrupt→named→restore loop (admin only;
+   404 in prod). `e2e/proof.spec.ts` (finance walks + re-runs; admin drives the full tamper loop).
 4. **P4 Desk: ASC-606 walkthrough** (closes doc 29 A3 — the spec matrix lands in 29 simultaneously,
    generated from the same row source) **+ Tamper Sandbox** — Playwright: tamper → named violation → restore.
 

@@ -117,6 +117,20 @@ final class ProofRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F], ta
             }
       )
 
+  private val journal =
+    base.get
+      .in("api" / "v1" / "proof" / "journal" / path[String]("invoiceNo"))
+      .out(jsonBody[Json])
+      .serverLogic(p =>
+        invoiceNo =>
+          if (!view(p)) Async[F].pure(Left(forbidden))
+          else
+            Asc606Walkthrough
+              .journalForInvoice(invoiceNo, includeInterEntity = interEntity(p))
+              .transact(xa)
+              .map(Right(_))
+      )
+
   private val asc606 =
     base.get
       .in("api" / "v1" / "proof" / "asc606" / path[String]("orderId"))
@@ -166,5 +180,7 @@ final class ProofRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F], ta
       )
 
   val routes: HttpRoutes[F] =
-    Http4sServerInterpreter[F]().toRoutes(List(laws, runControl, trialBalance, asc606, tamperKind, tamperRestore))
+    Http4sServerInterpreter[F]().toRoutes(
+      List(laws, runControl, trialBalance, journal, asc606, tamperKind, tamperRestore)
+    )
 }

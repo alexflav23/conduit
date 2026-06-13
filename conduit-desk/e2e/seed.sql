@@ -236,3 +236,21 @@ INSERT INTO role_assignment (user_id, role_id)
 INSERT INTO selling_entity (jurisdiction, entity_id, status)
   SELECT 'GB', '33333333-3333-3333-3333-333333333333', 'active'
   WHERE NOT EXISTS (SELECT 1 FROM selling_entity WHERE jurisdiction = 'GB');
+
+-- M-Proof (doc 31): the gl_entry mirror for INV-FLOW's three recognition legs — written OUTSIDE the
+-- ORD-FLOW guard and idempotent, so it backfills even on a local pg where ORD-FLOW pre-dates this seed.
+-- event_id = the dispatch id (the Journal Walk's join key); two-sided + balanced so the conservation strip
+-- ties (Σ DR 420.00 = Σ CR 420.00) and CTRL-LINEAGE-CLOSURE is green on a clean book.
+INSERT INTO gl_entry (tb_transfer_id, side, account_key, account_role, currency, amount_minor, phase, posted, transfer_code, event_id, occurred_at)
+SELECT v.tid, v.side, v.key, v.role, 'GBP', v.amt, 'single', true, 1, rr.dispatch_id, '2026-09-15'
+FROM revenue_recognition rr
+CROSS JOIN (VALUES
+  (123456789012345678901234567890::numeric, 'debit',  'AR:flow',      1, 2500000::numeric),
+  (123456789012345678901234567890::numeric, 'credit', 'REVENUE:flow', 9, 2500000::numeric),
+  (223456789012345678901234567890::numeric, 'debit',  'AR:flow',      1,  500000::numeric),
+  (223456789012345678901234567890::numeric, 'credit', 'VAT:flow:GB',  5,  500000::numeric),
+  (323456789012345678901234567890::numeric, 'debit',  'COGS:flow',    4, 1200000::numeric),
+  (323456789012345678901234567890::numeric, 'credit', 'INV:flow',     3, 1200000::numeric)
+) AS v(tid, side, key, role, amt)
+WHERE rr.invoice_no = 'INV-FLOW'
+  AND NOT EXISTS (SELECT 1 FROM gl_entry g WHERE g.tb_transfer_id = v.tid AND g.side = v.side);
