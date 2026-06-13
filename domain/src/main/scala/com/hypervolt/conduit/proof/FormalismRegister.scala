@@ -39,8 +39,9 @@ object FormalismRegister {
         control("CTRL-INV-CONSERVATION"),
         control("CTRL-IC-MATCH"),
         control("CTRL-IC-REMEASURE"),
-        control("CTRL-HEDGE-LOCK"),
-        control("CTRL-IC-SETTLE-ZERO")
+        control("CTRL-HEDGE-PERF"),
+        control("CTRL-IC-SETTLE-ZERO"),
+        control("CTRL-IC-TRUEUP")
       )
     ),
     Law(

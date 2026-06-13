@@ -33,8 +33,9 @@ object LedgerAccountCode {
   val InvWriteOff: Int       = 18 // inventory write-off / shrinkage / found → P&L (the INV counterpart)
   val RebateAccrual: Int =
     19 // retrospective volume-rebate liability (contra-revenue) — accrued, drawn down on settlement (doc 24 §5.5)
-  val FxGainLoss: Int  = 20 // the ONLY account allowed to absorb rate movement (doc 28 §5.2) — unrealized + realized FX
-  val IcRemeasure: Int = 21 // remeasurement adjunct to the IC receivable — functional-ledger side of ASC 830-20-35
+  val FxGainLoss: Int   = 20 // the ONLY account allowed to absorb rate movement (doc 28 §5.2) — unrealized + realized FX
+  val IcRemeasure: Int  = 21 // remeasurement adjunct to the IC receivable — functional-ledger side of ASC 830-20-35
+  val FxDerivative: Int = 22 // the hedge instrument's fair value carried on the balance sheet (ASC 815, doc 28 §5.5)
 }
 
 object LedgerTransferCode {
@@ -47,6 +48,7 @@ object LedgerTransferCode {
   val Remeasure: Int    = 60 // ASC 830-20-35 period-end remeasurement delta (doc 28 §5.3)
   val Settlement: Int   = 70 // IC settlement — cash legs + realized-FX reclass (doc 28 §5.4)
   val TrueUp: Int       = 80 // §482 year-end transfer-pricing true-up — period uplift adjustment (doc 28 §5.6)
+  val HedgeMtm: Int     = 90 // economic hedge mark-to-market through earnings (ASC 815, doc 28 §5.5 / 4b)
 }
 
 // TigerBeetle transfer flags (two-phase + linking).

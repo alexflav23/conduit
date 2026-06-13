@@ -251,7 +251,7 @@ final class RevenueRecognitionService[F[_]: Async](xa: Transactor[F], ledger: Ti
       case (Some(op), Some(parent), Some(market)) =>
         com.hypervolt.conduit.intercompany.FlashTitle
           .resolve(dispatchId, op, parent, market, landed, rev, qty, asOf)
-          .flatMap(_.flatTraverse(com.hypervolt.conduit.intercompany.FlashTitle.stampRate(_, h.currency, landed, asOf)))
+          .flatMap(_.flatTraverse(com.hypervolt.conduit.intercompany.FlashTitle.stampRate(_, h.currency, asOf)))
           .map(_.map(Some(_)))
       case _ => Option.empty[com.hypervolt.conduit.intercompany.FlashTitle.FlashCtx].asRight[String].pure[ConnectionIO]
     }

@@ -30,16 +30,15 @@ object FlashTitle {
       transferTotalFunctional: BigDecimal = BigDecimal(0)
   )
 
-  // One moment fixes everything (doc 28 §5.1/§5.4b): same-currency hops stamp the identity rate; a
-  // cross-currency hop resolves HEDGE -> SPOT -> FAIL CLOSED. A live hedge covering the pair for the
-  // principal at the dispatch date, with remaining capacity for the uplift exposure, books the CONTRACTED
-  // rate (treasury fixes these at fiscal-period start with 6–12 month validities); otherwise the latest
-  // provenanced spot on-or-before the date; with neither, recognition blocks like an unpriced hop.
-  // Resolution only — the capacity drawdown happens in recordMatch, atomic with the match row.
+  // One moment fixes everything (doc 28 §5.1): same-currency hops stamp the identity rate; a cross-currency
+  // hop books the latest provenanced SPOT on-or-before the dispatch date, and FAILS CLOSED with none. The
+  // booked rate is ALWAYS spot — a recognized IC monetary balance is remeasured at spot through earnings
+  // (ASC 830, slice §5.3), and any hedge is a SEPARATE instrument whose MTM offsets that in earnings
+  // (the economic treatment, doc 28 §5.5 / 4b). The hedge never locks the booking rate: cash-flow/OCI
+  // deferral is not available for an already-recognized balance — that's for forecasted transactions.
   def stampRate(
       ctx: FlashCtx,
       txnCurrency: String,
-      landedTotal: BigDecimal,
       asOf: java.time.LocalDate
   ): ConnectionIO[Either[String, FlashCtx]] =
     sql"SELECT functional_currency FROM entity WHERE id = ${ctx.procurementEntity}".query[String].unique.flatMap {
@@ -51,26 +50,20 @@ object FlashTitle {
             principalCcy = principalCcy,
             transferTotalFunctional = (ctx.transferTotal * rate).setScale(4, scala.math.BigDecimal.RoundingMode.HALF_UP)
           )
-        val uplift = ctx.transferTotal - landedTotal
         if (principalCcy == txnCurrency)
           stamped(BigDecimal(1), "identity").asRight[String].pure[ConnectionIO]
         else
-          (if (uplift > 0) IcRepo.activeHedge(txnCurrency, principalCcy, ctx.procurementEntity, asOf, uplift)
-           else Option.empty[HedgeRow].pure[ConnectionIO]).flatMap {
-            case Some(h) => stamped(h.contractedRate, s"hedge:${h.id}").asRight[String].pure[ConnectionIO]
-            case None =>
-              sql"""SELECT rate, as_of::text FROM exchange_rate
-                    WHERE base = $txnCurrency AND quote = $principalCcy AND rate_type = 'spot' AND as_of <= $asOf
-                    ORDER BY as_of DESC LIMIT 1"""
-                .query[(BigDecimal, String)]
-                .option
-                .map {
-                  case None =>
-                    s"no $txnCurrency->$principalCcy spot rate on or before $asOf — an unrated cross-currency hop fails closed (doc 28 §5.1)"
-                      .asLeft[FlashCtx]
-                  case Some((rate, rateDate)) => stamped(rate, s"spot:$rateDate").asRight[String]
-                }
-          }
+          sql"""SELECT rate, as_of::text FROM exchange_rate
+                WHERE base = $txnCurrency AND quote = $principalCcy AND rate_type = 'spot' AND as_of <= $asOf
+                ORDER BY as_of DESC LIMIT 1"""
+            .query[(BigDecimal, String)]
+            .option
+            .map {
+              case None =>
+                s"no $txnCurrency->$principalCcy spot rate on or before $asOf — an unrated cross-currency hop fails closed (doc 28 §5.1)"
+                  .asLeft[FlashCtx]
+              case Some((rate, rateDate)) => stamped(rate, s"spot:$rateDate").asRight[String]
+            }
     }
 
   // Resolve the dispatch's transfer total as-of the recognition date. Catalogue prices every variant or the
@@ -141,9 +134,9 @@ object FlashTitle {
       }
 
   // Leg ids are claims (doc 29 A2): present iff the leg was posted — a zero uplift posts nothing, so the
-  // match records NULL legs and CTRL-LINEAGE-CLOSURE never chases a transfer that never existed.
-  // A hedge-booked match draws down capacity ATOMICALLY with the row (doc 28 §5.4b) — and only when the
-  // insert actually happened, so an at-least-once redelivery cannot double-draw.
+  // match records NULL legs and CTRL-LINEAGE-CLOSURE never chases a transfer that never existed. The match
+  // books at SPOT (stampRate, §5.1); any hedge is a separate instrument (HedgeValuationService), never bound
+  // to the match here — so there is no per-match drawdown (4b: the economic treatment).
   def recordMatch(
       dispatchId: UUID,
       orderId: UUID,
@@ -167,18 +160,7 @@ object FlashTitle {
                     $batches, $opLeg, $prLeg,
                     ${flash.bookedRate}, ${flash.rateSource}, ${flash.principalCcy}, ${flash.transferTotalFunctional})
             ON CONFLICT (dispatch_id) DO NOTHING""".update.run)
-      .flatTap { inserted =>
-        hedgeIdOf(flash.rateSource)
-          .filter(_ => inserted == 1 && uplift > 0)
-          .traverse_(hid =>
-            sql"""UPDATE fx_hedge SET notional_used = notional_used + $uplift, ic_drawdown = ic_drawdown + $uplift
-                WHERE id = $hid""".update.run
-          )
-      }
   }
-
-  private def hedgeIdOf(rateSource: String): Option[UUID] =
-    Option.when(rateSource.startsWith("hedge:"))(UUID.fromString(rateSource.drop(6)))
 
   private def variantQtys(dispatchId: UUID): ConnectionIO[List[(UUID, Int)]] =
     sql"""SELECT ol.product_variant_id, SUM(dl.qty)::int
@@ -220,19 +202,10 @@ object FlashTitle {
   ): ConnectionIO[Int] = {
     val op = opLeg.map(BigDecimal(_))
     val pr = prLeg.map(BigDecimal(_))
-    // a hedge-booked match releases its REMAINING live exposure back to the hedge — gated on the stamp
-    // actually happening, so a double void cannot double-release (doc 28 §5.4b)
     sql"""UPDATE ic_match
           SET reversed_at = now(), reversal_id = $reversalId,
               rev_op_leg_tb_transfer_id = $op, rev_pr_leg_tb_transfer_id = $pr
-          WHERE dispatch_id = $dispatchId AND reversed_at IS NULL""".update.run.flatTap { stamped =>
-      sql"""UPDATE fx_hedge h
-            SET notional_used = h.notional_used - (m.uplift_total - m.returned_uplift),
-                ic_drawdown   = h.ic_drawdown   - (m.uplift_total - m.returned_uplift)
-            FROM ic_match m
-            WHERE m.dispatch_id = $dispatchId AND m.rate_source = 'hedge:' || h.id::text
-              AND $stamped = 1""".update.run.void
-    }
+          WHERE dispatch_id = $dispatchId AND reversed_at IS NULL""".update.run
   }
 
   // Partial return: the per-unit uplift share for a serial's dispatch (uniform over the dispatched units),
@@ -246,12 +219,7 @@ object FlashTitle {
       .option
       .map(_.flatMap { case (d, op, pr, share) => share.map(s => (d, op, pr, s)) })
 
-  // A partial return releases its share of a hedge-booked drawdown — the capacity follows the live exposure.
   def accumulateReturnedUplift(dispatchId: UUID, share: BigDecimal): ConnectionIO[Int] =
     sql"""UPDATE ic_match SET returned_uplift = returned_uplift + $share
-          WHERE dispatch_id = $dispatchId""".update.run.flatTap(_ => sql"""UPDATE fx_hedge h
-            SET notional_used = h.notional_used - $share, ic_drawdown = h.ic_drawdown - $share
-            FROM ic_match m
-            WHERE m.dispatch_id = $dispatchId AND m.rate_source = 'hedge:' || h.id::text
-              AND m.reversed_at IS NULL""".update.run.void)
+          WHERE dispatch_id = $dispatchId""".update.run
 }

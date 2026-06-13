@@ -198,11 +198,17 @@ Item 305 market-risk view. `hedge_disclosure` is the per-hedge/per-market surfac
 latest spot, fair value, designation). `CTRL-HEDGE-PERF` re-derives the figure; `HedgeValuationService`
 revalues + governs designation. `HedgePerfSuite` 3✓.
 
-**Slice 4b (the gross-presentation correction, staged next, behaviour-changing).** Today a hedge-booked
-balance is frozen at the contracted rate (slice 2b) — the right *net* number but not the GAAP gross
-presentation. 4b: the hedged balance remeasures at **spot** like any monetary item, and the hedge's MTM (now
-tracked by 4a) posts through earnings to offset it; booking uses spot, not the locked rate. Needs its own
-regression pass over slices 2b/3 and an `IcHedgeLockSuite` rewrite — staged deliberately.
+**Slice 4b (the gross-presentation correction, BUILT, V1_0_76).** The recognized IC balance now floats at
+**spot** and remeasures through earnings like any monetary item (slice 5.3 no longer excludes hedged
+matches); booking uses spot, not a locked rate (`FlashTitle.stampRate` dropped the hedge branch); and the
+hedge's period MTM (4a) posts through earnings — DR `FX_DERIVATIVE` / CR `FX_GAINLOSS` — to **offset** the
+remeasurement. When the hedge's contracted rate equals the booking spot and its notional matches the
+exposure, the two movements cancel exactly and net `FX_GAINLOSS` is zero (`IcHedgeEconomicSuite` proves it).
+The per-match lock and drawdown of slice 2b are retired (`CTRL-HEDGE-LOCK` superseded; there is no per-match
+hedge booking left to police — integrity is now `CTRL-HEDGE-PERF` + `CTRL-LINEAGE-CLOSURE` over the MTM leg).
+This is the GAAP-correct economic treatment for hedging a recognized monetary balance; cash-flow/OCI deferral
+stays reserved for forecasted-transaction hedges (documented, fail-closed). The slice-2b §5.4b text above is
+superseded by this.
 
 ### 5.5.1 Hedges — three concepts, kept distinct (ASC 815)
 | Concept | Accounting | Conduit mechanism |

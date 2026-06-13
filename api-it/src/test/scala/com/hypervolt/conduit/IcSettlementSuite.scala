@@ -204,9 +204,7 @@ object IcSettlementSuite extends IOSuite {
         expect.same(ctrl, 0L) and expect.same(remeasOk, 0L) and expect.same(closure, 0L)
   }
 
-  test(
-    "hedged exposure settles at the contracted rate: zero FX — the lock proven in cash — and the live drawdown releases"
-  ) {
+  test("4b decoupling: a hedge does NOT bind the booking — the IC balance books and settles at spot, untouched") {
     case (xa, client) =>
       val svc = new IcSettlementService[IO](xa, TigerBeetleLedger.fromClient[IO](client))
       for {
@@ -221,7 +219,10 @@ object IcSettlementSuite extends IOSuite {
             .query[UUID]
             .unique
             .transact(xa)
-        _        <- recognized(xa, client, sg, op) // hedge-booked at 1.28
+        // a spot exists — the match books at SPOT (1.30), NOT the hedge's 1.28: the hedge is a separate instrument
+        _        <- rate(xa, "spot", LocalDate.now(), "1.30")
+        did      <- recognized(xa, client, sg, op)
+        src      <- sql"SELECT rate_source FROM ic_match WHERE dispatch_id = $did".query[String].unique.transact(xa)
         proposer <- user(xa, "hg-settle-maker")
         approver <- user(xa, "hg-settle-checker")
         sid      <- svc.propose(sg, op, "GBP", LocalDate.now(), proposer).map(_.toOption.get)
@@ -231,14 +232,14 @@ object IcSettlementSuite extends IOSuite {
             .query[(BigDecimal, BigDecimal)]
             .unique
             .transact(xa)
-        lock <- control(xa, "CTRL-HEDGE-LOCK")
-        ctrl <- control(xa, "CTRL-IC-SETTLE-ZERO")
+        ctrl    <- control(xa, "CTRL-IC-SETTLE-ZERO")
+        closure <- control(xa, "CTRL-LINEAGE-CLOSURE")
       } yield expect(r.isRight) and
-        expect.same(r.toOption.get.realizedFx, BigDecimal("0.0000")) and          // contracted == booked: zero FX
-        expect.same(r.toOption.get.settledFunctional, BigDecimal("204.8000")) and // 160 × 1.28
-        expect.same(d._1, BigDecimal("160.0000")) and                             // notional stays consumed — the forward executed
-        expect.same(d._2, BigDecimal("0.0000")) and                               // the live drawdown released
-        expect.same(lock, 0L) and expect.same(ctrl, 0L)
+        expect(src.startsWith("spot:")) and                                       // booked at spot, not 'hedge:'
+        expect.same(r.toOption.get.settledFunctional, BigDecimal("208.0000")) and // 160 × 1.30, at spot
+        expect.same(d._1, BigDecimal("0.0000")) and                               // the hedge was NOT drawn down by the booking (4b)
+        expect.same(d._2, BigDecimal("0.0000")) and
+        expect.same(ctrl, 0L) and expect.same(closure, 0L)
   }
 
   test("DETECTION: a corrupted settlement fails CTRL-IC-SETTLE-ZERO with itself as evidence") {
