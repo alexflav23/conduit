@@ -25,6 +25,30 @@ financial-gates:
   script:
     - nix-shell --run "sbt noFloatCheck schemaCheck secretScan migrationCheck"
 
+# M-Assurance G (doc 29 G): the terraform gate. fmt is offline — it runs on every push, anywhere. The full
+# `plan` (init pulls the estate modules over GitLab SSH + assumes the per-env AWS role) runs only on the
+# estate-credentialed runner on protected branches; it never gates a feature branch and never needs secrets
+# on a fork. A drift or a malformed module is caught before the deploy path, not during it.
+terraform-fmt:
+  stage: lint
+  tags:
+    - x86_64-nix-24.11
+  script:
+    - nix-shell -p terraform --run "terraform fmt -check -recursive terraform/"
+
+terraform-plan:
+  stage: lint
+  tags:
+    - x86_64-nix-24.11   # the estate runner: GitLab SSH for module sources + the <env>-conduit-operator AWS role
+  rules:
+    - if: '$CI_COMMIT_REF_PROTECTED == "true"'
+  allow_failure: true     # advisory until the estate runner credentials are wired (doc 29 G — the remaining gap)
+  script:
+    - nix-shell -p terraform awscli2 --run '
+        for m in roles-global rds conduit-records conduit-tigerbeetle conduit-api conduit-consumer; do
+          (cd terraform/$m && terraform init -input=false && terraform validate && terraform plan -input=false -lock=false);
+        done'
+
 compile-test:
   stage: test
   tags:

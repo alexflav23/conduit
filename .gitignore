@@ -20,3 +20,7 @@ h6q-simulation.html
 
 # local-mode xlsx parser venv
 local/.venv/
+
+# terraform working dirs (provider/module downloads from `terraform init`) — never committed
+**/.terraform/
+**/.terraform.lock.hcl
