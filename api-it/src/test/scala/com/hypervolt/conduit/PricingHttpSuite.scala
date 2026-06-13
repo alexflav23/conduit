@@ -84,9 +84,9 @@ object PricingHttpSuite extends IOSuite {
       retailRole  <- sql"SELECT id FROM role WHERE name = 'retail_sales_agent'".query[UUID].unique
       financeRole <- sql"SELECT id FROM role WHERE name = 'finance'".query[UUID].unique
       ceoRole     <- sql"SELECT id FROM role WHERE name = 'ceo'".query[UUID].unique
-      _           <- AdminRepo.assign(rId, retailRole, Nil, Nil, Nil, None)
-      _           <- AdminRepo.assign(fId, financeRole, Nil, Nil, Nil, None)
-      _           <- AdminRepo.assign(cId, ceoRole, Nil, Nil, Nil, None)
+      _           <- AdminRepo.assign(rId, retailRole, Nil, Nil, Nil, Nil, None)
+      _           <- AdminRepo.assign(fId, financeRole, Nil, Nil, Nil, Nil, None)
+      _           <- AdminRepo.assign(cId, ceoRole, Nil, Nil, Nil, Nil, None)
     } yield (retailKc, financeKc, ceoKc)
     prog.transact(xa)
   }

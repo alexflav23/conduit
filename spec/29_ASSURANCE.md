@@ -130,10 +130,26 @@ open IC exposure = unreversed AND unsettled everywhere; the remeasurement adjunc
 GL role (`LedgerAccountCode`); transfer codes: 1 generic · 10 commission · 20 opening · 30 intercompany ·
 40 payment · 50 reversal · 60 remeasure · 70 settlement.
 
-## Slice B — the authz matrix
-Auto-generate from the permission seeds: EVERY route × EVERY preset role → expected {200/403}, plus
-layer-projection absence assertions for every (object, field) in FieldLayerMap. Makes the
-checker-cannot-see-what-they-approve and wall-leak bug classes structurally unreintroducible.
+## Slice B — the authz matrix *(BUILT — `AuthzMatrixSuite`)*
+Generated from the permission seeds + FieldLayerMap, so two bug classes become structurally
+unreintroducible:
+- **the wall leak** — the projection matrix proves, for EVERY (object, field) in `FieldLayerMap.seed`,
+  the field is ABSENT without its layer and present with it (both directions);
+- **checker-cannot-see-what-they-approve** (the V1_0_61 class) — *no preset role can act on an object it
+  cannot view*, and *no role can edit a layer it cannot view* (edit ⊆ view, per role×object).
+
+Running the matrix found **five real seed gaps** and fixed them (V1_0_71/72): the CEO approved
+`transfer_price_policy` and edited `price_rule` with no matching view; admin managed `role` with no
+view:role; the retail agent captured `forecast` with no view:forecast; and — at the layer grain — the CEO's
+V1_0_61 tax views carried `{}` layers while it approved `{volume,commercial,pii}`, so it signed off tax
+governance the projection hid from it. All closed; the three invariants now hold at 0 across the seed.
+
+Also delivered the wider permission-builder ask (doc 05 §2): a **sector** scope axis (`role_assignment.
+scope_sectors`, V1_0_70) alongside the existing entity/market(geography)/channel axes — so a grant narrows to
+"UK Wholesale, energy sector" (`markets{UK} ∧ channels{wholesale} ∧ sectors{energy}`) and no other. Each axis
+ANDs; empty = unconstrained. Wired through `Grant`/`Target`/`PolicyEngine`/`ScopePredicate`/the
+`/admin/users/{kc}/assignments` builder API. Pinned by `PolicyEngineSpec` (the UK-wholesale-energy case) and
+`AuthzMatrixSuite` (the sector list-filter, both directions).
 
 ## Slice C — coverage measurement
 sbt-scoverage wired; honest baseline published; CI gate ≥90% branch on the money path

@@ -54,7 +54,7 @@ object InvoiceVoidHttpSuite extends IOSuite {
       _ <-
         if (canApprove) AdminRepo.addPermission(r, "order", "approve", None, Nil, Nil, "all").void
         else ().pure[doobie.ConnectionIO]
-      _ <- AdminRepo.assign(uid, r, Nil, Nil, Nil, None)
+      _ <- AdminRepo.assign(uid, r, Nil, Nil, Nil, Nil, None)
     } yield kc).transact(xa)
   }
 

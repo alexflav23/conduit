@@ -11,8 +11,13 @@ object PolicyEngineSpec extends SimpleIOSuite {
   private val retail    = UUID.randomUUID()
   private val me        = UUID.randomUUID()
 
-  private def grant(perms: List[Permission], markets: Set[UUID] = Set.empty, channels: Set[UUID] = Set.empty): Grant =
-    Grant(perms, Set.empty, markets, channels, None)
+  private def grant(
+      perms: List[Permission],
+      markets: Set[UUID] = Set.empty,
+      channels: Set[UUID] = Set.empty,
+      sectors: Set[String] = Set.empty
+  ): Grant =
+    Grant(perms, Set.empty, markets, channels, sectors, None)
 
   private val viewOrder =
     Permission("order", Action.View, None, Set(DataLayer.Volume, DataLayer.Commercial), Set.empty, Breadth.Scoped)
@@ -20,8 +25,8 @@ object PolicyEngineSpec extends SimpleIOSuite {
   // "UK wholesale only": scoped to market=UK, channel=wholesale.
   private val ukWholesale = Principal(me, Set.empty, List(grant(List(viewOrder), Set(uk), Set(wholesale))))
 
-  private def order(market: UUID, channel: UUID): Target =
-    Target(entityId = None, marketId = Some(market), channelId = Some(channel), ownerUserId = None)
+  private def order(market: UUID, channel: UUID, sector: Option[String] = None): Target =
+    Target(entityId = None, marketId = Some(market), channelId = Some(channel), ownerUserId = None, sector = sector)
 
   pureTest("UK-wholesale user is allowed a UK-wholesale row") {
     expect(PolicyEngine.authorize(ukWholesale, Action.View, "order", order(uk, wholesale)))
@@ -74,10 +79,24 @@ object PolicyEngineSpec extends SimpleIOSuite {
     val ownOnly = Principal(
       me,
       Set.empty,
-      List(Grant(List(viewOrder.copy(dataBreadth = Breadth.Own)), Set.empty, Set.empty, Set.empty, None))
+      List(Grant(List(viewOrder.copy(dataBreadth = Breadth.Own)), Set.empty, Set.empty, Set.empty, Set.empty, None))
     )
     expect(PolicyEngine.authorize(ownOnly, Action.View, "order", Target(None, None, None, Some(me)))) and
       expect(!PolicyEngine.authorize(ownOnly, Action.View, "order", Target(None, None, None, Some(UUID.randomUUID()))))
+  }
+
+  // The CEO's "UK Wholesale, energy sector" grant (doc 05 §2): every scope axis ANDs — market ∧ channel ∧
+  // sector. An energy-sector UK-wholesale row is in; the same UK-wholesale row in another sector is out.
+  private val energyUkWholesale =
+    Principal(me, Set.empty, List(grant(List(viewOrder), Set(uk), Set(wholesale), Set("energy"))))
+
+  pureTest("sector scope ANDs with market+channel: UK-wholesale-energy is in, UK-wholesale-installers is out") {
+    expect(PolicyEngine.authorize(energyUkWholesale, Action.View, "order", order(uk, wholesale, Some("energy")))) and
+      expect(
+        !PolicyEngine.authorize(energyUkWholesale, Action.View, "order", order(uk, wholesale, Some("installers")))
+      ) and
+      // an unscoped-sector grant still sees every sector (empty axis = unconstrained)
+      expect(PolicyEngine.authorize(ukWholesale, Action.View, "order", order(uk, wholesale, Some("energy"))))
   }
 
   pureTest("revoking the grant denies on the next check") {

@@ -18,6 +18,7 @@ object ProjectionSpec extends SimpleIOSuite {
           Set.empty,
           Set.empty,
           Set.empty,
+          Set.empty,
           None
         )
       )

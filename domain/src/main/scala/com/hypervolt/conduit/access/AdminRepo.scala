@@ -37,9 +37,11 @@ object AdminRepo {
       scopeEntities: List[UUID],
       scopeMarkets: List[UUID],
       scopeChannels: List[UUID],
+      scopeSectors: List[String],
       breadthOverride: Option[String]
   ): ConnectionIO[UUID] =
-    sql"""INSERT INTO role_assignment (user_id, role_id, scope_entities, scope_markets, scope_channels, breadth_override)
-          VALUES ($userId, $roleId, $scopeEntities, $scopeMarkets, $scopeChannels, $breadthOverride)
+    sql"""INSERT INTO role_assignment
+            (user_id, role_id, scope_entities, scope_markets, scope_channels, scope_sectors, breadth_override)
+          VALUES ($userId, $roleId, $scopeEntities, $scopeMarkets, $scopeChannels, $scopeSectors, $breadthOverride)
           RETURNING id""".query[UUID].unique
 }

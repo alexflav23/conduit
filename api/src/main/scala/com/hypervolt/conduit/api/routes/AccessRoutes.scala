@@ -42,6 +42,8 @@ final case class AssignReq(
     scopeEntities: List[String],
     scopeMarkets: List[String],
     scopeChannels: List[String],
+    // sector codes (party.sector) — optional for back-compat; absent = unconstrained on sector
+    scopeSectors: Option[List[String]],
     breadthOverride: Option[String]
 )
 object AssignReq { implicit val codec: Codec[AssignReq] = deriveCodec }
@@ -126,13 +128,21 @@ final class AccessRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
             entities <- parseUuids(req.scopeEntities)
             markets  <- parseUuids(req.scopeMarkets)
             channels <- parseUuids(req.scopeChannels)
-          } yield (keycloakId, roleId, entities, markets, channels, req.breadthOverride)
+          } yield (
+            keycloakId,
+            roleId,
+            entities,
+            markets,
+            channels,
+            req.scopeSectors.getOrElse(Nil),
+            req.breadthOverride
+          )
           result match {
             case Left(e) => Async[F].pure(Left(e))
-            case Right((kc, roleId, entities, markets, channels, breadth)) =>
+            case Right((kc, roleId, entities, markets, channels, sectors, breadth)) =>
               AdminRepo
                 .ensureUser(kc, None)
-                .flatMap(uid => AdminRepo.assign(uid, roleId, entities, markets, channels, breadth))
+                .flatMap(uid => AdminRepo.assign(uid, roleId, entities, markets, channels, sectors, breadth))
                 .transact(xa)
                 .map(aid => Right(AssignResp(aid.toString)))
           }

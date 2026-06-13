@@ -54,7 +54,7 @@ object SellingEntityHttpSuite extends IOSuite {
     (for {
       uid <- AdminRepo.ensureUser(kc, Some(role))
       rid <- sql"SELECT id FROM role WHERE name = $role".query[UUID].unique
-      _   <- AdminRepo.assign(uid, rid, Nil, Nil, Nil, None)
+      _   <- AdminRepo.assign(uid, rid, Nil, Nil, Nil, Nil, None)
     } yield s"dev:$kc").transact(xa)
   }
 

@@ -34,7 +34,7 @@ object OrderLifecycleHttpSuite extends IOSuite {
       uid <- AdminRepo.ensureUser(kc, Some("LifeViewer"))
       r   <- AdminRepo.createRole(s"liferole-${UUID.randomUUID()}", Some("lifecycle viewer"))
       _   <- AdminRepo.addPermission(r, "order", "view", None, layers, Nil, "all")
-      _   <- AdminRepo.assign(uid, r, Nil, Nil, Nil, None)
+      _   <- AdminRepo.assign(uid, r, Nil, Nil, Nil, Nil, None)
     } yield kc).transact(xa)
   }
 
@@ -45,7 +45,7 @@ object OrderLifecycleHttpSuite extends IOSuite {
       uid <- AdminRepo.ensureUser(kc, Some("NoLife"))
       r   <- AdminRepo.createRole(s"noorder-${UUID.randomUUID()}", Some("no order grant"))
       _   <- AdminRepo.addPermission(r, "control", "view", None, Nil, Nil, "all")
-      _   <- AdminRepo.assign(uid, r, Nil, Nil, Nil, None)
+      _   <- AdminRepo.assign(uid, r, Nil, Nil, Nil, Nil, None)
     } yield kc).transact(xa)
   }
 

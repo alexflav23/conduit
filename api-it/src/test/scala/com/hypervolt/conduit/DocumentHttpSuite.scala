@@ -37,7 +37,7 @@ object DocumentHttpSuite extends IOSuite {
     (for {
       uid <- AdminRepo.ensureUser(kc, Some("Finance"))
       r   <- sql"SELECT id FROM role WHERE name='finance'".query[UUID].unique
-      _   <- AdminRepo.assign(uid, r, Nil, Nil, Nil, None)
+      _   <- AdminRepo.assign(uid, r, Nil, Nil, Nil, Nil, None)
     } yield kc).transact(xa)
   }
 
@@ -48,7 +48,7 @@ object DocumentHttpSuite extends IOSuite {
       uid <- AdminRepo.ensureUser(kc, Some("VolumeOnly"))
       r   <- AdminRepo.createRole(s"docvol-${UUID.randomUUID()}", Some("volume-only document viewer"))
       _   <- AdminRepo.addPermission(r, "document", "view", None, List("volume"), Nil, "all")
-      _   <- AdminRepo.assign(uid, r, Nil, Nil, Nil, None)
+      _   <- AdminRepo.assign(uid, r, Nil, Nil, Nil, Nil, None)
     } yield kc).transact(xa)
   }
 
@@ -58,7 +58,7 @@ object DocumentHttpSuite extends IOSuite {
     (for {
       uid <- AdminRepo.ensureUser(kc, Some("NoDocs"))
       r   <- sql"SELECT id FROM role WHERE name='retail_sales_agent'".query[UUID].unique
-      _   <- AdminRepo.assign(uid, r, Nil, Nil, Nil, None)
+      _   <- AdminRepo.assign(uid, r, Nil, Nil, Nil, Nil, None)
     } yield kc).transact(xa)
   }
 

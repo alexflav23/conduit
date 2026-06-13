@@ -29,13 +29,16 @@ object PolicyEngine {
   def scopeMatches(grant: Grant, permission: Permission, principal: Principal, target: Target): Boolean = {
     val breadth = grant.breadthOverride.getOrElse(permission.dataBreadth)
     breadth match {
-      case Breadth.All  => true
-      case Breadth.Own  => target.ownerUserId.contains(principal.userId)
-      case Breadth.Team => target.ownerUserId.exists(principal.teamMemberIds.contains)
+      case Breadth.All    => true
+      case Breadth.Own    => target.ownerUserId.contains(principal.userId)
+      case Breadth.Team   => target.ownerUserId.exists(principal.teamMemberIds.contains)
       case Breadth.Scoped =>
+        // each axis ANDs; an empty axis is unconstrained (doc 05 §2). "UK Wholesale, energy" =
+        // markets{UK} ∧ channels{wholesale} ∧ sectors{energy}.
         (grant.scopeEntities.isEmpty || target.entityId.exists(grant.scopeEntities.contains)) &&
           (grant.scopeMarkets.isEmpty || target.marketId.exists(grant.scopeMarkets.contains)) &&
-          (grant.scopeChannels.isEmpty || target.channelId.exists(grant.scopeChannels.contains))
+          (grant.scopeChannels.isEmpty || target.channelId.exists(grant.scopeChannels.contains)) &&
+          (grant.scopeSectors.isEmpty || target.sector.exists(grant.scopeSectors.contains))
     }
   }
 }

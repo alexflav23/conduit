@@ -37,12 +37,16 @@ final case class Permission(
     dataBreadth: Breadth
 )
 
-// A scoped assignment of a role's permissions to a principal (doc 02 §B role_assignment).
+// A scoped assignment of a role's permissions to a principal (doc 02 §B role_assignment). The scope axes
+// compose as AND (doc 05 §2): entity ∧ market(geography) ∧ channel ∧ sector — so "UK Wholesale, energy"
+// is scope_markets={UK} ∧ scope_channels={wholesale} ∧ scope_sectors={energy}. An empty axis = unconstrained
+// on that axis. Sector codes are strings (party.sector); the rest are ids.
 final case class Grant(
     permissions: List[Permission],
     scopeEntities: Set[UUID],
     scopeMarkets: Set[UUID],
     scopeChannels: Set[UUID],
+    scopeSectors: Set[String],
     breadthOverride: Option[Breadth]
 )
 
@@ -54,5 +58,6 @@ final case class Target(
     entityId: Option[UUID],
     marketId: Option[UUID],
     channelId: Option[UUID],
-    ownerUserId: Option[UUID]
+    ownerUserId: Option[UUID],
+    sector: Option[String] = None
 )

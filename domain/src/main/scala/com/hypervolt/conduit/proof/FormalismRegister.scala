@@ -104,10 +104,14 @@ object FormalismRegister {
     Law(
       "L9",
       "Maker–checker, and the checker can see what they approve",
-      "Governed changes need a second human; checker ≠ maker is enforced; the checker's role must hold view rights on the object class it approves.",
-      "Propose/activate pairs everywhere; the permission seeds.",
-      "V1_0_61: the CEO approval role could not view the tax rates awaiting its approval — caught by the sign-in gate work.",
-      List(suite("ProcurementSuite (governance)"), suite("StockOpsSuite (self-approval rejected)"))
+      "Governed changes need a second human; checker ≠ maker is enforced; the checker's role must hold view rights on the object class it approves — no role acts on what it cannot view, none edits a layer it cannot view. Scope grants compose as entity ∧ market(geography) ∧ channel ∧ sector.",
+      "Propose/activate pairs everywhere; the permission seeds; the four scope axes (Grant/PolicyEngine/ScopePredicate).",
+      "V1_0_61: the CEO could not view the tax rates it approved. AuthzMatrixSuite (slice B) then found five more act-without-view gaps in the seed and fixed them (V1_0_71/72) — the matrix now keeps the class structurally unreintroducible.",
+      List(
+        suite("AuthzMatrixSuite (act ⇒ view; edit ⊆ view; the wall matrix; the sector filter)"),
+        suite("PolicyEngineSpec (UK-wholesale-energy scope)"),
+        suite("ProcurementSuite (governance)")
+      )
     ),
     Law(
       "L10",

@@ -44,7 +44,7 @@ object AccessHttpSuite extends IOSuite {
       adminId   <- AdminRepo.ensureUser(adminKc, Some("Admin"))
       _         <- AdminRepo.ensureUser(plainKc, Some("Plain"))
       adminRole <- sql"SELECT id FROM role WHERE name = 'admin'".query[UUID].unique
-      _         <- AdminRepo.assign(adminId, adminRole, Nil, Nil, Nil, Some("all"))
+      _         <- AdminRepo.assign(adminId, adminRole, Nil, Nil, Nil, Nil, Some("all"))
     } yield ()).transact(xa)
 
   test("no token -> 401") { xa =>

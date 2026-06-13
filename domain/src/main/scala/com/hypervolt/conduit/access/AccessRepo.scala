@@ -32,9 +32,16 @@ object AccessRepo {
           members <- teamId.fold(List.empty[UUID].pure[ConnectionIO])(teamMembers)
           assigns <- assignments(userId)
           grants <- assigns.traverse {
-            case (roleId, entities, markets, channels, breadthOverride) =>
+            case (roleId, entities, markets, channels, sectors, breadthOverride) =>
               permissions(roleId).map(ps =>
-                Grant(ps, entities.toSet, markets.toSet, channels.toSet, breadthOverride.flatMap(Breadth.fromName))
+                Grant(
+                  ps,
+                  entities.toSet,
+                  markets.toSet,
+                  channels.toSet,
+                  sectors.toSet,
+                  breadthOverride.flatMap(Breadth.fromName)
+                )
               )
           }
         } yield Some(Principal(userId, members.toSet, grants))
@@ -48,10 +55,10 @@ object AccessRepo {
 
   private def assignments(
       userId: UUID
-  ): ConnectionIO[List[(UUID, List[UUID], List[UUID], List[UUID], Option[String])]] =
-    sql"""SELECT role_id, scope_entities, scope_markets, scope_channels, breadth_override
+  ): ConnectionIO[List[(UUID, List[UUID], List[UUID], List[UUID], List[String], Option[String])]] =
+    sql"""SELECT role_id, scope_entities, scope_markets, scope_channels, scope_sectors, breadth_override
           FROM role_assignment WHERE user_id = $userId"""
-      .query[(UUID, List[UUID], List[UUID], List[UUID], Option[String])]
+      .query[(UUID, List[UUID], List[UUID], List[UUID], List[String], Option[String])]
       .to[List]
 
   private def permissions(roleId: UUID): ConnectionIO[List[Permission]] =

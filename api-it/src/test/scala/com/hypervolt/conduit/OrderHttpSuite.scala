@@ -71,7 +71,7 @@ object OrderHttpSuite extends IOSuite {
     (for {
       uid <- AdminRepo.ensureUser(kc, Some("Agent"))
       r   <- sql"SELECT id FROM role WHERE name='retail_sales_agent'".query[UUID].unique
-      _   <- AdminRepo.assign(uid, r, Nil, Nil, Nil, None)
+      _   <- AdminRepo.assign(uid, r, Nil, Nil, Nil, Nil, None)
     } yield kc).transact(xa)
   }
 
@@ -82,7 +82,7 @@ object OrderHttpSuite extends IOSuite {
       uid <- AdminRepo.ensureUser(kc, Some("Amender"))
       r   <- AdminRepo.createRole(s"amender-${UUID.randomUUID()}", Some("amend"))
       _   <- AdminRepo.addPermission(r, "order", "edit", None, Nil, Nil, "all")
-      _   <- AdminRepo.assign(uid, r, Nil, Nil, Nil, None)
+      _   <- AdminRepo.assign(uid, r, Nil, Nil, Nil, Nil, None)
     } yield kc).transact(xa)
   }
 

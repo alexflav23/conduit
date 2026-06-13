@@ -235,6 +235,7 @@ object ProcurementSuite extends IOSuite {
           Set.empty,
           Set.empty,
           Set.empty,
+          Set.empty,
           None
         )
       val walled = Principal(UUID.randomUUID(), Set.empty, List(grantWith(Set(DataLayer.Volume))))
