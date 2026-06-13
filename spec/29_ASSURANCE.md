@@ -170,9 +170,16 @@ settles the 2026-06-12 cross-machine question; prospectively makes drift a visib
 Asserted with generous margins, env-skippable locally, watched in CI: policy_selection reads <1s;
 recognition <250ms/dispatch; an origin refit <15min on the CI shape; desk build <60s.
 
-## Slice F — desk unit layer (Vitest, per CLAUDE.md)
-The shared data-table’s four states (loading/empty/error/forbidden — the crash class found during the
-screenshot capture), `api.ts` response-shape contract, SignIn session logic (expiry decode, sign-out).
+## Slice F — desk unit layer (Vitest, per CLAUDE.md) *(BUILT — `yarn test`, 17✓)*
+Vitest 3.2.4 + jsdom wired (`vitest.config.ts`, `src/__tests__`). Three suites:
+- `state.test.ts` — the shared data-table state machine (`state.ts`): `asArray` (the crash-class guard —
+  an error/null body becomes `[]`, never reaches `.map`) and `tableState` (loading/forbidden/error/empty/
+  ready in ONE derivation, so the screenshot-capture crash class can't recur per-component);
+- `api.test.ts` — the `{status, json}` contract (bearer rides every call, empty body → null not a throw,
+  a 403 returns structured not an exception, verbs/paths/interpolation);
+- `signin.test.ts` — the session-chip label (`session.ts`, extracted StyleX-free from SignIn so it tests in
+  isolation): dev token, Google-JWT email claim, and malformed token never throw.
+`Proof.tsx` now uses the shared `asArray`. `yarn build` stays green (tsc + StyleX).
 
 ## Slice G — terraform plan gate
 `terraform plan` in CI on an estate-credentialed runner (blocked on GitLab SSH + AWS role; queued last).

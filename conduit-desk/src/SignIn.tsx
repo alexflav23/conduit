@@ -1,6 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as stylex from '@stylexjs/stylex';
 import { colors } from './styles/tokens.stylex';
+import { sessionEmail, signOutGoogle } from './session';
+
+// re-exported so callers keep importing the session helpers from './SignIn' (they live in ./session now,
+// StyleX-free, so they unit-test in isolation — doc 29 F).
+export { sessionEmail, signOutGoogle };
 
 // D1 — Sign in (doc 20 D1, doc 27 §0): Google Workspace domain-gated entry (hypervolt.co.uk), enforced
 // server-side (GoogleTokenVerifier). The Google ID token becomes the bearer for every API call. The dev
@@ -78,18 +83,4 @@ export function SignIn({ onToken }: { onToken: (token: string) => void }) {
       </div>
     </div>
   );
-}
-
-export function sessionEmail(token: string): string {
-  try {
-    const parts = token.split('.');
-    if (parts.length !== 3) return 'developer session';
-    return JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/'))).email ?? 'signed in';
-  } catch {
-    return 'signed in';
-  }
-}
-
-export function signOutGoogle() {
-  try { window.google?.accounts.id.disableAutoSelect(); } catch { /* gsi not loaded */ }
 }

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import * as stylex from '@stylexjs/stylex';
 import { colors } from './styles/tokens.stylex';
+import { asArray } from './state';
 import {
   getProofLaws,
   runProofControl,
@@ -63,7 +64,7 @@ const styles = stylex.create({
   wallNote: { color: colors.accent, fontSize: '0.78rem', fontStyle: 'italic' },
 });
 
-const arr = (x: any) => (Array.isArray(x) ? x : []);
+const arr = <T,>(x: unknown): T[] => asArray<T>(x); // the shared crash-class guard (state.ts), unit-tested
 
 function Laws({ token }: { token: string }) {
   const [laws, setLaws] = useState<any[]>([]);

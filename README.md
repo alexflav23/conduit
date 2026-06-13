@@ -55,8 +55,9 @@ sbt schemaCheck          # Avro BACKWARD-compat gate
 sbt fmt                  # scalafmt
 cd conduit-desk
 yarn build               # type-checks + builds the desk
+yarn test                # vitest unit layer (state machine / api contract / session) — jsdom, no backend
 ./run-e2e.sh             # FULL desk e2e: boots the API on the LOCAL postgres :5432 (not compose!), seeds
-                         # e2e/seed.sql, runs all 16 Playwright specs, tears down. Needs a local postgres
+                         # e2e/seed.sql, runs all Playwright specs, tears down. Needs a local postgres
                          # with a `conduit` db. NOTE: frees port 8080 (kills the compose API) — re-run
                          # `docker compose up -d` afterwards.
 node scripts/capture-screens.mjs   # re-captures spec/design-assets/desk/*.png against the live API (:3002 + :8080)
