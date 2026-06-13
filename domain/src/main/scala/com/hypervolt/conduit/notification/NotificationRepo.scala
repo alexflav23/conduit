@@ -72,6 +72,18 @@ object NotificationRepo {
           )
       })
 
+  // The delivery relay's worklist: pending external notifications with their channel + endpoint (in_app already
+  // lands 'sent' at fan-out, so it is never pending). Each is routed through a NotificationChannel by the relay.
+  def pendingForDelivery(limit: Int): ConnectionIO[List[(UUID, String, Option[String], String, String, Json)]] =
+    sql"""SELECT n.id, s.channel, s.endpoint, n.subject, n.body, n.payload
+          FROM notification n JOIN notification_subscription s ON s.id = n.subscription_id
+          WHERE n.status = 'pending' ORDER BY n.created_at LIMIT $limit"""
+      .query[(UUID, String, Option[String], String, String, Json)]
+      .to[List]
+
+  def markFailed(id: UUID): ConnectionIO[Int] =
+    sql"UPDATE notification SET status = 'failed' WHERE id = $id".update.run
+
   // The delivery relay's claim of pending external notifications (the actual HTTP/email send is wired
   // alongside the notifications model; here we mark them sent so the pipeline is observable end-to-end).
   def markSent(ids: List[UUID]): ConnectionIO[Int] =

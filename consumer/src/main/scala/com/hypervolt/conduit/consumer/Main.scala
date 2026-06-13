@@ -114,6 +114,15 @@ object Main extends IOApp.Simple {
             )
           val returnConsumer =
             new ReturnConsumer[IO](pulsar, new com.hypervolt.conduit.returns.ReturnService[IO](xa, ledger))
+          // P2.6: the notification delivery relay — routes pending external notifications through the channel
+          // (logging stand-in until SES/FCM creds land), shadow-aware (email/push muted in the dual-run).
+          val notifyDelivery =
+            new com.hypervolt.conduit.notification.NotificationDelivery[IO](
+              xa,
+              com.hypervolt.conduit.notification.NotificationChannel.logging[IO],
+              shadowGuard
+            )
+          val notifyLoop: IO[Unit] = (notifyDelivery.deliverPending() *> IO.sleep(5.second)).foreverM
           PulsarEventPublisher.create[IO](pulsar).flatMap { publisher =>
             val relay                                           = new OutboxRelay[IO](xa, publisher)
             val relayLoop: IO[Unit]                             = (relay.runOnce() *> IO.sleep(1.second)).foreverM
@@ -132,7 +141,8 @@ object Main extends IOApp.Simple {
                 Supervised("pii-tombstone", piiTombstoneConsumer.runForever),
                 Supervised("rebate-accrual", rebateAccrualConsumer.runForever),
                 Supervised("placement", placementConsumer.runForever),
-                Supervised("return-effector", returnConsumer.runForever)
+                Supervised("return-effector", returnConsumer.runForever),
+                Supervised("notification-delivery", notifyLoop)
               ).parSequence_
           }
         }
