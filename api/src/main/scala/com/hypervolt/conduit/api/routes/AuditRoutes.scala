@@ -39,6 +39,7 @@ final class AuditRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
   private val base     = Secured.base[F](auth)
   private val close    = new PeriodCloseService[F](xa)
   private val investig = new PeriodInvestigationService[F](xa)
+  private val syncRepo = new com.hypervolt.conduit.ingest.SyncStateRepo[F](xa)
   private val runner   = new ControlRunner[F](xa)
   private val lineage  = new LineageService[F](xa)
   private val recon    = new ReconciliationService[F](xa)
@@ -350,6 +351,17 @@ final class AuditRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
             }
       )
 
+  // The sync-health board (spec doc 33 §7): per-source cursor + lag + last status for the shadow dual-run.
+  private val syncState =
+    base.get
+      .in("api" / "v1" / "finance" / "sync-state")
+      .out(jsonBody[Json])
+      .serverLogic(p =>
+        _ =>
+          if (!gate(p, "sync_state")) Async[F].pure(Left(forbid("sync_state")))
+          else syncRepo.all.map(rows => Right(Json.fromValues(rows)))
+      )
+
   val routes: HttpRoutes[F] =
     Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(
       List(
@@ -368,7 +380,8 @@ final class AuditRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
         consolidationLineage,
         evidencePack,
         investigatePeriod,
-        closeGroupPeriod
+        closeGroupPeriod,
+        syncState
       )
     )
 }

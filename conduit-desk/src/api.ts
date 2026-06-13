@@ -203,6 +203,11 @@ export function lockGroupPeriod(token: string, periodKey: string) {
   return call(`/api/v1/finance/group-periods/${encodeURIComponent(periodKey)}/lock`, token, 'POST');
 }
 
+// M-Ingest (doc 33 §7): the shadow dual-run sync-health board.
+export function getSyncState(token: string) {
+  return call('/api/v1/finance/sync-state', token, 'GET');
+}
+
 // ----- M13 documents + invoice invalidation (void / credit note / refund) -----
 
 export function getDocuments(token: string, params: { invoiceNo?: string; orderId?: string }) {
