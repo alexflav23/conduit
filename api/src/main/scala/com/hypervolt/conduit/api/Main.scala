@@ -144,7 +144,13 @@ object Main extends IOApp.Simple {
         val host      = Ipv4Address.fromString(cfg.http.host).getOrElse(ipv4"0.0.0.0")
         val apiPort   = Port.fromInt(cfg.http.port).getOrElse(port"8080")
         val adminPort = Port.fromInt(cfg.adminPort).getOrElse(port"9990")
-        logger.info(s"Listening on api=$apiPort admin=$adminPort") *>
-          (httpServer(host, apiPort, app), httpServer(host, adminPort, app)).tupled.useForever
+        // P2.5 (doc 19 §B.4): per-principal rate limiting on the API port (admin/health unthrottled). Generous
+        // defaults so normal use is never touched; a runaway caller 429s before it can starve core.
+        com.hypervolt.conduit.ratelimit.RateLimiter.create[IO](capacity = 200.0, refillPerSec = 100.0).flatMap {
+          limiter =>
+            val limitedApp = RateLimitMiddleware(limiter)(app)
+            logger.info(s"Listening on api=$apiPort admin=$adminPort") *>
+              (httpServer(host, apiPort, limitedApp), httpServer(host, adminPort, app)).tupled.useForever
+        }
     }
 }
