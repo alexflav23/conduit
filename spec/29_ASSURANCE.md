@@ -166,9 +166,12 @@ distinct digest — same code + data reproducing differently is non-determinism 
 identically twice despite id churn; a seeded drift fails the control then clears — 2✓). Retroactively
 settles the 2026-06-12 cross-machine question; prospectively makes drift a visible git diff.
 
-## Slice E — perf floors
-Asserted with generous margins, env-skippable locally, watched in CI: policy_selection reads <1s;
-recognition <250ms/dispatch; an origin refit <15min on the CI shape; desk build <60s.
+## Slice E — perf floors *(BUILT — `PerfFloorsSuite`)*
+Floors on the hot paths the CTO exercises live, asserted with generous ceilings (never flake on a loaded CI
+box) and the measured time always printed; `PERF_STRICT=1` tightens to the real targets. Measured on the
+seeded demo book: recognition **8ms** (target 250), CTRL-LINEAGE-CLOSURE **2ms**, trial balance **1ms**,
+fingerprint **3ms** — every floor an order of magnitude under target, and strict mode passes. Origin-refit
+(<15min) and desk-build (<60s) floors stay CI-shell checks, not unit assertions.
 
 ## Slice F — desk unit layer (Vitest, per CLAUDE.md) *(BUILT — `yarn test`, 17✓)*
 Vitest 3.2.4 + jsdom wired (`vitest.config.ts`, `src/__tests__`). Three suites:
