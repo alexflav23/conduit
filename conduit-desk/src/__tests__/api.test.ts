@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { getProofLaws, runProofControl, getProofTrialBalance, investigatePeriod, lockGroupPeriod } from '../api';
+import { getProofLaws, runProofControl, getProofTrialBalance, investigatePeriod, lockGroupPeriod, getSyncState } from '../api';
 
 // doc 29 F: the api client's response-shape contract — every call returns { status, json }, an empty body
 // decodes to null (not a throw), the bearer token rides every request, and the verb/path are correct.
@@ -64,5 +64,14 @@ describe('api client — the { status, json } contract', () => {
     const [path, init] = fn.mock.calls[0];
     expect(path).toBe('/api/v1/finance/group-periods/2026-Q2/lock');
     expect(init.method).toBe('POST');
+  });
+
+  it('the sync-health board GETs the sync-state path (M-Ingest)', async () => {
+    const fn = mockFetch(200, JSON.stringify([{ source: 'xero', dataset: 'invoices', last_status: 'ok' }]));
+    const r = await getSyncState('dev:finance');
+    expect(r.json[0].source).toBe('xero');
+    const [path, init] = fn.mock.calls[0];
+    expect(path).toBe('/api/v1/finance/sync-state');
+    expect(init.method).toBe('GET');
   });
 });

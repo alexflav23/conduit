@@ -261,3 +261,9 @@ CROSS JOIN (VALUES
 ) AS v(tid, side, key, role, amt)
 WHERE rr.invoice_no = 'INV-FLOW'
   AND NOT EXISTS (SELECT 1 FROM gl_entry g WHERE g.tb_transfer_id = v.tid AND g.side = v.side);
+
+-- M-Ingest (doc 33 §7): a couple of sync_state rows so the desk Sync tab's health board renders in e2e.
+INSERT INTO sync_state (source, dataset, cursor, last_run_at, last_status, records_seen, records_written)
+VALUES ('xero', 'invoices', '2026-06-03T12:30:00Z', now() - interval '45 seconds', 'ok', 128, 128),
+       ('mrpeasy', 'customer_orders', '1717497600', now() - interval '5 minutes', 'ok', 530, 528)
+ON CONFLICT (source, dataset) DO NOTHING;
