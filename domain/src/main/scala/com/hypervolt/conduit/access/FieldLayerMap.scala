@@ -82,6 +82,12 @@ object FieldLayerMap {
     ("ic_true_up", "target_uplift")           -> DataLayer.InterEntity,
     ("ic_true_up", "adjustment")              -> DataLayer.InterEntity,
     ("ic_true_up_line", "allocated")          -> DataLayer.InterEntity,
+    // hedge performance is treasury (doc 28 §5.5 / ASC 815-50)
+    ("hedge_valuation", "spot_rate")       -> DataLayer.Treasury,
+    ("hedge_valuation", "contracted_rate") -> DataLayer.Treasury,
+    ("hedge_valuation", "notional_open")   -> DataLayer.Treasury,
+    ("hedge_valuation", "period_mtm")      -> DataLayer.Treasury,
+    ("hedge_valuation", "cumulative_mtm")  -> DataLayer.Treasury,
     // legal documents (doc 17 §9): the money on the artefact is commercial; the rest is logistics/identity.
     ("document", "total_amount") -> DataLayer.Commercial,
     ("document", "currency")     -> DataLayer.Commercial,

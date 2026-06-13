@@ -180,7 +180,31 @@ maker-checker like everything governed. They participate in the IC lifecycle as 
   (This is the estate's existing hedge-locked treatment extended to the IC hop; full ASC 815 designation —
   cash-flow OCI mechanics, effectiveness — remains slice 4/§5.5.)
 
-### 5.5 Hedges — three concepts, kept distinct (ASC 815)
+### 5.5 Hedges — three concepts, kept distinct (ASC 815) *(performance + disclosure BUILT, V1_0_75; gross-presentation correction = slice 4b)*
+
+**What GAAP genuinely requires (the honest read).** Hedge accounting is *elective*; the undesignated default
+is a derivative marked to fair value through earnings ("economic"). The IC monetary balance MUST be
+remeasured at spot through earnings regardless (ASC 830 — slice 5.3). Cash-flow/OCI deferral is **not
+available for an already-recognized monetary balance** — it is for *forecasted* transactions; so hedging the
+booked IC receivable is correctly the **economic** treatment (forward MTM through earnings, naturally
+offsetting the ASC 830 remeasurement). `designation` defaults to `economic`; `cash_flow`/`net_investment`
+require contemporaneous inception documentation (`doc_ref`), enforced fail-closed (ASC 815-20-25) and
+reserved for genuinely forecasted exposures.
+
+**Performance + disclosure (slice 4a, BUILT).** A hedge is a first-class valued instrument: `hedge_valuation`
+records each period's fair value (`(contracted − spot) × open notional`) and gain/loss, so treasury sees how
+every individual hedge performs over its life, per market — the ASC 815-50 disclosure data and the Reg S-K
+Item 305 market-risk view. `hedge_disclosure` is the per-hedge/per-market surface (notional, contracted,
+latest spot, fair value, designation). `CTRL-HEDGE-PERF` re-derives the figure; `HedgeValuationService`
+revalues + governs designation. `HedgePerfSuite` 3✓.
+
+**Slice 4b (the gross-presentation correction, staged next, behaviour-changing).** Today a hedge-booked
+balance is frozen at the contracted rate (slice 2b) — the right *net* number but not the GAAP gross
+presentation. 4b: the hedged balance remeasures at **spot** like any monetary item, and the hedge's MTM (now
+tracked by 4a) posts through earnings to offset it; booking uses spot, not the locked rate. Needs its own
+regression pass over slices 2b/3 and an `IcHedgeLockSuite` rewrite — staged deliberately.
+
+### 5.5.1 Hedges — three concepts, kept distinct (ASC 815)
 | Concept | Accounting | Conduit mechanism |
 |---|---|---|
 | **Undesignated economic hedge** (default) | Forward MTM through P&L each period — no hedge accounting, no documentation burden | `fx_hedge` row, `designation = 'economic'`; period-close MTM posting to FX_GAINLOSS |
