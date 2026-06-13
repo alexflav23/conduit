@@ -1,0 +1,22 @@
+{
+  "app.title": "Conduit — Desk",
+  "app.signOut": "Sign out",
+  "nav.order": "Order Desk",
+  "nav.dealdesk": "Deal Desk",
+  "nav.h6q": "H6Q",
+  "nav.flow": "Flow",
+  "nav.supply": "Supply",
+  "nav.shelf": "Shelf",
+  "nav.finance": "Finance",
+  "nav.docs": "Documents",
+  "nav.lifecycle": "Lifecycle",
+  "nav.audit": "Audit",
+  "nav.period": "Period",
+  "nav.sync": "Sync",
+  "nav.tax": "Tax",
+  "nav.engine": "Forecast Engine",
+  "nav.proof": "Proof",
+  "action.load": "Load",
+  "action.refresh": "Refresh",
+  "common.language": "Language"
+}

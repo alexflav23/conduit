@@ -11,8 +11,10 @@
     "test:browser": "playwright test"
   },
   "dependencies": {
+    "i18next": "^23",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "react-i18next": "^14"
   },
   "devDependencies": {
     "@babel/core": "^7.28.6",

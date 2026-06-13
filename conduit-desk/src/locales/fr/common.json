@@ -1,0 +1,9 @@
+{
+  "app.title": "Conduit — Bureau",
+  "app.signOut": "Déconnexion",
+  "nav.order": "Bureau des commandes", "nav.dealdesk": "Deal Desk", "nav.h6q": "H6Q", "nav.flow": "Flux",
+  "nav.supply": "Approvisionnement", "nav.shelf": "Stock", "nav.finance": "Finance", "nav.docs": "Documents",
+  "nav.lifecycle": "Cycle de vie", "nav.audit": "Audit", "nav.period": "Période", "nav.sync": "Sync",
+  "nav.tax": "Taxe", "nav.engine": "Moteur de prévision", "nav.proof": "Preuve",
+  "action.load": "Charger", "action.refresh": "Actualiser", "common.language": "Langue"
+}

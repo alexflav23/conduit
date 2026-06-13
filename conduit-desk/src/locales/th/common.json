@@ -1,0 +1,9 @@
+{
+  "app.title": "Conduit — เดสก์",
+  "app.signOut": "ออกจากระบบ",
+  "nav.order": "เดสก์คำสั่งซื้อ", "nav.dealdesk": "ดีลเดสก์", "nav.h6q": "H6Q", "nav.flow": "โฟลว์",
+  "nav.supply": "อุปทาน", "nav.shelf": "สต็อก", "nav.finance": "การเงิน", "nav.docs": "เอกสาร",
+  "nav.lifecycle": "วงจรชีวิต", "nav.audit": "การตรวจสอบ", "nav.period": "งวดบัญชี", "nav.sync": "ซิงค์",
+  "nav.tax": "ภาษี", "nav.engine": "เครื่องมือพยากรณ์", "nav.proof": "การพิสูจน์",
+  "action.load": "โหลด", "action.refresh": "รีเฟรช", "common.language": "ภาษา"
+}

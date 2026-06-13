@@ -1,0 +1,9 @@
+{
+  "app.title": "Conduit — デスク",
+  "app.signOut": "サインアウト",
+  "nav.order": "注文デスク", "nav.dealdesk": "ディールデスク", "nav.h6q": "H6Q", "nav.flow": "フロー",
+  "nav.supply": "供給", "nav.shelf": "在庫", "nav.finance": "財務", "nav.docs": "ドキュメント",
+  "nav.lifecycle": "ライフサイクル", "nav.audit": "監査", "nav.period": "会計期間", "nav.sync": "同期",
+  "nav.tax": "税務", "nav.engine": "予測エンジン", "nav.proof": "証明",
+  "action.load": "読み込む", "action.refresh": "更新", "common.language": "言語"
+}

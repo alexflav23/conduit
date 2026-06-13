@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import * as stylex from '@stylexjs/stylex';
+import { useTranslation } from 'react-i18next';
+import { LOCALES, LOCALE_LABEL, setLocale } from './i18n';
 import { colors } from './styles/tokens.stylex';
 import { OrderDesk } from './OrderDesk';
 import { DealDesk } from './DealDesk';
@@ -31,6 +33,7 @@ const styles = stylex.create({
 });
 
 export function App() {
+  const { t, i18n } = useTranslation();
   const [token, setTokenState] = useState(() => sessionStorage.getItem('conduit_token') ?? '');
   const [view, setView] = useState<'order' | 'dealdesk' | 'h6q' | 'flow' | 'supply' | 'shelf' | 'finance' | 'docs' | 'lifecycle' | 'audit' | 'period' | 'sync' | 'tax' | 'engine' | 'proof'>('order');
   const setToken = (t: string) => {
@@ -48,27 +51,36 @@ export function App() {
 
   return (
     <div {...stylex.props(styles.page)}>
-      <div {...stylex.props(styles.title)}><span {...stylex.props(styles.accent)}>Conduit</span> — Desk</div>
+      <div {...stylex.props(styles.title)}><span {...stylex.props(styles.accent)}>Conduit</span> — {t('app.title').replace('Conduit — ', '')}</div>
       <div {...stylex.props(styles.nav)}>
-        <button {...stylex.props(styles.tab, view === 'order' && styles.tabActive)} data-testid="tab-order" onClick={() => setView('order')}>Order Desk</button>
-        <button {...stylex.props(styles.tab, view === 'dealdesk' && styles.tabActive)} data-testid="tab-dealdesk" onClick={() => setView('dealdesk')}>Deal Desk</button>
-        <button {...stylex.props(styles.tab, view === 'h6q' && styles.tabActive)} data-testid="tab-h6q" onClick={() => setView('h6q')}>H6Q</button>
-        <button {...stylex.props(styles.tab, view === 'flow' && styles.tabActive)} data-testid="tab-flow" onClick={() => setView('flow')}>Flow</button>
-        <button {...stylex.props(styles.tab, view === 'supply' && styles.tabActive)} data-testid="tab-supply" onClick={() => setView('supply')}>Supply</button>
-        <button {...stylex.props(styles.tab, view === 'shelf' && styles.tabActive)} data-testid="tab-shelf" onClick={() => setView('shelf')}>Shelf</button>
-        <button {...stylex.props(styles.tab, view === 'finance' && styles.tabActive)} data-testid="tab-finance" onClick={() => setView('finance')}>Finance</button>
-        <button {...stylex.props(styles.tab, view === 'docs' && styles.tabActive)} data-testid="tab-docs" onClick={() => setView('docs')}>Documents</button>
-        <button {...stylex.props(styles.tab, view === 'lifecycle' && styles.tabActive)} data-testid="tab-lifecycle" onClick={() => setView('lifecycle')}>Lifecycle</button>
-        <button {...stylex.props(styles.tab, view === 'audit' && styles.tabActive)} data-testid="tab-audit" onClick={() => setView('audit')}>Audit</button>
-        <button {...stylex.props(styles.tab, view === 'period' && styles.tabActive)} data-testid="tab-period" onClick={() => setView('period')}>Period</button>
-        <button {...stylex.props(styles.tab, view === 'sync' && styles.tabActive)} data-testid="tab-sync" onClick={() => setView('sync')}>Sync</button>
-        <button {...stylex.props(styles.tab, view === 'tax' && styles.tabActive)} data-testid="tab-tax" onClick={() => setView('tax')}>Tax</button>
-        <button {...stylex.props(styles.tab, view === 'engine' && styles.tabActive)} data-testid="tab-engine" onClick={() => setView('engine')}>Forecast Engine</button>
-        <button {...stylex.props(styles.tab, view === 'proof' && styles.tabActive)} data-testid="tab-proof" onClick={() => setView('proof')}>Proof</button>
+        <button {...stylex.props(styles.tab, view === 'order' && styles.tabActive)} data-testid="tab-order" onClick={() => setView('order')}>{t('nav.order')}</button>
+        <button {...stylex.props(styles.tab, view === 'dealdesk' && styles.tabActive)} data-testid="tab-dealdesk" onClick={() => setView('dealdesk')}>{t('nav.dealdesk')}</button>
+        <button {...stylex.props(styles.tab, view === 'h6q' && styles.tabActive)} data-testid="tab-h6q" onClick={() => setView('h6q')}>{t('nav.h6q')}</button>
+        <button {...stylex.props(styles.tab, view === 'flow' && styles.tabActive)} data-testid="tab-flow" onClick={() => setView('flow')}>{t('nav.flow')}</button>
+        <button {...stylex.props(styles.tab, view === 'supply' && styles.tabActive)} data-testid="tab-supply" onClick={() => setView('supply')}>{t('nav.supply')}</button>
+        <button {...stylex.props(styles.tab, view === 'shelf' && styles.tabActive)} data-testid="tab-shelf" onClick={() => setView('shelf')}>{t('nav.shelf')}</button>
+        <button {...stylex.props(styles.tab, view === 'finance' && styles.tabActive)} data-testid="tab-finance" onClick={() => setView('finance')}>{t('nav.finance')}</button>
+        <button {...stylex.props(styles.tab, view === 'docs' && styles.tabActive)} data-testid="tab-docs" onClick={() => setView('docs')}>{t('nav.docs')}</button>
+        <button {...stylex.props(styles.tab, view === 'lifecycle' && styles.tabActive)} data-testid="tab-lifecycle" onClick={() => setView('lifecycle')}>{t('nav.lifecycle')}</button>
+        <button {...stylex.props(styles.tab, view === 'audit' && styles.tabActive)} data-testid="tab-audit" onClick={() => setView('audit')}>{t('nav.audit')}</button>
+        <button {...stylex.props(styles.tab, view === 'period' && styles.tabActive)} data-testid="tab-period" onClick={() => setView('period')}>{t('nav.period')}</button>
+        <button {...stylex.props(styles.tab, view === 'sync' && styles.tabActive)} data-testid="tab-sync" onClick={() => setView('sync')}>{t('nav.sync')}</button>
+        <button {...stylex.props(styles.tab, view === 'tax' && styles.tabActive)} data-testid="tab-tax" onClick={() => setView('tax')}>{t('nav.tax')}</button>
+        <button {...stylex.props(styles.tab, view === 'engine' && styles.tabActive)} data-testid="tab-engine" onClick={() => setView('engine')}>{t('nav.engine')}</button>
+        <button {...stylex.props(styles.tab, view === 'proof' && styles.tabActive)} data-testid="tab-proof" onClick={() => setView('proof')}>{t('nav.proof')}</button>
       </div>
       <div {...stylex.props(styles.tokenRow)}>
         <span {...stylex.props(styles.label)} data-testid="session-chip">{sessionEmail(token)}</span>
-        <button {...stylex.props(styles.tab)} data-testid="signout" onClick={signOut}>Sign out</button>
+        <select
+          {...stylex.props(styles.tab)}
+          data-testid="locale-select"
+          aria-label={t('common.language')}
+          value={i18n.language}
+          onChange={(e) => setLocale(e.target.value)}
+        >
+          {LOCALES.map((l) => (<option key={l} value={l}>{LOCALE_LABEL[l]}</option>))}
+        </select>
+        <button {...stylex.props(styles.tab)} data-testid="signout" onClick={signOut}>{t('app.signOut')}</button>
       </div>
       {view === 'order' ? <OrderDesk token={token} />
         : view === 'dealdesk' ? <DealDesk token={token} />
