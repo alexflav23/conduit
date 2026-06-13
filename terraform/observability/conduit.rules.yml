@@ -1,0 +1,91 @@
+# Conduit SLO alert rules (doc 19 §C.1/§C.3). Load into the estate hv-telemetry Prometheus: drop this file in
+# the Prometheus `rule_files:` set (or the Alertmanager rules ConfigMap) for the env that scrapes
+# conduit-api:9464 and conduit-consumer:9465. Re-derivable, declarative — the SLO contract as code.
+#
+# Metric provenance:
+#   - dlq_depth, outbox_unpublished_count, reconciliation_exception_count
+#       → ConduitMetrics observable gauges (domain/.../metrics/ConduitMetrics.scala) — EXACT names.
+#   - up{}  → standard Prometheus scrape liveness for the two scrape sources.
+#   - http_server_* → tapir OpenTelemetryMetrics.default interceptor (ApiMetrics.scala), exported through the
+#       OTel→Prometheus exporter. The exact exported name + unit suffix depends on the exporter; CONFIRM the
+#       three http_server_* exprs below against conduit-api:9464/metrics on first deploy and adjust the suffix
+#       (e.g. _milliseconds vs _seconds) if needed. The four Conduit-gauge alarms above them are exact.
+
+groups:
+  - name: conduit-liveness
+    rules:
+      - alert: ConduitApiDown
+        expr: up{job=~"conduit-api.*"} == 0
+        for: 2m
+        labels: { severity: critical, service: conduit-api }
+        annotations:
+          summary: "Conduit API instance {{ $labels.instance }} is not scrapeable"
+          description: "No metrics scrape for 2m — the API is down or unhealthy (the ASG should be recycling it)."
+
+      - alert: ConduitConsumerDown
+        expr: up{job=~"conduit-consumer.*"} == 0
+        for: 2m
+        labels: { severity: critical, service: conduit-consumer }
+        annotations:
+          summary: "Conduit consumer {{ $labels.instance }} is not scrapeable"
+          description: >-
+            The consumer holds the outbox relay + the ledger posters (no TB in the API). While it is down NO
+            money posts and NO events publish — the outbox simply accrues. Recover before the backlog alarms fire.
+
+  - name: conduit-eventing
+    rules:
+      # CTRL-OUTBOX-DRAINED: the relay must publish committed events promptly. The gauge counts outbox rows
+      # unpublished for >5min; any sustained nonzero is relay lag — the staleness/drift the design exists to kill.
+      - alert: ConduitOutboxBacklog
+        expr: max(outbox_unpublished_count) > 0
+        for: 10m
+        labels: { severity: warning, service: conduit-consumer }
+        annotations:
+          summary: "Outbox relay backlog: {{ $value }} events unpublished >5min"
+          description: "The relay is lagging or stuck. Check the consumer's relay fiber; downstream projections are going stale."
+          runbook: "docs/runbooks/projection-rebuild.md"
+
+      # CTRL-DLQ-EMPTY: a healthy system dead-letters nothing. Any DLQ depth is a poison message to triage + replay.
+      - alert: ConduitDLQNotEmpty
+        expr: max(dlq_depth) > 0
+        for: 10m
+        labels: { severity: warning, service: conduit-consumer }
+        annotations:
+          summary: "Dead-letter queue not empty: {{ $value }} events"
+          description: "A consumer repeatedly failed an event and dead-lettered it. Triage the cause, then replay."
+          runbook: "docs/runbooks/dlq-replay.md"
+
+  - name: conduit-financial-controls
+    rules:
+      # An open (unsigned) reconciliation exception is a known break. The period cannot lock over it (the close
+      # gate enforces this), so a sustained nonzero means month-end is blocked until finance signs off or fixes it.
+      - alert: ConduitReconciliationExceptionOpen
+        expr: max(reconciliation_exception_count) > 0
+        for: 1h
+        labels: { severity: warning, service: conduit-api }
+        annotations:
+          summary: "{{ $value }} unsigned reconciliation exception(s) open"
+          description: "A reconciliation break is unsigned. The accounting period cannot lock until it clears (doc 14 §5)."
+
+  - name: conduit-api-slo
+    rules:
+      # CONFIRM the metric name/suffix against conduit-api:9464/metrics on first deploy (see header).
+      - alert: ConduitApiHighErrorRate
+        expr: |
+          sum(rate(http_server_request_total{job=~"conduit-api.*",http_response_status_code=~"5.."}[5m]))
+            / clamp_min(sum(rate(http_server_request_total{job=~"conduit-api.*"}[5m])), 1) > 0.02
+        for: 5m
+        labels: { severity: critical, service: conduit-api }
+        annotations:
+          summary: "Conduit API 5xx rate >2% over 5m"
+          description: "Server-error budget burning. Check recent deploy, DB connectivity (RDS), and the consumer/ledger path."
+
+      - alert: ConduitApiHighLatencyP99
+        expr: |
+          histogram_quantile(0.99,
+            sum(rate(http_server_request_duration_milliseconds_bucket{job=~"conduit-api.*"}[5m])) by (le)) > 1000
+        for: 10m
+        labels: { severity: warning, service: conduit-api }
+        annotations:
+          summary: "Conduit API p99 latency >1s over 10m"
+          description: "Order capture must stay snappy (doc 19 §A.1). Investigate DB query time / GC / instance saturation."

@@ -26,7 +26,17 @@ conduit-records
 conduit-tigerbeetle                    # first apply with -var cold_start=true
 conduit-api
 conduit-consumer
+provision-pulsar                       # scripts/provision-pulsar.sh — topics + the UFE subscription (see below)
 ```
+
+**Pulsar provisioning is a required deploy step**, not optional. Topics live outside Terraform (estate
+convention) but are part of every deploy: after `conduit-consumer` applies, run
+`PULSAR_ADMIN="pulsar-admin --admin-url https://pulsar.<env>.service.consul:8080" scripts/provision-pulsar.sh`
+(idempotent — re-running is a no-op). It creates the `conduit.*` topics and pins the
+`conduit-placement-versioned-subscription-1` subscription on `athena-placement-versioned` **before** the
+consumer first connects, so no UFE activation events are missed in the deploy window. The topic list MUST
+match `EventEnvelope.Topics.byAggregate` (the script carries a keep-in-sync note — `conduit.returns` was the
+one that drifted).
 
 Per component:
 
@@ -72,4 +82,15 @@ issuer = Google, `hd = hypervolt.co.uk`, verified e-mail, expiry. One-time Googl
 
 ## Not in Terraform
 
-Pulsar topics/namespaces are provisioned via the Pulsar admin API at deploy time (CLAUDE.md §6), not here.
+Pulsar topics/namespaces are provisioned via the Pulsar admin API at deploy time (CLAUDE.md §6), not here —
+but **not optional**: `scripts/provision-pulsar.sh` is a mandatory step in the apply order above, and the
+deploy is incomplete without it.
+
+## Observability
+
+Metrics scrape via the estate `hv-telemetry` stack (the `prometheusScrapeSources` lines in each module's
+bootstrap: API `:9464`, consumer `:9465`). The Conduit SLO alert rules live in
+[`observability/conduit.rules.yml`](./observability/conduit.rules.yml) — load them into the estate
+Prometheus/Alertmanager (see that file's header). They defend the doc-19 §C.1/§C.3 invariants: API
+availability + latency, outbox relay lag (`outbox_unpublished_count`), DLQ depth (`dlq_depth`), open
+reconciliation exceptions (`reconciliation_exception_count`), and consumer/instance liveness.

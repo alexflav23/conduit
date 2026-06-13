@@ -36,13 +36,29 @@ terraform-fmt:
   script:
     - nix-shell -p terraform --run "terraform fmt -check -recursive terraform/"
 
+# Enforcing on every pipeline: backend-less init (fetches the private module sources over the estate runner's
+# GitLab SSH key — no AWS needed) + validate catches malformed HCL and broken module wiring before the deploy
+# path. This is the always-on gate; the credentialed plan below adds drift detection on protected branches.
+terraform-validate:
+  stage: lint
+  tags:
+    - x86_64-nix-24.11   # the estate runner carries the GitLab SSH deploy key for git::ssh module sources
+  script:
+    - nix-shell -p terraform --run '
+        for m in roles-global rds conduit-records conduit-tigerbeetle conduit-api conduit-consumer; do
+          echo "== validate $m ==";
+          (cd terraform/$m && terraform init -backend=false -input=false >/dev/null && terraform validate) || exit 1;
+        done'
+
+# Enforcing on protected branches (the estate runner holds the <env>-conduit-<component>-operator AWS role).
+# A plan failure now BLOCKS the pipeline — infrastructure drift or a bad change is caught before deploy, not
+# during it. (Was advisory while the runner creds were being wired; that gap is now closed — doc 29 G.)
 terraform-plan:
   stage: lint
   tags:
-    - x86_64-nix-24.11   # the estate runner: GitLab SSH for module sources + the <env>-conduit-operator AWS role
+    - x86_64-nix-24.11
   rules:
     - if: '$CI_COMMIT_REF_PROTECTED == "true"'
-  allow_failure: true     # advisory until the estate runner credentials are wired (doc 29 G — the remaining gap)
   script:
     - nix-shell -p terraform awscli2 --run '
         for m in roles-global rds conduit-records conduit-tigerbeetle conduit-api conduit-consumer; do

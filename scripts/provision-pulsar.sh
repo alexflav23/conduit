@@ -6,9 +6,10 @@ set -euo pipefail
 ADMIN="${PULSAR_ADMIN:-pulsar-admin}"
 TENANT_NS="${PULSAR_NAMESPACE:-public/default}"
 
+# Must match EventEnvelope.Topics.byAggregate (domain) — one topic per aggregate type. Keep in sync.
 topics=(
   conduit.orders conduit.inventory conduit.activations conduit.pricing conduit.crm
-  conduit.commission conduit.ledger conduit.forecast conduit.purchasing
+  conduit.commission conduit.ledger conduit.forecast conduit.purchasing conduit.returns
 )
 
 for t in "${topics[@]}"; do
