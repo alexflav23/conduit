@@ -196,7 +196,9 @@ Vitest 3.2.4 + jsdom wired (`vitest.config.ts`, `src/__tests__`). Three suites:
 `terraform plan` in CI on an estate-credentialed runner (blocked on GitLab SSH + AWS role; queued last).
 
 ## Order & doneness
-A1 ✓ → A2 ✓ → A3 ✓ (matrix + atlas above; live at /proof/asc606) → B → D → C → E → F → G. Each slice is done when its suite/control is green in CI and (A2/D) the
+A1 ✓ → A2 ✓ → A3 ✓ → B ✓ → D ✓ → C ✓ → E ✓ → F ✓ → **G** (the only slice left — `terraform plan` in CI;
+blocked on the estate GitLab SSH + AWS role, not buildable from this machine). M-Assurance is otherwise
+complete: nine slices, all green, every control re-performable and detection-proven. Each slice is done when its suite/control is green in CI and (A2/D) the
 control appears in the register. A milestone-level acceptance: an auditor, given READ access and doc A3,
 can re-perform every control and trace one arbitrary invoice from P&L figure to CM purchase order without
 asking a human.
