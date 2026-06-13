@@ -25,10 +25,10 @@ import weaver.IOSuite
 
 // M-IC-FX slice 3 (spec doc 28 §5.4): settlement. The full open set of a pair settles maker<>checker:
 // transaction-currency cash on both books nets the IC pair to exactly zero; realized FX = settled − booked
-// with prior unrealized RECLASSIFIED (the adjunct clears — recognized exactly once, never twice); a
-// hedge-booked exposure settles at its contracted rate with ZERO FX and releases its live drawdown; the
+// with prior unrealized RECLASSIFIED (the adjunct clears — recognized exactly once, never twice); the
 // post-settlement remeasure run finds nothing left to measure; CTRL-IC-SETTLE-ZERO re-derives every run and
-// detects corruption.
+// detects corruption. Under 4b a hedge does NOT bind the booking — the balance books/settles at spot and the
+// hedge is a separate instrument (the decoupling test below); the hedge's offsetting MTM is IcHedgeEconomicSuite.
 object IcSettlementSuite extends IOSuite {
 
   override type Res = (HikariTransactor[IO], Client)
