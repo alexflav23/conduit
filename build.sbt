@@ -276,3 +276,12 @@ addCommandAlias(
   "fullRebuild",
   List("reload", "clean", "Test / clean", "compile", "Test / compile").mkString(";")
 )
+
+// M-Assurance C (doc 29): coverage measurement. `coverMoneyCore` is the fast, no-Docker baseline over the
+// domain unit tests (Money/allocate/RoundingPolicy/Fingerprint/PolicyEngine/Projection — the pure money
+// logic). The full money-path gate (ledger/revenue/intercompany/batch, exercised by the testcontainers
+// suites) runs in CI: `sbt clean coverage apiIt/test domain/coverageReport`, then inspect scoverage-report.
+addCommandAlias(
+  "coverMoneyCore",
+  List("clean", "coverage", "domain/test", "domain/coverageReport").mkString(";")
+)

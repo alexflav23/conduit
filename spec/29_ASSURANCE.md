@@ -151,9 +151,17 @@ ANDs; empty = unconstrained. Wired through `Grant`/`Target`/`PolicyEngine`/`Scop
 `/admin/users/{kc}/assignments` builder API. Pinned by `PolicyEngineSpec` (the UK-wholesale-energy case) and
 `AuthzMatrixSuite` (the sector list-filter, both directions).
 
-## Slice C — coverage measurement
-sbt-scoverage wired; honest baseline published; CI gate ≥90% branch on the money path
-(`ledger`, `money`, `revenue`, `intercompany`, `batch`); visibility-only elsewhere (no vanity gates).
+## Slice C — coverage measurement *(BUILT — `sbt coverMoneyCore`; full-path gate is a CI command)*
+sbt-scoverage 2.3.0 wired (the version with a Scala 2.13.16 compiler-plugin build). `coverMoneyCore` is the
+fast, no-Docker baseline over the domain unit tests; honest figures for the **pure money core**:
+`Money` 100% branch (85% stmt), `Currency`/`RoundingPolicy`/`Fingerprint`/`Projection` 100/100,
+`FieldLayerMap` 99/100, `PolicyEngine` 75% branch. Classes exercised only by the testcontainers suites
+(`ScopePredicate`, `FingerprintService`, and the `ledger`/`revenue`/`intercompany`/`batch` services) read
+0% under a unit-only run **by construction** — their real figures come from the instrumented integration
+pass, which is the gate command run in CI:
+`sbt clean coverage apiIt/test domain/coverageReport` → inspect `domain/target/scala-2.13/scoverage-report`.
+The ≥90% branch gate on the money path is enforced there (visibility-only elsewhere — no vanity gates). The
+full instrumented pass is heavy (~15min) and lives in CI, not the local fast loop.
 
 ## Slice D — reproducibility, proven *(BUILT — `Fingerprint`/`FingerprintService`, `CTRL-REPRO`)*
 `Fingerprint` digests the money tables' **id-independent aggregates** (count + numeric sum per key) folded
