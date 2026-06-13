@@ -173,6 +173,13 @@ BEGIN
   END IF;
 END $$;
 
+-- M-Period (doc 32): the GROUP reporting calendar period the demo entity closes into (keyed to its 2026-09
+-- month period), so the Period investigation view lights up — entity status, the INV-FLOW journals/events,
+-- and the lineage entry-points all re-project onto this window.
+INSERT INTO reporting_calendar (period_key, period_from, period_to)
+SELECT '2026-09', '2026-09-01', '2026-09-30'
+WHERE NOT EXISTS (SELECT 1 FROM reporting_calendar WHERE period_key = '2026-09');
+
 -- M13 Documents desk: a finalised invoice document for INV-FLOW so the Documents tab lists it, plus finance
 -- void/refund rights (edit + approve on order) so the desk void action returns 202 in e2e.
 DO $$

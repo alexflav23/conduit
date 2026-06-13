@@ -11,6 +11,7 @@ import com.hypervolt.conduit.close.ControlRunner
 import com.hypervolt.conduit.close.EvidenceService
 import com.hypervolt.conduit.close.LineageService
 import com.hypervolt.conduit.close.PeriodCloseService
+import com.hypervolt.conduit.close.PeriodInvestigationService
 import com.hypervolt.conduit.close.ReconResult
 import com.hypervolt.conduit.close.ReconciliationService
 import com.hypervolt.conduit.gl.ConsolidationService
@@ -37,6 +38,7 @@ final class AuditRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
 
   private val base     = Secured.base[F](auth)
   private val close    = new PeriodCloseService[F](xa)
+  private val investig = new PeriodInvestigationService[F](xa)
   private val runner   = new ControlRunner[F](xa)
   private val lineage  = new LineageService[F](xa)
   private val recon    = new ReconciliationService[F](xa)
@@ -309,6 +311,45 @@ final class AuditRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
             }
       )
 
+  // The investigation view (spec doc 32 §2): everything that happened in one group period — journals, events,
+  // controls, reconciliations, documents, lineage entry-points — re-projected onto the period window. Read-only,
+  // gated view:accounting_period; an optional entity narrows the per-entity status + journals.
+  private val investigatePeriod =
+    base.get
+      .in("api" / "v1" / "finance" / "periods" / path[String]("key") / "investigation")
+      .in(query[Option[String]]("entity"))
+      .out(jsonBody[Json])
+      .serverLogic(p => {
+        case (key, entityS) =>
+          if (!gate(p, "accounting_period")) Async[F].pure(Left(forbid("accounting_period")))
+          else
+            entityS.traverse(uuid) match {
+              case Left(x) => Async[F].pure(Left(x))
+              case Right(eo) =>
+                investig.investigate(key, eo).map {
+                  case Some(j) => Right(j)
+                  case None    => Right(Json.obj("error" -> s"unknown group period $key".asJson))
+                }
+            }
+      })
+
+  // The group roll-up gate (spec doc 32 §1 / ASC 810): lock the GROUP period for a key — refused, naming the
+  // laggards, until every operating entity's period for that key is locked. edit:accounting_period.
+  private val closeGroupPeriod =
+    base.post
+      .in("api" / "v1" / "finance" / "group-periods" / path[String]("key") / "lock")
+      .out(jsonBody[Json])
+      .serverLogic(p =>
+        key =>
+          if (!PolicyEngine.hasPermission(p, Action.Edit, "accounting_period"))
+            Async[F].pure(Left(err(StatusCode.Forbidden, "forbidden", "requires edit:accounting_period")))
+          else
+            close.closeGroup(key, p.userId).map {
+              case Left(m)  => Left(err(StatusCode.UnprocessableEntity, "unprocessable", m))
+              case Right(_) => Right(Json.obj("period_key" -> key.asJson, "status" -> "locked".asJson))
+            }
+      )
+
   val routes: HttpRoutes[F] =
     Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(
       List(
@@ -325,7 +366,9 @@ final class AuditRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
         glAsOf,
         runConsolidation,
         consolidationLineage,
-        evidencePack
+        evidencePack,
+        investigatePeriod,
+        closeGroupPeriod
       )
     )
 }

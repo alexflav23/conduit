@@ -14,6 +14,7 @@ import { Auditability } from './Auditability';
 import { Tax } from './Tax';
 import { Forecasting } from './Forecasting';
 import { Proof } from './Proof';
+import { Period } from './Period';
 import { SignIn, sessionEmail, signOutGoogle } from './SignIn';
 
 const styles = stylex.create({
@@ -30,7 +31,7 @@ const styles = stylex.create({
 
 export function App() {
   const [token, setTokenState] = useState(() => sessionStorage.getItem('conduit_token') ?? '');
-  const [view, setView] = useState<'order' | 'dealdesk' | 'h6q' | 'flow' | 'supply' | 'shelf' | 'finance' | 'docs' | 'lifecycle' | 'audit' | 'tax' | 'engine' | 'proof'>('order');
+  const [view, setView] = useState<'order' | 'dealdesk' | 'h6q' | 'flow' | 'supply' | 'shelf' | 'finance' | 'docs' | 'lifecycle' | 'audit' | 'period' | 'tax' | 'engine' | 'proof'>('order');
   const setToken = (t: string) => {
     if (t) sessionStorage.setItem('conduit_token', t);
     else sessionStorage.removeItem('conduit_token');
@@ -58,6 +59,7 @@ export function App() {
         <button {...stylex.props(styles.tab, view === 'docs' && styles.tabActive)} data-testid="tab-docs" onClick={() => setView('docs')}>Documents</button>
         <button {...stylex.props(styles.tab, view === 'lifecycle' && styles.tabActive)} data-testid="tab-lifecycle" onClick={() => setView('lifecycle')}>Lifecycle</button>
         <button {...stylex.props(styles.tab, view === 'audit' && styles.tabActive)} data-testid="tab-audit" onClick={() => setView('audit')}>Audit</button>
+        <button {...stylex.props(styles.tab, view === 'period' && styles.tabActive)} data-testid="tab-period" onClick={() => setView('period')}>Period</button>
         <button {...stylex.props(styles.tab, view === 'tax' && styles.tabActive)} data-testid="tab-tax" onClick={() => setView('tax')}>Tax</button>
         <button {...stylex.props(styles.tab, view === 'engine' && styles.tabActive)} data-testid="tab-engine" onClick={() => setView('engine')}>Forecast Engine</button>
         <button {...stylex.props(styles.tab, view === 'proof' && styles.tabActive)} data-testid="tab-proof" onClick={() => setView('proof')}>Proof</button>
@@ -78,6 +80,7 @@ export function App() {
         : view === 'tax' ? <Tax token={token} />
         : view === 'engine' ? <Forecasting token={token} />
         : view === 'proof' ? <Proof token={token} />
+        : view === 'period' ? <Period token={token} />
         : view === 'audit' ? <Auditability token={token} />
         : <Auditability token={token} />}
     </div>

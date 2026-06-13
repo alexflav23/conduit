@@ -42,6 +42,35 @@ final class PeriodCloseService[F[_]: Async](xa: Transactor[F]) {
           .as(().asRight[String])
     }
 
+  // The group roll-up gate (spec doc 32 / ASC 810): the group period for a key cannot lock until EVERY
+  // operating entity's period for that key is locked. This forces a common group close — the consolidation
+  // (doc 14 §2.4) then runs over a fully-locked group period. Names the laggards so close ops can chase them.
+  def closeGroup(periodKey: String, actor: UUID): F[Either[String, Unit]] =
+    laggingEntities(periodKey).transact(xa).flatMap {
+      case Nil =>
+        sql"""UPDATE reporting_calendar SET status='locked', locked_by=$actor, locked_at=now()
+              WHERE period_key=$periodKey AND status <> 'locked'""".update.run.transact(xa).map {
+          case 0 => s"no open group period '$periodKey' to lock".asLeft[Unit]
+          case _ => ().asRight[String]
+        }
+      case names =>
+        s"group close blocked: ${names.size} operating entity period(s) not yet locked for $periodKey — ${names.mkString(", ")}"
+          .asLeft[Unit]
+          .pure[F]
+    }
+
+  // operating entities whose period for this key is missing or not yet locked — the roll-up laggards. An entity
+  // that did not yet exist when the period ended (created after period_to) never had to close it, so it's excluded.
+  private def laggingEntities(periodKey: String): ConnectionIO[List[String]] =
+    sql"""SELECT e.name FROM entity e
+          JOIN reporting_calendar rc ON rc.period_key = $periodKey
+          WHERE e.entity_type = 'operating' AND e.status <> 'retired' AND e.created_at::date <= rc.period_to
+            AND NOT EXISTS (SELECT 1 FROM accounting_period p
+                            WHERE p.entity_id = e.id AND p.period_key = $periodKey AND p.status = 'locked')
+          ORDER BY e.name"""
+      .query[String]
+      .to[List]
+
   def postingAllowed(entity: UUID, scope: String, periodKey: String): F[Boolean] =
     sql"""SELECT NOT EXISTS (SELECT 1 FROM accounting_period
             WHERE entity_id=$entity AND scope=$scope AND period_key=$periodKey AND status='locked')"""

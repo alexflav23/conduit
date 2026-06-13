@@ -194,6 +194,15 @@ export function getLineage(token: string, invoiceNo: string) {
   return call(`/api/v1/finance/lineage?invoice_no=${invoiceNo}`, token, 'GET');
 }
 
+// M-Period (doc 32): the period investigation view + the group roll-up lock.
+export function investigatePeriod(token: string, periodKey: string, entity?: string) {
+  const q = entity ? `?entity=${entity}` : '';
+  return call(`/api/v1/finance/periods/${encodeURIComponent(periodKey)}/investigation${q}`, token, 'GET');
+}
+export function lockGroupPeriod(token: string, periodKey: string) {
+  return call(`/api/v1/finance/group-periods/${encodeURIComponent(periodKey)}/lock`, token, 'POST');
+}
+
 // ----- M13 documents + invoice invalidation (void / credit note / refund) -----
 
 export function getDocuments(token: string, params: { invoiceNo?: string; orderId?: string }) {
