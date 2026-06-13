@@ -1,5 +1,9 @@
 # 27 — UI Feature Map: page-by-page, feature-by-feature (the concrete design contract)
 
+> **SUPERSEDED (2026-06-14) by [`spec/ui/`](./ui/)** — the refreshed, page-per-feature design briefs (one file per
+> feature, all 28, in the Claude Design bundle's vocabulary). This single-file map is retained for history; use
+> `spec/ui/README.md` as the source for new design work.
+
 **Why this doc exists:** previous design passes starved on specifics. Doc 20 specifies the *target* screens
 (D1–D22); doc 22 sets the design language and workflow. This doc maps **what is actually built today** —
 every page, every feature, every control (by `data-testid`), every API call, every state — against its

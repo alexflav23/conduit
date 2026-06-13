@@ -43,18 +43,18 @@ Legend: ✅ in the current design · ➕ MISSING (priority for the refresh) · �
 
 | # | Feature | Route | Status | Spec file |
 |---|---|---|---|---|
-| 00 | Sign-in / session / view-as | `signin` | ✅ | (27 §0) |
+| 00 | Sign-in / session / view-as | `signin` | ✅ | [00-signin.md](00-signin.md) |
 | 01 | Order Desk | `order` | ✅ | [01-order-desk.md](01-order-desk.md) |
-| 02 | Deal Desk (ADLP exceptions) | `dealdesk` | ✅ | (27 §2) |
-| 03 | Demand / H6Q board | `h6q` | ✅ | (27 §3) |
-| 04 | Flow (waterfall + ledger) | `flow` | ✅ | (27 §4) |
-| 05 | Supply window | `supply` | ✅ | (27 §5) |
-| 06 | Shelf (per-account stock) | `shelf` | ✅ | (27 §6) |
-| 07 | Finance (P&L / cash / credit) | `finance` | ✅ | (27 §7) |
-| 08 | Documents | `docs` | ✅ | (27 §8) |
-| 09 | Lifecycle | `lifecycle` | ✅ | (27 §9) |
-| 10 | Auditability (close/recon/controls/lineage) | `audit` | ✅ | (27 §10) |
-| 11 | Tax | `tax` | ✅ | (27 §11) |
+| 02 | Deal Desk (ADLP exceptions) | `dealdesk` | ✅ | [02-deal-desk.md](02-deal-desk.md) |
+| 03 | Demand / H6Q board | `h6q` | ✅ | [03-h6q.md](03-h6q.md) |
+| 04 | Flow (waterfall + ledger) | `flow` | ✅ | [04-flow.md](04-flow.md) |
+| 05 | Supply window | `supply` | ✅ | [05-supply.md](05-supply.md) |
+| 06 | Shelf (per-account stock) | `shelf` | ✅ | [06-shelf.md](06-shelf.md) |
+| 07 | Finance (P&L / cash / credit) | `finance` | ✅ | [07-finance.md](07-finance.md) |
+| 08 | Documents | `docs` | ✅ | [08-documents.md](08-documents.md) |
+| 09 | Lifecycle | `lifecycle` | ✅ | [09-lifecycle.md](09-lifecycle.md) |
+| 10 | Auditability (close/recon/controls/lineage) | `audit` | ✅ | [10-auditability.md](10-auditability.md) |
+| 11 | Tax | `tax` | ✅ | [11-tax.md](11-tax.md) |
 | 12 | **Period governance + investigation** | `period` | ➕ | [12-period.md](12-period.md) |
 | 13 | **Sync — shadow dual-run health** | `sync` | ➕ | [13-sync.md](13-sync.md) |
 | 14 | **Proof Center** (laws / ASC-606 / journal walk / tamper) | `proof` | ➕ | [14-proof.md](14-proof.md) |
