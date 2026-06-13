@@ -34,23 +34,20 @@ final class DualRunReconciler[F[_]: Async](xa: Transactor[F]) {
       .flatMap { case (src, con) => record(periodId, "dualrun_ar_xero", src, con, currency) }
       .transact(xa)
 
-  // Source drift (spec/18 §4.3): on a re-pull the connector hands the fresh hash; if it differs from what we
-  // ingested, the source row was edited after migration — flag it for a targeted idempotent re-apply.
+  // Source drift (spec/18 §4.3): a source row edited after we landed it. The IngestSink flips `drifted` on a
+  // hash-changed re-pull; this is the explicit form (mark drifted where the fresh hash differs from the landed one).
   def flagDrift(source: String, sourceId: String, freshHash: String): F[Boolean] =
-    sql"""UPDATE migration_record SET status = 'exception'
-          WHERE source = $source AND source_id = $sourceId AND source_hash <> $freshHash AND status <> 'exception'""".update.run
+    sql"""UPDATE ingest_record SET drifted = true
+          WHERE source = $source AND source_id = $sourceId AND source_hash <> $freshHash AND NOT drifted""".update.run
       .transact(xa)
       .map(_ > 0)
 
   def driftCount(source: String): F[Long] =
-    sql"SELECT count(*) FROM migration_record WHERE source = $source AND status = 'exception'"
-      .query[Long]
-      .unique
-      .transact(xa)
+    sql"SELECT count(*) FROM ingest_record WHERE source = $source AND drifted".query[Long].unique.transact(xa)
 
   private def xeroInvoicedTotal: ConnectionIO[BigDecimal] =
-    sql"""SELECT COALESCE(SUM((source_payload->>'Total')::numeric), 0)
-          FROM migration_record WHERE source = 'xero' AND entity_type = 'invoice'""".query[BigDecimal].unique
+    sql"""SELECT COALESCE(SUM((payload->>'Total')::numeric), 0)
+          FROM ingest_record WHERE source = 'xero' AND dataset = 'invoices'""".query[BigDecimal].unique
 
   private def conduitInvoicedTotal: ConnectionIO[BigDecimal] =
     sql"SELECT COALESCE(SUM(total_inc_vat), 0) FROM order_invoice WHERE status <> 'void'".query[BigDecimal].unique

@@ -46,11 +46,12 @@ object DualRunReconcileSuite extends IOSuite {
                  VALUES ($o, ${s"INV-${UUID.randomUUID()}"}, 0, 0, $incVat, 'open')""".update.run
     } yield ()).transact(xa)
 
-  // an ingested Xero invoice (the SoR side) with `total` inc-VAT, recorded in the universal source ledger.
+  // an ingested Xero invoice (the SoR side) with `total` inc-VAT, landed in the raw ingest_record ledger.
   private def xeroInvoice(xa: HikariTransactor[IO], total: BigDecimal): IO[Unit] =
-    sql"""INSERT INTO migration_record (source, entity_type, source_id, conduit_id, batch_id, source_payload, source_hash, phase)
-          VALUES ('xero','invoice',${s"x-${UUID.randomUUID()}"}, gen_random_uuid(), gen_random_uuid(),
-                  ${s"""{"Total":$total}"""}::jsonb, 'h', 1)""".update.run.transact(xa).void
+    sql"""INSERT INTO ingest_record (source, dataset, source_id, payload, source_hash)
+          VALUES ('xero','invoices',${s"x-${UUID.randomUUID()}"}, ${s"""{"Total":$total}"""}::jsonb, 'h')""".update.run
+      .transact(xa)
+      .void
 
   test("AR dual-run: matched when Conduit's invoiced total equals the ingested Xero total, exception on divergence") {
     xa =>
@@ -77,8 +78,8 @@ object DualRunReconcileSuite extends IOSuite {
     val sid = s"d-${UUID.randomUUID()}"
     for {
       _ <-
-        sql"""INSERT INTO migration_record (source, entity_type, source_id, conduit_id, batch_id, source_payload, source_hash, phase)
-              VALUES ('driftsrc','order',$sid, gen_random_uuid(), gen_random_uuid(), '{}'::jsonb, 'orig-hash', 1)""".update.run
+        sql"""INSERT INTO ingest_record (source, dataset, source_id, payload, source_hash)
+              VALUES ('driftsrc','order',$sid, '{}'::jsonb, 'orig-hash')""".update.run
           .transact(xa)
       drifted   <- rec.flagDrift("driftsrc", sid, "new-hash") // edited at source → hash changed
       countA    <- rec.driftCount("driftsrc")
