@@ -31,14 +31,16 @@ parked it in `outbox_dlq` rather than blocking the subscription.
      handler or correct the referenced data), deploy, then replay. Never replay a known-bad event into the ledger.
 
 ## Replay
-> There is no admin REST/CLI entrypoint for replay yet — invoke `ReplayService` from the `scripting/` module
-> (the house pattern for one-off ops) against the env transactor, or add a guarded admin route. **Follow-up:**
-> add `scripting/ReplayCli` so this is a single command. Until then, the procedure is:
+The operator entrypoint is **`scripting/ReplayCli`** (reads `CONDUIT_JDBC_URL`/`_DB_USER`/`_DB_PASSWORD`,
+`PULSAR_SERVICE_URL` from the env). Replay re-emits the events to their topics so the live, idempotent-on-
+`event_id` consumers reprocess them — the same handler, no second write path.
 
 1. Ensure the fix (if any) is deployed.
-2. Run `replayDlq("<consumer_group>")(handler)` for the failing group — it re-feeds each DLQ'd event through the
-   live handler and, on success, removes it from `outbox_dlq` and marks it replayed.
-3. If a consumer marked the event done-but-failed mid-way, `IdempotentConsumer.release("<group>", "<event_id>")`
+2. Check the depth: `sbt "scripting/runMain com.hypervolt.conduit.scripting.ReplayCli dlq-depth"`.
+3. Replay the failing group:
+   `sbt "scripting/runMain com.hypervolt.conduit.scripting.ReplayCli replay-dlq <consumer-group>"` — it re-feeds
+   each DLQ'd event, and on success removes it from `outbox_dlq` and marks it replayed.
+4. If a consumer marked the event done-but-failed mid-way, `IdempotentConsumer.release("<group>", "<event_id>")`
    first so the handler re-runs (the TB legs are idempotent on transfer id, so this is safe).
 
 ## Verify

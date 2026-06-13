@@ -28,13 +28,12 @@ used deliberately to **rebuild a read-projection** that drifted or was corrupted
    none double-counted (consumers dedupe on `event_id`).
 
 ## B. Rebuild a drifted/corrupted projection
-> No admin entrypoint yet — invoke `ReplayService` from the `scripting/` module against the env transactor
-> (**follow-up:** add `scripting/ReplayCli`). Procedure:
+Driven by **`scripting/ReplayCli rebuild <consumer-group> [aggregate-type]`** (same env config as above), which
+re-emits the filtered log so the projection's consumer rebuilds from it.
 1. **Quiesce** the projection's live consumer (so live + rebuild don't race), or rebuild into a shadow table and swap.
 2. **Truncate** the projection's own tables (NOT `outbox_event` — that is the immutable source of truth).
-3. `ReplayService.rebuild("<projection-group>", Some("<aggregate_type>"))(handler)` — folds the whole log (filtered
-   to the aggregate) through the projection's handler. For a partial rebuild from a known-good point use
-   `replayFrom(aggregate, fromSeq, handler)`.
+3. `sbt "scripting/runMain com.hypervolt.conduit.scripting.ReplayCli rebuild <projection-group> <aggregate-type>"` —
+   folds the whole log (filtered to the aggregate) through the projection's handler.
 4. **Resume** the live consumer; it continues from where the rebuild left off (dedupe on `event_id` makes the overlap safe).
 
 ## Verify
