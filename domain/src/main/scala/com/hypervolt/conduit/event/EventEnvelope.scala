@@ -60,7 +60,8 @@ object Topics {
     "commission" -> "conduit.commission",
     "ledger"     -> "conduit.ledger",
     "forecast"   -> "conduit.forecast",
-    "po"         -> "conduit.purchasing"
+    "po"         -> "conduit.purchasing",
+    "rma"        -> "conduit.returns"
   )
 
   def forAggregate(aggregateType: String): String =

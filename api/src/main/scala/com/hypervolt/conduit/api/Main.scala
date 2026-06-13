@@ -118,6 +118,7 @@ object Main extends IOApp.Simple {
         val taxRoutes         = new com.hypervolt.conduit.api.routes.TaxRoutes[IO](xa, auth).routes
         val procurementRoutes = new com.hypervolt.conduit.api.routes.ProcurementRoutes[IO](xa, auth).routes
         val structureRoutes   = new com.hypervolt.conduit.api.routes.EntityStructureRoutes[IO](xa, auth).routes
+        val returnRoutes      = new com.hypervolt.conduit.api.routes.ReturnRoutes[IO](xa, auth).routes
         // the Tamper Sandbox shares the dev-token gate: it exists only outside prod (doc 31 §2.5)
         val proofRoutes =
           new com.hypervolt.conduit.api.routes.ProofRoutes[IO](xa, auth, tamperEnabled = cfg.env != "prod").routes
@@ -138,7 +139,7 @@ object Main extends IOApp.Simple {
             "/" -> (HealthRoutes
               .routes[
                 IO
-              ] <+> accessRoutes <+> pricingRoutes <+> commerceRoutes <+> dealDeskRoutes <+> h6qRoutes <+> icRoutes <+> creditRoutes <+> auditRoutes <+> stripeRoutes <+> documentRoutes <+> attachmentRoutes <+> voidRoutes <+> lifecycleRoutes <+> taxRoutes <+> procurementRoutes <+> structureRoutes <+> privacyRoutes <+> proofRoutes)
+              ] <+> accessRoutes <+> pricingRoutes <+> commerceRoutes <+> dealDeskRoutes <+> h6qRoutes <+> icRoutes <+> creditRoutes <+> auditRoutes <+> stripeRoutes <+> documentRoutes <+> attachmentRoutes <+> voidRoutes <+> lifecycleRoutes <+> taxRoutes <+> procurementRoutes <+> structureRoutes <+> returnRoutes <+> privacyRoutes <+> proofRoutes)
           ).orNotFound
         val host      = Ipv4Address.fromString(cfg.http.host).getOrElse(ipv4"0.0.0.0")
         val apiPort   = Port.fromInt(cfg.http.port).getOrElse(port"8080")

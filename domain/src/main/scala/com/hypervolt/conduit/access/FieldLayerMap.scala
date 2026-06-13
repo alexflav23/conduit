@@ -31,6 +31,9 @@ object FieldLayerMap {
     // cost / margin
     ("lot_batch", "landed_unit_cost") -> DataLayer.Profitability,
     ("lot_batch", "unit_cost_usd")    -> DataLayer.Profitability,
+    // returns / RMA — refund/credit money is commercial; the unit's landed cost is profitability (doc 09 §J)
+    ("rma", "refund_amount")    -> DataLayer.Commercial,
+    ("rma", "unit_landed_cost") -> DataLayer.Profitability,
     // PII
     ("contact", "email") -> DataLayer.Pii,
     ("contact", "phone") -> DataLayer.Pii,
