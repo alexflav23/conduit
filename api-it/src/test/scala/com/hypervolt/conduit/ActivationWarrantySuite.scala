@@ -94,14 +94,13 @@ object ActivationWarrantySuite extends IOSuite {
     for {
       seeded <- seedSerial(xa, "v3")
       (entity, sid, serial) = seeded
-      _ <-
-        activation.onActivation(
-          serial,
-          UUID.randomUUID(),
-          1,
-          activatedAt,
-          None
-        ) // start 2026-01-01, end 2028-01-01 (24mo)
+      _ <- activation.onActivation(
+        serial,
+        UUID.randomUUID(),
+        1,
+        activatedAt,
+        None
+      ) // start 2026-01-01, end 2028-01-01 (24mo)
       pid <- sql"SELECT id FROM warranty_provision WHERE serial_unit_id = $sid".query[UUID].unique.transact(xa)
       _   <- warranty.release(pid, LocalDate.parse("2027-01-01")) // 365 of 730 days -> half
       released <-

@@ -46,6 +46,7 @@ object LedgerTransferCode {
   val Reversal: Int     = 50 // invoice invalidation — negates a recognition (doc 13 §void, ASC 606)
   val Remeasure: Int    = 60 // ASC 830-20-35 period-end remeasurement delta (doc 28 §5.3)
   val Settlement: Int   = 70 // IC settlement — cash legs + realized-FX reclass (doc 28 §5.4)
+  val TrueUp: Int       = 80 // §482 year-end transfer-pricing true-up — period uplift adjustment (doc 28 §5.6)
 }
 
 // TigerBeetle transfer flags (two-phase + linking).

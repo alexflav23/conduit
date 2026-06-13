@@ -92,22 +92,20 @@ object NotificationSuite extends IOSuite {
       _ <-
         sql"UPDATE forecast_cycle SET status='closed' WHERE cadence=$cadence AND status='open'".update.run.transact(xa)
       cyc <- svc.openCycle(LocalDate.of(2026, 6, 8), cadence).map(_._1)
-      _ <-
-        svc.submit(
-          agent,
-          acct,
-          cyc,
-          List(ForecastLine(v, month, sc, 100)),
-          None
-        ) // prior 0 -> 100 (material, both notified)
-      _ <-
-        svc.submit(
-          agent,
-          acct,
-          cyc,
-          List(ForecastLine(v, month, sc, 103)),
-          None
-        ) // +3% (< 10%): CM skipped, exec still hears
+      _ <- svc.submit(
+        agent,
+        acct,
+        cyc,
+        List(ForecastLine(v, month, sc, 100)),
+        None
+      ) // prior 0 -> 100 (material, both notified)
+      _ <- svc.submit(
+        agent,
+        acct,
+        cyc,
+        List(ForecastLine(v, month, sc, 103)),
+        None
+      ) // +3% (< 10%): CM skipped, exec still hears
       cmCount <-
         sql"""SELECT count(*) FROM notification n JOIN notification_subscription s ON s.id=n.subscription_id
                        WHERE s.name LIKE 'Contract manufacturer%' AND (n.payload->>'market_id') = ${market.toString}"""

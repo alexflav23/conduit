@@ -78,6 +78,10 @@ object FieldLayerMap {
     ("ic_remeasurement", "carrying_before")   -> DataLayer.InterEntity,
     ("ic_remeasurement", "measured")          -> DataLayer.InterEntity,
     ("ic_remeasurement", "delta")             -> DataLayer.InterEntity,
+    ("ic_true_up", "prior_uplift")            -> DataLayer.InterEntity,
+    ("ic_true_up", "target_uplift")           -> DataLayer.InterEntity,
+    ("ic_true_up", "adjustment")              -> DataLayer.InterEntity,
+    ("ic_true_up_line", "allocated")          -> DataLayer.InterEntity,
     // legal documents (doc 17 §9): the money on the artefact is commercial; the rest is logistics/identity.
     ("document", "total_amount") -> DataLayer.Commercial,
     ("document", "currency")     -> DataLayer.Commercial,

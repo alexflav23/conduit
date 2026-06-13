@@ -108,11 +108,10 @@ object H6QSimulationSuite extends IOSuite {
         cara  <- user("Cara (Retail)")
         p50   <- scenarioP50
         black <- sku(s"HV3PRO-BLK-075-${UUID.randomUUID().toString.take(4)}", serialised = true) // 7.5m black
-        white <-
-          sku(
-            s"HV3PRO-WHT-050-${UUID.randomUUID().toString.take(4)}",
-            serialised = false
-          ) // 5m white (non-serialised for the revenue leg)
+        white <- sku(
+          s"HV3PRO-WHT-050-${UUID.randomUUID().toString.take(4)}",
+          serialised = false
+        ) // 5m white (non-serialised for the revenue leg)
         grey  <- sku(s"HV3PRO-GRY-050-${UUID.randomUUID().toString.take(4)}", serialised = true) // 5m grey
         cef   <- party("CEF (master)", "wholesaler", chDist, "wholesale", None, None)
         leeds <- party("CEF Leeds", "branch", chDist, "wholesale", Some(asha), Some(cef))
@@ -139,14 +138,13 @@ object H6QSimulationSuite extends IOSuite {
           List(ForecastLine(black, month, p50, 120), ForecastLine(white, month, p50, 60)),
           Some("ipad")
         )
-        _ <-
-          fc.submit(
-            asha,
-            leeds,
-            cyc,
-            List(ForecastLine(black, month, p50, 140)),
-            Some("ipad")
-          ) // revise 120 -> 140 (append-only)
+        _ <- fc.submit(
+          asha,
+          leeds,
+          cyc,
+          List(ForecastLine(black, month, p50, 140)),
+          Some("ipad")
+        ) // revise 120 -> 140 (append-only)
         _ <- fc.submitMix(ben, york, cyc, month, p50, 200, Some("desk")) // 200 split 100/60/40 by the mix
         _ <- fc.submit(cara, web, cyc, List(ForecastLine(white, month, p50, 40)), Some("web"))
         // Hyperview publishes a retail grey line; no manual estimate there -> Hyperview is the line

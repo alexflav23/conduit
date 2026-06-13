@@ -192,7 +192,7 @@ the **capacity** model under whichever designation applies. A hedge with no desi
 by default: **fail-closed into the simplest correct treatment**, never silently into hedge accounting
 (which has documentation preconditions a default cannot satisfy).
 
-### 5.6 Price evolution & TP true-ups (§482/OECD — not ASC 606)
+### 5.6 Price evolution & TP true-ups (§482/OECD — not ASC 606) *(retrospective true-up BUILT, V1_0_74)*
 - **Prospective** changes: already built — append-only catalogue versions, maker-checker, dispatch-date
   binding (§5.1). A price change never touches an existing match.
 - **Retrospective** (year-end arm's-length true-up): a governed **`ic_true_up` event** — one matched
@@ -217,8 +217,11 @@ by default: **fail-closed into the simplest correct treatment**, never silently 
 4. **Hedge designation** — the three-concept table; OCI mechanics + reclass for cash-flow hedges.
    *Accept:* economic hedge MTMs through P&L; designated hedge routes effective portion to OCI and
    reclassifies on the hedged settlement; undocumented designation is rejected (fail-closed to economic).
-5. **TP true-up** — `ic_true_up` + conserving allocation + A3 rows. *Accept:* true-up conserves, eliminates
-   at group, leaves ic_match untouched.
+5. **TP true-up** *(BUILT)* — `ic_true_up` + `ic_true_up_line` (conserving allocation via the L1 allocator) +
+   `CTRL-IC-TRUEUP`; `IcTrueUpService` propose/approve (maker≠checker). Posts one sign-aware IC_AP/IC_AR/
+   IC_MARGIN pair at period grain, eliminates at group, leaves `ic_match` untouched (L6), lineage closes over
+   the new legs. `IcTrueUpSuite` 2✓ (upward true-up + detection). Slice 4 (ASC 815 hedge designation) is the
+   remaining M-IC-FX piece.
 
 **Sequencing vs doc 29:** A2 (lineage closure) lands first and is designed **settlement-aware** (the leg
 set it closes over includes future `ic_settlement` legs); slices 1–2 are cheap and make the balances honest,
