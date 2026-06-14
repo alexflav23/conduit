@@ -2,6 +2,29 @@
 const DEMO_CHANNEL = '11111111-1111-1111-1111-111111111111';
 const DEMO_MARKET = '22222222-2222-2222-2222-222222222222';
 
+// The ctx carries human labels ("UK", "P50") but the API scopes by UUID. Resolve label -> id here so views
+// keep passing ctx values unchanged. Year-1 is UK-only, so the market id is the stable seed constant; scenario
+// ids are dynamic, fetched once from /h6q/scenarios and cached. A value that's already a UUID passes through.
+const MARKET_ID: Record<string, string> = { UK: DEMO_MARKET };
+const isUuid = (s: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(s);
+export const marketId = (m: string): string => (isUuid(m) ? m : MARKET_ID[m] ?? m);
+
+let scenarioMapCache: Promise<Record<string, string>> | null = null;
+async function scenarioMap(token: string): Promise<Record<string, string>> {
+  if (!scenarioMapCache) {
+    scenarioMapCache = call('/api/v1/h6q/scenarios', token, 'GET').then((r) => {
+      const map: Record<string, string> = {};
+      if (Array.isArray(r.json)) for (const s of r.json) if (s?.type && s?.id) map[s.type] = s.id;
+      return map;
+    });
+  }
+  return scenarioMapCache;
+}
+export async function scenarioId(token: string, s: string): Promise<string> {
+  if (isUuid(s)) return s;
+  return (await scenarioMap(token))[s] ?? s;
+}
+
 // The authed fetch every view uses for auto-load. The bearer is read from the live session (sessionStorage,
 // set by SignIn / App) so callers don't have to thread the token through — pass just a path + optional init.
 // Returns the shared { status, json } envelope; a non-JSON / empty body yields json: null (never throws).
@@ -92,22 +115,26 @@ export function submitForecast(token: string, companyId: string, cycle: string, 
   return call(`/api/v1/h6q/my-forecasts/${companyId}/submit`, token, 'POST', { cycle, lines });
 }
 
-export function getCoverage(token: string, market: string, period: string, scenario: string, groupBy: string) {
-  return call(`/api/v1/h6q/coverage?market=${market}&period=${period}&scenario=${scenario}&group_by=${groupBy}`, token, 'GET');
+export async function getCoverage(token: string, market: string, period: string, scenario: string, groupBy: string) {
+  const sid = await scenarioId(token, scenario);
+  return call(`/api/v1/h6q/coverage?market=${marketId(market)}&period=${period}&scenario=${sid}&group_by=${groupBy}`, token, 'GET');
 }
 
 // The per-SKU market breakdown (what an imported H6Q populates — quantities per SKU per month).
-export function getCoverageBySku(token: string, market: string, period: string, scenario: string) {
-  return call(`/api/v1/h6q/coverage/by-sku?market=${market}&period=${period}&scenario=${scenario}&group_by=market`, token, 'GET');
+export async function getCoverageBySku(token: string, market: string, period: string, scenario: string) {
+  const sid = await scenarioId(token, scenario);
+  return call(`/api/v1/h6q/coverage/by-sku?market=${marketId(market)}&period=${period}&scenario=${sid}&group_by=market`, token, 'GET');
 }
 
 // The full demand matrix: all SKUs across all months for one scenario (the spreadsheet view).
-export function getCoverageMatrix(token: string, market: string, scenario: string) {
-  return call(`/api/v1/h6q/coverage/matrix?market=${market}&scenario=${scenario}`, token, 'GET');
+export async function getCoverageMatrix(token: string, market: string, scenario: string) {
+  const sid = await scenarioId(token, scenario);
+  return call(`/api/v1/h6q/coverage/matrix?market=${marketId(market)}&scenario=${sid}`, token, 'GET');
 }
 
-export function getReconcile(token: string, market: string, period: string, scenario: string) {
-  return call(`/api/v1/h6q/coverage/reconcile?market=${market}&period=${period}&scenario=${scenario}`, token, 'GET');
+export async function getReconcile(token: string, market: string, period: string, scenario: string) {
+  const sid = await scenarioId(token, scenario);
+  return call(`/api/v1/h6q/coverage/reconcile?market=${marketId(market)}&period=${period}&scenario=${sid}`, token, 'GET');
 }
 
 export function getOutstanding(token: string, cycle: string) {
