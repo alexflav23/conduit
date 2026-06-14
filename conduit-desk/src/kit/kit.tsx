@@ -1,10 +1,18 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { I } from './icons';
 
-// Conduit Desk shared UI kit — ported from the Claude Design bundle (desk-kit.jsx) to TS. Money/chips/cards/
-// drawer/coverage on the desk.css classes, so the real pages adopt the design vocabulary the spec/ui briefs use.
-// (Money does NOT gate by layer client-side — the server already projects withheld layers OUT of the payload,
-// so an absent figure simply isn't here; the desk renders what it's given.)
+// Conduit Desk shared UI kit — Hypervolt dark-first. Money/chips/cards/drawer/coverage/zone/audit ride on the
+// desk.css structural classes so views compose className + kit only (no hand-rolled colours/fonts).
+//
+// DATA-LAYER WALL (doc 05): a withheld layer is ABSENT from the payload, so the desk COLLAPSES rather than zeros.
+// <Money> is layer-aware: pass `layer` (the data layer this figure belongs to) + `role` (the viewer, carrying the
+// layers they hold). If the viewer lacks the layer, Money renders NOTHING (null) — never £0.00, never a placeholder.
+// When no layer/role is supplied the figure is unconditional (the server already projected it in).
+
+export type DataLayer = 'volume' | 'commercial' | 'profitability' | 'commission' | 'inter_entity' | 'pii';
+export interface ViewerRole {
+  layers: DataLayer[] | string[];
+}
 
 export function gbp(v: number | string | null | undefined, ccy?: string): string {
   if (v == null || v === '') return '—';
@@ -16,16 +24,23 @@ export function num(v: number | string | null | undefined): string {
   return v == null ? '—' : Number(v).toLocaleString('en-GB');
 }
 
-export function Money({ value, ccy }: { value: number | string | null | undefined; ccy?: string }) {
+export function Money({ value, ccy, layer, role }: {
+  value: number | string | null | undefined;
+  ccy?: string;
+  layer?: DataLayer | string;
+  role?: ViewerRole;
+}) {
+  if (layer && role && (role.layers as string[]).indexOf(layer) < 0) return null;
   return <span className="num">{gbp(value, ccy)}</span>;
 }
 
 const CHIP: Record<string, string> = {
-  active: 'ok', matched: 'ok', approved: 'ok', pass: 'ok', placed: 'ok', paid: 'ok', sent: 'ok', ok: 'ok',
-  locked: 'accent', closed: 'accent', accent: 'accent',
+  active: 'ok', matched: 'ok', approved: 'ok', pass: 'ok', placed: 'ok', paid: 'ok', sent: 'ok', standard: 'ok', balanced: 'ok', ok: 'ok',
+  locked: 'accent', closed: 'accent', accent: 'accent', structural: 'accent',
   pending_ceo: 'warn', draft: 'warn', proposed: 'warn', outstanding: 'warn', monitoring: 'warn', warn: 'warn',
   open: 'neutral', neutral: 'neutral',
   rejected: 'danger', fail: 'danger', void: 'danger', block: 'danger', exception: 'danger', error: 'danger', danger: 'danger',
+  champion: 'plum', plum: 'plum',
 };
 const CHIP_TXT: Record<string, string> = { pending_ceo: 'Pending CEO', proposed: 'Proposed', monitoring: 'Monitoring' };
 export function Chip({ s, children }: { s: string; children?: React.ReactNode }) {
@@ -78,9 +93,13 @@ export function AuditRef({ id }: { id: React.ReactNode }) {
   return <span className="aref">{I.check()}{id}</span>;
 }
 
-export function ZoneTag({ zone }: { zone: string }) {
-  const cls = zone === 'frozen' ? 'zfrozen' : zone === 'flex' ? 'zflex' : 'zfree';
-  return <span className={'zone ' + cls}>{zone}</span>;
+const ZONE: Record<string, string> = {
+  firm: 'zfrozen', frozen: 'zfrozen',
+  flex: 'zflex',
+  indicative: 'zfree', free: 'zfree',
+};
+export function ZoneTag({ zone }: { zone: 'firm' | 'flex' | 'indicative' | string }) {
+  return <span className={'zone ' + (ZONE[zone] || 'zfree')}>{zone}</span>;
 }
 
 export function Coverage({ pct }: { pct: number }) {
@@ -119,4 +138,48 @@ export function Drawer({ open, onClose, title, sub, chip, children, footer, widt
       </div>
     </>
   );
+}
+
+// Skeleton — shimmer placeholder for the loading state. Renders `lines` shimmer bars, or a single bar of `w`/`h`.
+export function Skeleton({ lines, w, h, style }: { lines?: number; w?: number | string; h?: number | string; style?: React.CSSProperties }) {
+  if (lines && lines > 0) {
+    return (
+      <>
+        {Array.from({ length: lines }).map((_, i) => (
+          <div key={i} className="skel skel-line" style={{ width: i === lines - 1 ? '60%' : '100%' }} />
+        ))}
+      </>
+    );
+  }
+  return <div className="skel" style={{ width: w ?? '100%', height: h ?? 12, ...style }} />;
+}
+
+// SkeletonRow — a shimmer row inside a <tbody> while a table loads.
+export function SkeletonRow({ cols }: { cols: number }) {
+  return (
+    <tr className="skel-row">
+      {Array.from({ length: cols }).map((_, i) => (
+        <td key={i}><div className="skel skel-line" /></td>
+      ))}
+    </tr>
+  );
+}
+
+type ToastKind = 'ok' | 'warn' | 'err';
+// useToast — the desk's mutation-confirmation surface. Returns [node, fire]; render `node` once at the page root.
+export function useToast(): [React.ReactNode, (text: string, kind?: ToastKind) => void] {
+  const [msg, setMsg] = useState<{ text: string; kind: ToastKind; id: number } | null>(null);
+  const fire = useCallback((text: string, kind: ToastKind = 'ok') => setMsg({ text, kind, id: Math.random() }), []);
+  useEffect(() => {
+    if (!msg) return;
+    const t = setTimeout(() => setMsg(null), 3200);
+    return () => clearTimeout(t);
+  }, [msg]);
+  const node = msg ? (
+    <div className={'toast ' + msg.kind} key={msg.id}>
+      {msg.kind === 'err' ? I.alert({ size: 15 }) : msg.kind === 'warn' ? I.flag({ size: 15 }) : I.check({ size: 15 })}
+      <span>{msg.text}</span>
+    </div>
+  ) : null;
+  return [node, fire];
 }

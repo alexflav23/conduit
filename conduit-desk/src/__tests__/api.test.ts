@@ -5,8 +5,7 @@ import { getProofLaws, runProofControl, getProofTrialBalance, investigatePeriod,
 // decodes to null (not a throw), the bearer token rides every request, and the verb/path are correct.
 function mockFetch(status: number, body: string) {
   const fn = vi.fn().mockResolvedValue({ status, text: () => Promise.resolve(body) });
-  // @ts-expect-error test stub
-  global.fetch = fn;
+  global.fetch = fn as unknown as typeof fetch;
   return fn;
 }
 

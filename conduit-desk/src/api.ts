@@ -2,6 +2,30 @@
 const DEMO_CHANNEL = '11111111-1111-1111-1111-111111111111';
 const DEMO_MARKET = '22222222-2222-2222-2222-222222222222';
 
+// The authed fetch every view uses for auto-load. The bearer is read from the live session (sessionStorage,
+// set by SignIn / App) so callers don't have to thread the token through — pass just a path + optional init.
+// Returns the shared { status, json } envelope; a non-JSON / empty body yields json: null (never throws).
+export function authToken(): string {
+  return (typeof sessionStorage !== 'undefined' && sessionStorage.getItem('conduit_token')) || '';
+}
+
+export async function apiFetch(path: string, init: RequestInit = {}): Promise<{ status: number; json: any }> {
+  const res = await fetch(path, {
+    ...init,
+    headers: {
+      Authorization: `Bearer ${authToken()}`,
+      'Content-Type': 'application/json',
+      ...(init.headers || {}),
+    },
+  });
+  const text = await res.text();
+  try {
+    return { status: res.status, json: text ? JSON.parse(text) : null };
+  } catch {
+    return { status: res.status, json: null };
+  }
+}
+
 async function call(path: string, token: string, method: string, body?: unknown): Promise<{ status: number; json: any }> {
   const res = await fetch(path, {
     method,
