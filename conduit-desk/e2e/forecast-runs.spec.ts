@@ -34,11 +34,12 @@ test('Forecast Runs: timeline loads, a run report opens, and a diff narrates the
   await page.getByTestId('fr-by-market').click();
   await expect(page.getByTestId('fr-breakdown')).toBeVisible();
 
-  // account-level: an enterprise account with its live stock + depletion rate, then drill into the participators
+  // account-level: an enterprise account with its snapshot stock + depletion rate + the rate Δ over the two runs
   await page.getByTestId('fr-by-account').click();
   await expect(page.getByTestId('fr-account-row').first()).toBeVisible();
   await expect(page.getByTestId('fr-accounts')).toContainText('H6Q Leeds');
-  await expect(page.getByTestId('fr-accounts')).toContainText('5,000'); // live on-shelf
+  await expect(page.getByTestId('fr-accounts')).toContainText('5,000'); // on-shelf at the to-origin (snapshot)
+  await expect(page.getByTestId('fr-accounts')).toContainText('+450'); // depletion-rate Δ (2,500 → 2,950 /mo)
   await page.getByTestId('fr-account-drill').first().click();
   await expect(page.getByTestId('fr-drill')).toBeVisible();
   await expect(page.getByTestId('fr-drill')).toContainText('champion'); // the winning model flagged among participants

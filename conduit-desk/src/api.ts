@@ -228,8 +228,8 @@ export function getForecastRunAccounts(token: string, from: string, to: string, 
   if (opts.channel) q.set('channel', opts.channel);
   return call(`/api/v1/forecast/runs/diff/accounts?${q.toString()}`, token, 'GET');
 }
-export function getForecastRunAccount(token: string, company: string, origin: string) {
-  return call(`/api/v1/forecast/runs/account/${encodeURIComponent(company)}?origin=${encodeURIComponent(origin)}`, token, 'GET');
+export function getForecastRunAccount(token: string, company: string, from: string, to: string) {
+  return call(`/api/v1/forecast/runs/account/${encodeURIComponent(company)}?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`, token, 'GET');
 }
 
 // ----- M13 documents + invoice invalidation (void / credit note / refund) -----

@@ -183,24 +183,27 @@ final class ForecastRunRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[
             }
       })
 
-  // One account's drill-down: the participating models (the bake-off) at an origin + its live per-SKU depletion.
+  // One account's drill-down: the participating models (the bake-off) at the `to` origin + its per-SKU depletion
+  // snapshot delta (shelf + rate, from→to).
   private val account =
     base.get
       .in("api" / "v1" / "forecast" / "runs" / "account" / path[String]("company"))
-      .in(query[String]("origin"))
+      .in(query[String]("from"))
+      .in(query[String]("to"))
       .out(jsonBody[Json])
       .serverLogic(p => {
-        case (companyStr, originStr) =>
+        case (companyStr, fromStr, toStr) =>
           if (!gate(p)) Async[F].pure(Left(denied))
           else
             (
-              origin(originStr),
+              origin(fromStr),
+              origin(toStr),
               Try(java.util.UUID.fromString(companyStr)).toEither.left
                 .map(_ => err(StatusCode.BadRequest, "bad_request", s"invalid id: $companyStr"))
             ).tupled match {
               case Left(e) => Async[F].pure(Left(e))
-              case Right((o, c)) =>
-                ForecastRunReportRepo.accountDrill(o, c).transact(xa).map(Right(_))
+              case Right((fromO, toO, c)) =>
+                ForecastRunReportRepo.accountDrill(fromO, toO, c).transact(xa).map(Right(_))
             }
       })
 

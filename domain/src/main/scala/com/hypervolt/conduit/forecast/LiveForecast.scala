@@ -23,15 +23,16 @@ import scala.math.BigDecimal.RoundingMode
 final class LiveForecastService[F[_]: Async](xa: Transactor[F]) {
 
   def publish(origin: LocalDate, horizonMonths: Int, minOrders: Int = 3): F[Int] =
-    DemandSeriesRepo.forecastableKeys(origin, minOrders).transact(xa).flatMap {
-      _.traverse {
-        case (company, variant) =>
-          PolicyRepo
-            .evidence(company, origin)
-            .transact(xa)
-            .flatMap(ev => publishOne(company, variant, PolicySelector.select(ev), origin, horizonMonths))
-      }.map(_.sum)
-    }
+    DepletionSnapshotRepo.snapshot(origin, "live").transact(xa) *>
+      DemandSeriesRepo.forecastableKeys(origin, minOrders).transact(xa).flatMap {
+        _.traverse {
+          case (company, variant) =>
+            PolicyRepo
+              .evidence(company, origin)
+              .transact(xa)
+              .flatMap(ev => publishOne(company, variant, PolicySelector.select(ev), origin, horizonMonths))
+        }.map(_.sum)
+      }
 
   private def publishOne(
       company: UUID,

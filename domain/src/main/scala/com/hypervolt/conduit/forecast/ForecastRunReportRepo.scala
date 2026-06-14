@@ -183,14 +183,16 @@ object ForecastRunReportRepo {
             COALESCE(sum(ps.actual_qty)   FILTER (WHERE ps.origin_month = $from), 0),
             COALESCE(sum(ps.forecast_qty) FILTER (WHERE ps.origin_month = $to), 0),
             COALESCE(sum(ps.actual_qty)   FILTER (WHERE ps.origin_month = $to), 0),
-            COALESCE(s.shelf, 0), COALESCE(s.velocity, 0), s.runway, s.reorder, s.last_event_at
+            COALESCE(sf.shelf, 0), COALESCE(sf.velocity, 0),
+            COALESCE(st.shelf, 0), COALESCE(st.velocity, 0), st.runway
           FROM policy_selection ps
           JOIN party p ON p.id = ps.company_id
-          LEFT JOIN (SELECT company_id, sum(shelf_stock) shelf, sum(velocity_ewma) velocity,
-                       min(runway_days) runway, min(reorder_point_days) reorder, max(last_event_at) last_event_at
-                     FROM account_forecast_state GROUP BY company_id) s ON s.company_id = ps.company_id
+          LEFT JOIN (SELECT company_id, sum(shelf_stock) shelf, sum(velocity_ewma) velocity
+                     FROM depletion_snapshot WHERE origin_month = $from GROUP BY company_id) sf ON sf.company_id = ps.company_id
+          LEFT JOIN (SELECT company_id, sum(shelf_stock) shelf, sum(velocity_ewma) velocity, min(runway_days) runway
+                     FROM depletion_snapshot WHERE origin_month = $to GROUP BY company_id) st ON st.company_id = ps.company_id
           WHERE ps.origin_month IN ($from, $to) """ ++ filt ++ fr"""
-          GROUP BY ps.company_id, s.shelf, s.velocity, s.runway, s.reorder, s.last_event_at
+          GROUP BY ps.company_id, sf.shelf, sf.velocity, st.shelf, st.velocity, st.runway
           ORDER BY abs(COALESCE(sum(ps.forecast_qty) FILTER (WHERE ps.origin_month = $to), 0)
                      - COALESCE(sum(ps.forecast_qty) FILTER (WHERE ps.origin_month = $from), 0)) DESC
           LIMIT $limit""")
@@ -206,41 +208,43 @@ object ForecastRunReportRepo {
             BigDecimal,
             BigDecimal,
             BigDecimal,
-            Option[BigDecimal],
-            Option[BigDecimal],
-            Option[Instant]
+            BigDecimal,
+            BigDecimal,
+            Option[BigDecimal]
         )
       ]
       .to[List]
       .map(_.map {
-        case (id, name, fPol, tPol, fFc, fAc, tFc, tAc, shelf, velocity, runway, reorder, lastEvent) =>
+        case (id, name, fPol, tPol, fFc, fAc, tFc, tAc, fShelf, fRate, tShelf, tRate, runway) =>
           val fErr = RunDiff.totalLevelErrorPct(fFc, fAc)
           val tErr = RunDiff.totalLevelErrorPct(tFc, tAc)
           Json.obj(
-            "company_id"         -> id.toString.asJson,
-            "name"               -> name.asJson,
-            "from_policy"        -> fPol.fold(Json.Null)(_.asJson),
-            "to_policy"          -> tPol.fold(Json.Null)(_.asJson),
-            "champion_changed"   -> (fPol.isDefined && tPol.isDefined && fPol != tPol).asJson,
-            "from_forecast"      -> fFc.asJson,
-            "to_forecast"        -> tFc.asJson,
-            "forecast_delta"     -> (tFc - fFc).asJson,
-            "from_error_pct"     -> fErr.asJson,
-            "to_error_pct"       -> tErr.asJson,
-            "error_delta_pct"    -> (tErr - fErr).asJson,
-            "shelf_stock"        -> shelf.asJson,
-            "depletion_rate"     -> velocity.asJson,
-            "runway_days"        -> runway.fold(Json.Null)(_.asJson),
-            "reorder_point_days" -> reorder.fold(Json.Null)(_.asJson),
-            "last_event_at"      -> lastEvent.fold(Json.Null)(_.toString.asJson)
+            "company_id"       -> id.toString.asJson,
+            "name"             -> name.asJson,
+            "from_policy"      -> fPol.fold(Json.Null)(_.asJson),
+            "to_policy"        -> tPol.fold(Json.Null)(_.asJson),
+            "champion_changed" -> (fPol.isDefined && tPol.isDefined && fPol != tPol).asJson,
+            "from_forecast"    -> fFc.asJson,
+            "to_forecast"      -> tFc.asJson,
+            "forecast_delta"   -> (tFc - fFc).asJson,
+            "from_error_pct"   -> fErr.asJson,
+            "to_error_pct"     -> tErr.asJson,
+            "error_delta_pct"  -> (tErr - fErr).asJson,
+            "from_shelf"       -> fShelf.asJson,
+            "shelf_stock"      -> tShelf.asJson,
+            "shelf_delta"      -> (tShelf - fShelf).asJson,
+            "from_rate"        -> fRate.asJson,
+            "depletion_rate"   -> tRate.asJson,
+            "rate_delta"       -> (tRate - fRate).asJson,
+            "runway_days"      -> runway.fold(Json.Null)(_.asJson)
           )
       })
   }
 
-  // The "participators" behind one account's champion at an origin: the per-model bake-off (who competed + their
-  // scored error), flagged with the winner — and the account's live per-SKU depletion (shelf, rate, runway).
-  def accountDrill(origin: LocalDate, company: UUID): ConnectionIO[Json] =
-    (accountParticipants(origin, company), accountDepletion(company)).mapN { (parts, depl) =>
+  // The "participators" behind one account's champion at the `to` origin (the per-model bake-off — who competed +
+  // their scored error, winner flagged) + the account's per-SKU depletion SNAPSHOT from→to (shelf + rate deltas).
+  def accountDrill(from: LocalDate, to: LocalDate, company: UUID): ConnectionIO[Json] =
+    (accountParticipants(to, company), accountDepletion(from, to, company)).mapN { (parts, depl) =>
       Json.obj("participants" -> Json.fromValues(parts), "depletion" -> Json.fromValues(depl))
     }
 
@@ -264,21 +268,29 @@ object ForecastRunReportRepo {
           )
       })
 
-  private def accountDepletion(company: UUID): ConnectionIO[List[Json]] =
-    sql"""SELECT v.sku, s.shelf_stock, s.velocity_ewma, s.runway_days, s.reorder_point_days, s.last_event_at
-          FROM account_forecast_state s JOIN product_variant v ON v.id = s.product_variant_id
-          WHERE s.company_id = $company ORDER BY v.sku"""
-      .query[(String, BigDecimal, BigDecimal, Option[BigDecimal], Option[BigDecimal], Option[Instant])]
+  private def accountDepletion(from: LocalDate, to: LocalDate, company: UUID): ConnectionIO[List[Json]] =
+    sql"""SELECT v.sku,
+                 COALESCE(f.shelf_stock, 0), COALESCE(f.velocity_ewma, 0),
+                 COALESCE(t.shelf_stock, 0), COALESCE(t.velocity_ewma, 0), t.runway_days
+          FROM (SELECT DISTINCT product_variant_id FROM depletion_snapshot
+                WHERE company_id = $company AND origin_month IN ($from, $to)) k
+          JOIN product_variant v ON v.id = k.product_variant_id
+          LEFT JOIN depletion_snapshot f ON f.company_id = $company AND f.origin_month = $from AND f.product_variant_id = k.product_variant_id
+          LEFT JOIN depletion_snapshot t ON t.company_id = $company AND t.origin_month = $to   AND t.product_variant_id = k.product_variant_id
+          ORDER BY v.sku"""
+      .query[(String, BigDecimal, BigDecimal, BigDecimal, BigDecimal, Option[BigDecimal])]
       .to[List]
       .map(_.map {
-        case (sku, shelf, velocity, runway, reorder, lastEvent) =>
+        case (sku, fShelf, fRate, tShelf, tRate, runway) =>
           Json.obj(
-            "sku"                -> sku.asJson,
-            "shelf_stock"        -> shelf.asJson,
-            "depletion_rate"     -> velocity.asJson,
-            "runway_days"        -> runway.fold(Json.Null)(_.asJson),
-            "reorder_point_days" -> reorder.fold(Json.Null)(_.asJson),
-            "last_event_at"      -> lastEvent.fold(Json.Null)(_.toString.asJson)
+            "sku"            -> sku.asJson,
+            "from_shelf"     -> fShelf.asJson,
+            "shelf_stock"    -> tShelf.asJson,
+            "shelf_delta"    -> (tShelf - fShelf).asJson,
+            "from_rate"      -> fRate.asJson,
+            "depletion_rate" -> tRate.asJson,
+            "rate_delta"     -> (tRate - fRate).asJson,
+            "runway_days"    -> runway.fold(Json.Null)(_.asJson)
           )
       })
 

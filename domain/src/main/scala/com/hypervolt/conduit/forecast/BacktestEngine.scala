@@ -339,22 +339,23 @@ final class BacktestEngine[F[_]: Async](xa: Transactor[F]) {
   // Each key's censored history (and deal/depletion context) is fetched ONCE per origin and shared by every
   // registry model — with thousands of real accounts a per-model fetch multiplies the dominant cost twelvefold.
   def runOrigin(origin: LocalDate, horizonMonths: Int, minOrders: Int = 3): F[Int] =
-    DemandSeriesRepo
-      .forecastableKeys(origin, minOrders)
-      .transact(xa)
-      .flatMap { keys =>
-        DemandModel.registry
-          .traverse(m => ForecastRunRepo.insertRun(origin, horizonMonths, m, "backtest").map(m -> _))
-          .transact(xa)
-          .flatMap { runs =>
-            val live = runs.collect { case (m, Some(runId)) => (m, runId) }
-            if (live.isEmpty) 0.pure[F] // every (origin, model) already ran — idempotent
-            else
-              keys
-                .traverse(key => predictKey(key, origin, horizonMonths, live))
-                .map(_ => keys.size * live.size)
-          }
-      }
+    DepletionSnapshotRepo.snapshot(origin, "backtest").transact(xa) *>
+      DemandSeriesRepo
+        .forecastableKeys(origin, minOrders)
+        .transact(xa)
+        .flatMap { keys =>
+          DemandModel.registry
+            .traverse(m => ForecastRunRepo.insertRun(origin, horizonMonths, m, "backtest").map(m -> _))
+            .transact(xa)
+            .flatMap { runs =>
+              val live = runs.collect { case (m, Some(runId)) => (m, runId) }
+              if (live.isEmpty) 0.pure[F] // every (origin, model) already ran — idempotent
+              else
+                keys
+                  .traverse(key => predictKey(key, origin, horizonMonths, live))
+                  .map(_ => keys.size * live.size)
+            }
+        }
 
   private def predictKey(
       key: (UUID, UUID),

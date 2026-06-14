@@ -63,9 +63,11 @@ export function ForecastRuns({ token }: { token: string }) {
 
   const openDrill = async (companyId: string) => {
     if (drill?.id === companyId) { setDrill(null); return; }
-    const r = await getForecastRunAccount(token, companyId, to);
+    const r = await getForecastRunAccount(token, companyId, from, to);
     setDrill(r.status === 200 ? { id: companyId, data: r.json } : null);
   };
+
+  const signed = (v: any) => `${Number(v) > 0 ? '+' : ''}${Number(v).toLocaleString('en-GB')}`;
 
   const rep = report;
   const stat = (label: string, value: React.ReactNode, testid: string, accent?: boolean) => (
@@ -206,7 +208,7 @@ export function ForecastRuns({ token }: { token: string }) {
                 <table className="tbl" data-testid="fr-accounts">
                   <thead><tr>
                     <th>Account</th><th>Champion</th><th className="num">Forecast Δ</th><th className="num">Error Δ</th>
-                    <th className="num">On-shelf</th><th className="num">Rate /mo</th><th className="num">Runway (d)</th><th></th>
+                    <th className="num">On-shelf</th><th className="num">Shelf Δ</th><th className="num">Rate /mo</th><th className="num">Rate Δ</th><th className="num">Runway (d)</th><th></th>
                   </tr></thead>
                   <tbody>
                     {accountRows.map((a: any, i: number) => (
@@ -216,15 +218,17 @@ export function ForecastRuns({ token }: { token: string }) {
                           <td>{a.champion_changed
                             ? <span><span className="mono dim">{a.from_policy}</span> → <Chip s="accent">{a.to_policy}</Chip></span>
                             : <span className="mono dim">{a.to_policy ?? '—'}</span>}</td>
-                          <td className="num">{Number(a.forecast_delta) > 0 ? '+' : ''}{Number(a.forecast_delta).toLocaleString('en-GB')}</td>
+                          <td className="num">{signed(a.forecast_delta)}</td>
                           <td className="num"><Chip s={Number(a.error_delta_pct) <= 0 ? 'ok' : 'warn'}>{Number(a.error_delta_pct) > 0 ? '+' : ''}{a.error_delta_pct}</Chip></td>
                           <td className="num">{Number(a.shelf_stock).toLocaleString('en-GB')}</td>
+                          <td className="num"><span className={Number(a.shelf_delta) < 0 ? 'dim' : ''}>{signed(a.shelf_delta)}</span></td>
                           <td className="num">{Number(a.depletion_rate).toLocaleString('en-GB')}</td>
+                          <td className="num"><Chip s={Number(a.rate_delta) >= 0 ? 'ok' : 'warn'}>{signed(a.rate_delta)}</Chip></td>
                           <td className="num">{a.runway_days == null ? '—' : Math.round(Number(a.runway_days))}</td>
                           <td><button className="btn sm" data-testid="fr-account-drill" onClick={() => openDrill(a.company_id)}>{drill?.id === a.company_id ? 'Hide' : 'Why'}</button></td>
                         </tr>
                         {drill && drill.id === a.company_id && (
-                          <tr data-testid="fr-drill"><td colSpan={8} style={{ background: 'var(--bg-2)' }}>
+                          <tr data-testid="fr-drill"><td colSpan={10} style={{ background: 'var(--bg-2)' }}>
                             <div className="grid" style={{ gridTemplateColumns: 'repeat(2, 1fr)', padding: '10px 4px' }}>
                               <div>
                                 <div className="dim" style={{ fontSize: 11.5, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>Participating models (the bake-off)</div>
@@ -235,10 +239,10 @@ export function ForecastRuns({ token }: { token: string }) {
                                 </tbody></table>
                               </div>
                               <div>
-                                <div className="dim" style={{ fontSize: 11.5, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>Live depletion by SKU (stock · rate · runway)</div>
-                                <table className="tbl"><thead><tr><th>SKU</th><th className="num">On-shelf</th><th className="num">Rate /mo</th><th className="num">Runway (d)</th></tr></thead><tbody>
+                                <div className="dim" style={{ fontSize: 11.5, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>Depletion by SKU — snapshot from → to (stock · rate · runway)</div>
+                                <table className="tbl"><thead><tr><th>SKU</th><th className="num">Shelf {from}</th><th className="num">Shelf {to}</th><th className="num">Rate {from}</th><th className="num">Rate {to}</th><th className="num">Rate Δ</th><th className="num">Runway (d)</th></tr></thead><tbody>
                                   {asArray(drill.data.depletion).map((d: any, j: number) => (
-                                    <tr key={j}><td className="mono">{d.sku}</td><td className="num">{Number(d.shelf_stock).toLocaleString('en-GB')}</td><td className="num">{Number(d.depletion_rate).toLocaleString('en-GB')}</td><td className="num">{d.runway_days == null ? '—' : Math.round(Number(d.runway_days))}</td></tr>
+                                    <tr key={j}><td className="mono">{d.sku}</td><td className="num dim">{Number(d.from_shelf).toLocaleString('en-GB')}</td><td className="num">{Number(d.shelf_stock).toLocaleString('en-GB')}</td><td className="num dim">{Number(d.from_rate).toLocaleString('en-GB')}</td><td className="num">{Number(d.depletion_rate).toLocaleString('en-GB')}</td><td className="num"><Chip s={Number(d.rate_delta) >= 0 ? 'ok' : 'warn'}>{signed(d.rate_delta)}</Chip></td><td className="num">{d.runway_days == null ? '—' : Math.round(Number(d.runway_days))}</td></tr>
                                   ))}
                                 </tbody></table>
                               </div>
@@ -247,7 +251,7 @@ export function ForecastRuns({ token }: { token: string }) {
                         )}
                       </React.Fragment>
                     ))}
-                    {accountRows.length === 0 && <tr><td className="dim" colSpan={8} style={{ padding: '12px' }} data-testid="fr-accounts-empty">No accounts on this filter.</td></tr>}
+                    {accountRows.length === 0 && <tr><td className="dim" colSpan={10} style={{ padding: '12px' }} data-testid="fr-accounts-empty">No accounts on this filter.</td></tr>}
                   </tbody>
                 </table>
               </div>

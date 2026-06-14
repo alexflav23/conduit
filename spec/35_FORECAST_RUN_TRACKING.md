@@ -52,10 +52,18 @@ optional market/segment/channel filters scope the drill. This is where stock + d
 per-model bake-off at that origin — who competed, their mean abs error, the winner flagged) + the account's
 **live per-SKU depletion** (stock · rate · runway). The desk renders this inline under the account row.
 
-> Honest scope: the live depletion fields are *current* (the soft-real-time projection), not a per-origin
-> snapshot, so the account view shows the run-to-run **forecast/champion** delta alongside the **live**
-> stock/rate. A historical depletion-rate delta per origin needs the engine to snapshot
-> `account_forecast_state` per run — the natural follow-on.
+### 4.2 Per-origin depletion snapshots (the historical rate delta)
+`depletion_snapshot (origin_month, company_id, product_variant_id → shelf_stock, velocity_ewma, velocity_3m,
+runway_days, source)` — an **immutable, idempotent** capture of the **censored** depletion state at each
+origin (same definition as `BacktestEngine.depletionContext`, run set-based for the whole population).
+Captured by **`BacktestEngine.runOrigin`** (`source='backtest'`) at every origin and by
+**`LiveForecast.publish`** (`source='live'`) at the live origin; `DepletionSnapshotRepo.snapshot(origin, source)`
+is `ON CONFLICT DO NOTHING`, so an origin's snapshot is taken once and never rewritten.
+
+This makes the account view a **true rate delta over time**: per account, the from→to **shelf Δ** and
+**depletion-rate Δ** (`velocity_ewma`), and per SKU in the drill (shelf from→to, rate from→to, rate Δ). The
+account row sorts by `|forecast Δ|`; the desk shows on-shelf (to), shelf Δ, rate/mo (to), **rate Δ**, runway.
+Reproducible from the serial/activation log — a backtest re-run converges to the same snapshots.
 
 ## 5. The narrative (RunDiff, pure + unit-tested)
 Bullets a human reads: coverage change (accounts added/dropped), total-level error improvement/worsening,

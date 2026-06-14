@@ -311,4 +311,11 @@ BEGIN
     VALUES (acct, v_id, 5000, 2950, 51, 14, now())
     ON CONFLICT (company_id, product_variant_id)
       DO UPDATE SET shelf_stock = 5000, velocity_ewma = 2950, runway_days = 51, reorder_point_days = 14, last_event_at = now();
+
+  -- per-origin censored depletion SNAPSHOTS so the account diff shows a real rate delta over time:
+  -- the shelf drains 8000 → 5000 while the install rate climbs 2500 → 2950/mo (rate Δ +450).
+  INSERT INTO depletion_snapshot (origin_month, company_id, product_variant_id, shelf_stock, velocity_ewma, velocity_3m, runway_days, source) VALUES
+    ('2026-03-01', acct, v_id, 8000, 2500, 2400, 96.0, 'backtest'),
+    ('2026-06-01', acct, v_id, 5000, 2950, 3100, 51.0, 'backtest')
+  ON CONFLICT (origin_month, company_id, product_variant_id) DO NOTHING;
 END $$;
