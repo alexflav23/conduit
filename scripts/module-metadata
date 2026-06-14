@@ -1,0 +1,72 @@
+#!/usr/bin/env nix-shell
+#! nix-shell -i bash -p dateutils git
+
+set -euxo pipefail
+
+if (( $# != 4 )); then
+  echo >&2 "Usage: $0 hash nix-module-name jar-name module-dist-path"
+  exit 127
+fi
+
+hash="${1:?hash must be non-empty}"; shift
+nix_module_name="${1:?nix_module_name must be non-empty}"; shift
+jarname="${1:?jarname must be non-empty}"; shift
+module_dist="${1:?module_dist must be non-empty}"; shift
+
+if [[ ${CI-} == true ]]; then
+  if [[ ${hash} != ${CI_COMMIT_SHORT_SHA} ]]; then
+    echo >&2 "WARNING: Invoked with hash ${hash} but gitlab is using ${CI_COMMIT_SHORT_SHA}. Assuming we cannot reliably know other git properties."
+    git_commit="unknown"
+    git_branch="unknown"
+    git_tree_state="unknown"
+  else
+    git_commit="${CI_COMMIT_SHA}"
+    git_branch="${CI_COMMIT_BRANCH:-${CI_MERGE_REQUEST_SOURCE_BRANCH_NAME}}"
+    # Assume clean when running on CI
+    git_tree_state=clean
+  fi
+else
+  git_short_sha=$(git rev-parse --short=8 HEAD)
+  if [[ ${hash} != ${git_short_sha} ]]; then
+    echo >&2 "WARNING: Invoked with hash ${hash} but git reports ${git_short_sha}. Assuming we cannot reliably know other git properties."
+    git_commit="unknown"
+    git_branch="unknown"
+    git_tree_state="unknown"
+  else
+    git_commit="$(git rev-parse HEAD)"
+    git_branch="$(git branch --show-current)"
+    : ${git_branch:=(detached-HEAD)}
+    git_tree_state=dirty
+    if git diff --quiet --exit-code HEAD; then
+      git_tree_state=clean
+    fi
+  fi
+  unset git_short_sha || true
+fi
+
+metric_name_prefix="hypervolt_${nix_module_name//-/_}"
+
+cat > "${module_dist}/metadata.nix" <<EOF
+{ lib, options, ... }:
+{
+  config = lib.optionalAttrs ((options.services.hv-telemetry.metrics or { })?textfileSources) {
+    services.hv-telemetry.metrics.textfileSources.${nix_module_name}.metrics = {
+      ${metric_name_prefix}_app_image_info = {
+        jar_name = "${jarname}";
+        s3_bucket = builtins.readFile ./bucket;
+        s3_key = builtins.readFile ./key;
+        s3_version = builtins.readFile ./version;
+      };
+      ${metric_name_prefix}_module_build_info = {
+        branch = "${git_branch}";
+        git_commit = "${git_commit}";
+        git_tree_state = "${git_tree_state}";
+        version = "${hash}";
+      };
+      ${metric_name_prefix}_module_build_time_seconds = {
+        value = $(date +"%s");
+      };
+    };
+  };
+}
+EOF
