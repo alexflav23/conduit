@@ -77,6 +77,9 @@ def main():
     ap.add_argument("workbook")
     ap.add_argument("--ex-motability", action="store_true")
     ap.add_argument("--year", type=int, default=2026)
+    ap.add_argument("--ndjson", action="store_true",
+                    help="emit one JSON object per (sku, month) for the deterministic boot snapshot "
+                         "(ingest/h6q/), instead of SQL — consumed by SnapshotLoader's h6q handler.")
     args = ap.parse_args()
 
     wb = load_workbook(args.workbook, read_only=True, data_only=True)
@@ -113,6 +116,20 @@ def main():
 
     skus = sorted({k[0] for k in per_sku_month})
     imported_months = sorted({k[1] for k in per_sku_month})
+
+    if args.ndjson:
+        import json
+        toggle = "ex_motability" if args.ex_motability else None
+        for (code, month) in sorted(per_sku_month):
+            print(json.dumps({
+                "sku": code,
+                "period_month": month + "-01",
+                "scenario": "P50",
+                "toggle_basis": toggle,
+                "forecast_qty": per_sku_month[(code, month)],
+            }))
+        sys.stderr.write(f"emitted {len(per_sku_month)} h6q coverage rows ({sum(per_sku_month.values())} units) as ndjson\n")
+        return
 
     out = []
     out.append("BEGIN;")

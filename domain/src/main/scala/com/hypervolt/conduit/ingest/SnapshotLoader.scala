@@ -38,7 +38,9 @@ final class SnapshotLoader[F[_]: Async](xa: Transactor[F]) {
               .toList
               .sortBy(_.toString)
           )
-          .flatMap(_.traverse(loadFile(root, _)).map(_.sum))
+          // Isolate each file: its rows still load atomically (one tx), but a failure in one dataset can never
+          // abort the others or crash the API boot — the import engine degrades, it does not take the app down.
+          .flatMap(_.traverse(f => loadFile(root, f).attempt.map(_.fold(_ => 0, identity))).map(_.sum))
     }
 
   private def loadFile(root: Path, file: Path): F[Int] = {
@@ -63,7 +65,8 @@ object SnapshotLoader {
     "exogenous"    -> exogenous,
     "hubspot"      -> hubspot,
     "mrpeasy"      -> mrpeasy,
-    "ghostbusters" -> ghostbusters
+    "ghostbusters" -> ghostbusters,
+    "h6q"          -> h6q
   )
 
   // ingest/exogenous/<series_key>.ndjson — {"period_month":"2024-01-01","value":123456,"known_at":"2024-02-05T00:00:00Z"}
@@ -132,6 +135,78 @@ object SnapshotLoader {
                   AND $activatedAt >= COALESCE(d.delivered_at, d.date::timestamptz) - interval '7 days'""".update.run
       }
     }
+
+  // ingest/h6q/coverage.ndjson — the REAL H6Q workbook forecast (doc 24/26): finance's top-down monthly P50
+  // volume per channel, split to per-SKU via the historical mix (largest-remainder) by local/import_xlsx.py
+  // --ndjson. Lands at market level in pipeline_coverage — the table the H6Q board (coverage/matrix) reads. The
+  // model-authored forecast_entry rows are a separate substrate (the backtest engine). toggle null = base P50,
+  // "ex_motability" = the workbook's ex-cut.
+  private def h6q(dataset: String, row: Json): ConnectionIO[Int] =
+    if (dataset != "coverage") 0.pure[ConnectionIO]
+    else {
+      val c = row.hcursor
+      (
+        str(c, "sku"),
+        str(c, "period_month").flatMap(s => scala.util.Try(LocalDate.parse(s)).toOption),
+        num(c, "forecast_qty").map(_.toInt)
+      ).tupled match {
+        case None => 0.pure[ConnectionIO]
+        case Some((sku, period, qty)) =>
+          val toggle = str(c, "toggle_basis") // None = base P50, Some("ex_motability") = the ex-cut
+          h6qVariant(sku).flatMap { variantId =>
+            h6qScenario(toggle).flatMap {
+              case None => 0.pure[ConnectionIO]
+              case Some(scenarioId) =>
+                // uq_pipeline_coverage_dim is a UNIQUE INDEX over a COALESCE expression (not a named constraint),
+                // so ON CONFLICT must restate that exact expression to use it as the arbiter.
+                sql"""INSERT INTO pipeline_coverage
+                        (level, market_id, product_variant_id, period_month, scenario_id, forecast_qty, forecast_source)
+                      SELECT 'market', m.id, $variantId, $period, $scenarioId, $qty, 'h6q_workbook'
+                      FROM market m WHERE m.code = 'UK'
+                      ON CONFLICT (level,
+                                   COALESCE(channel_id, '00000000-0000-0000-0000-000000000000'::uuid),
+                                   COALESCE(sub_channel_id, '00000000-0000-0000-0000-000000000000'::uuid),
+                                   COALESCE(segment, ''::text),
+                                   COALESCE(sector, ''::text),
+                                   COALESCE(company_id, '00000000-0000-0000-0000-000000000000'::uuid),
+                                   COALESCE(branch_company_id, '00000000-0000-0000-0000-000000000000'::uuid),
+                                   COALESCE(agent_user_id, '00000000-0000-0000-0000-000000000000'::uuid),
+                                   COALESCE(market_id, '00000000-0000-0000-0000-000000000000'::uuid),
+                                   COALESCE(product_variant_id, '00000000-0000-0000-0000-000000000000'::uuid),
+                                   period_month, scenario_id)
+                      DO UPDATE SET forecast_qty = EXCLUDED.forecast_qty,
+                                    forecast_source = EXCLUDED.forecast_source""".update.run
+            }
+          }
+      }
+    }
+
+  // The workbook's 9 charger SKUs (HV-5M-W … HV-10M-G) under a charger family — upsert so the snapshot is self-contained.
+  private def h6qVariant(sku: String): ConnectionIO[UUID] =
+    sql"SELECT id FROM product_variant WHERE sku = $sku".query[UUID].option.flatMap {
+      case Some(id) => id.pure[ConnectionIO]
+      case None =>
+        sql"SELECT id FROM product_family WHERE code = 'hv-charger'"
+          .query[UUID]
+          .option
+          .flatMap {
+            case Some(f) => f.pure[ConnectionIO]
+            case None =>
+              sql"INSERT INTO product_family (code, name) VALUES ('hv-charger', 'Hypervolt Charger') RETURNING id"
+                .query[UUID]
+                .unique
+          }
+          .flatMap { fam =>
+            sql"""INSERT INTO product_variant (family_id, sku, generation, product_class)
+                  VALUES ($fam, $sku, 'v3', 'charger') RETURNING id""".query[UUID].unique
+          }
+    }
+
+  // type=P50, distinguished by toggle_basis (null = base, ex_motability = the workbook's ex-cut).
+  private def h6qScenario(toggle: Option[String]): ConnectionIO[Option[UUID]] =
+    sql"SELECT id FROM forecast_scenario WHERE type = 'P50' AND toggle_basis IS NOT DISTINCT FROM $toggle ORDER BY id LIMIT 1"
+      .query[UUID]
+      .option
 
   // ingest/mrpeasy/*.ndjson — the B2B system of record (doc 26 §3a): real customer orders (units, real SKUs,
   // real accounts) and shipments (with serial numbers). HubSpot stopped being the deal record in Oct'25;
