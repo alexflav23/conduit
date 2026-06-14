@@ -63,13 +63,17 @@ package:
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
 
-# Publish to the pkgs bucket + record nix module versions (protected branches only — the deploy path).
+# Publish to the pkgs/nix buckets — needs AWS creds, which the shared runner does NOT have, so this is a
+# MANUAL job: run it from a dev laptop (with the AWS profile) via `./scripts/publish <short-sha>`, or trigger
+# it here once the runner is given a conduit push identity. allow_failure so it never blocks the green build.
 publish:
   stage: publish
   tags:
     - x86_64-nix-24.11
   rules:
     - if: '$CI_COMMIT_REF_PROTECTED == "true"'
+      when: manual
+      allow_failure: true
   dependencies:
     - package
   script:
