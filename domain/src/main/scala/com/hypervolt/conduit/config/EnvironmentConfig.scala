@@ -106,10 +106,16 @@ object EnvironmentConfig {
         accessKey = docs.getString("access_key"),
         secretKey = docs.getString("secret_key")
       ),
-      googleAuth = GoogleAuthConfig(
-        clientId = hv.getConfig("auth").getString("google_client_id"),
-        workspaceDomain = hv.getConfig("auth").getString("workspace_domain")
-      )
+      googleAuth = {
+        // auth is optional — only the API verifies tokens; the consumer/scripts share this loader and carry no
+        // auth block, so a missing section defaults to "disabled" rather than crashing the process at boot.
+        val authCfg = if (hv.hasPath("auth")) hv.getConfig("auth") else ConfigFactory.empty()
+        GoogleAuthConfig(
+          clientId = if (authCfg.hasPath("google_client_id")) authCfg.getString("google_client_id") else "",
+          workspaceDomain =
+            if (authCfg.hasPath("workspace_domain")) authCfg.getString("workspace_domain") else "hypervolt.co.uk"
+        )
+      }
     )
   }
 }
