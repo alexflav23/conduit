@@ -21,8 +21,8 @@ import { Sync } from './Sync';
 import { SignIn, sessionEmail, signOutGoogle } from './SignIn';
 
 const styles = stylex.create({
-  page: { minHeight: '100vh', backgroundColor: colors.bg, color: colors.text, fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif', padding: '2rem' },
-  title: { fontSize: '1.5rem', fontWeight: 700, marginBottom: '1rem' },
+  page: { minHeight: '100vh', backgroundColor: colors.bg, color: colors.text, fontFamily: colors.fontUi, padding: '2rem' },
+  title: { fontSize: '1.5rem', fontWeight: 700, marginBottom: '1rem', fontFamily: colors.fontDisplay },
   accent: { color: colors.accent },
   nav: { display: 'flex', gap: '0.5rem', marginBottom: '1.25rem' },
   tab: { backgroundColor: 'transparent', color: colors.muted, border: `1px solid ${colors.border}`, borderRadius: '999px', padding: '0.4rem 1rem', fontWeight: 600, cursor: 'pointer' },
