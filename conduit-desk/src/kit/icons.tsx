@@ -1,0 +1,42 @@
+import React from 'react';
+
+// Conduit icon set — ported from the Claude Design bundle (icons.jsx). Minimal stroke icons (Lucide geometry).
+type IconProps = { size?: number; fill?: string; sw?: number } & React.SVGProps<SVGSVGElement>;
+const Ic = ({ d, children, size = 18, fill = 'none', sw = 2, ...p }: IconProps & { d?: string; children?: React.ReactNode }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill={fill} stroke="currentColor" strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round" {...p}>
+    {d ? <path d={d} /> : children}
+  </svg>
+);
+
+export type IconC = (p?: IconProps) => React.ReactElement;
+
+export const I: Record<string, IconC> = {
+  grid: (p) => <Ic {...p}><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></Ic>,
+  bolt: (p) => <Ic {...p} fill="currentColor" sw={0}><path d="M13 2 4 14h6l-1 8 9-12h-6z"/></Ic>,
+  charger: (p) => <Ic {...p}><rect x="6" y="3" width="12" height="18" rx="2.5"/><path d="M12 8 10 12h3l-2 4"/></Ic>,
+  pulse: (p) => <Ic {...p}><path d="M3 12h4l2-6 4 12 2-6h6"/></Ic>,
+  alert: (p) => <Ic {...p}><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.3 2.6 17a2 2 0 0 0 1.7 3h15.4a2 2 0 0 0 1.7-3L13.7 3.3a2 2 0 0 0-3.4 0Z"/></Ic>,
+  sessions: (p) => <Ic {...p}><path d="M3 3v18h18"/><path d="M7 14l3-4 3 2 4-6"/></Ic>,
+  search: (p) => <Ic {...p}><circle cx="11" cy="11" r="7"/><path d="m21 21-3.5-3.5"/></Ic>,
+  bell: (p) => <Ic {...p}><path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></Ic>,
+  arrowR: (p) => <Ic {...p}><path d="M5 12h14M13 6l6 6-6 6"/></Ic>,
+  x: (p) => <Ic {...p}><path d="M18 6 6 18M6 6l12 12"/></Ic>,
+  download: (p) => <Ic {...p}><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></Ic>,
+  refresh: (p) => <Ic {...p}><path d="M3 12a9 9 0 0 1 15-6.7L21 8M21 3v5h-5M21 12a9 9 0 0 1-15 6.7L3 16M3 21v-5h5"/></Ic>,
+  clock: (p) => <Ic {...p}><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></Ic>,
+  zap: (p) => <Ic {...p} fill="currentColor" sw={0}><path d="M13 2 4 14h6l-1 8 9-12h-6z"/></Ic>,
+  cpu: (p) => <Ic {...p}><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/></Ic>,
+  user: (p) => <Ic {...p}><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></Ic>,
+  shield: (p) => <Ic {...p}><path d="M12 2 4 5v6c0 5 3.5 8.5 8 10 4.5-1.5 8-5 8-10V5l-8-3Z"/><path d="m9 12 2 2 4-4"/></Ic>,
+  globe: (p) => <Ic {...p}><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18 14 14 0 0 1 0-18Z"/></Ic>,
+  battery: (p) => <Ic {...p}><rect x="2" y="7" width="17" height="10" rx="2"/><path d="M22 11v2"/></Ic>,
+  trend: (p) => <Ic {...p}><path d="M3 17l6-6 4 4 8-8M21 7v5h-5"/></Ic>,
+  check: (p) => <Ic {...p}><path d="M20 6 9 17l-5-5"/></Ic>,
+  list: (p) => <Ic {...p}><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></Ic>,
+  layers: (p) => <Ic {...p}><path d="m12 2 9 5-9 5-9-5 9-5ZM3 12l9 5 9-5M3 17l9 5 9-5"/></Ic>,
+  flag: (p) => <Ic {...p}><path d="M4 22V4M4 4h13l-2 4 2 4H4"/></Ic>,
+  chevR: (p) => <Ic {...p}><path d="m9 6 6 6-6 6"/></Ic>,
+  command: (p) => <Ic {...p}><path d="M9 6a3 3 0 1 0-3 3h12a3 3 0 1 0-3-3v12a3 3 0 1 0 3-3H6a3 3 0 1 0 3 3V6Z"/></Ic>,
+  sync: (p) => <Ic {...p}><path d="M3 12a9 9 0 0 1 15-6.7L21 8M21 3v5h-5M21 12a9 9 0 0 1-15 6.7L3 16M3 21v-5h5"/></Ic>,
+  scale: (p) => <Ic {...p}><path d="M12 3v18M5 7h14M7 7l-3 7a3 3 0 0 0 6 0zM17 7l-3 7a3 3 0 0 0 6 0z"/></Ic>,
+};

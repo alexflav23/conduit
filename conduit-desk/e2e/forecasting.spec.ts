@@ -20,7 +20,8 @@ test('Forecast Engine: explainer renders, depletion playground computes, tournam
   // depletion playground: defaults reproduce the Q2'25 Octopus shape (M1 = 0: shelf exceeds one month's installs)
   await page.getByTestId('explainer-try-it-the-depletion-model-live').click();
   await expect(page.getByTestId('shelf-slider')).toBeVisible();
-  await expect(page.locator('svg').first().getByText('0', { exact: true }).first()).toBeVisible();
+  // scope to the depletion chart specifically — the shell now renders nav/brand <svg> icons ahead of it
+  await expect(page.locator('svg[aria-label="depletion forecast bars"]').getByText('0', { exact: true }).first()).toBeVisible();
 
   // tournament stepper: the incumbent-prior step is reachable and explains the keystone
   await page.getByTestId('explainer-the-tournament-how-an-account-gets-its-champion').click();

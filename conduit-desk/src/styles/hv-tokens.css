@@ -1,0 +1,263 @@
+/* ============================================================
+   Hypervolt — Design Tokens (Colors + Typography)
+   v1.0 · Derived from the Hypervolt Figma file (⚡ Hypervolt.fig)
+   ============================================================ */
+
+/* Webfonts: Rubik (display) + Roboto (UI/body), pulled from Google Fonts.
+   Hypervolt's Figma uses Rubik Light/Regular/Medium/SemiBold/Bold and
+   Roboto Light/Regular/Medium/SemiBold/Bold. Swap in self-hosted files
+   in /fonts if you want to go offline. */
+@import url('https://fonts.googleapis.com/css2?family=Rubik:wght@300;400;500;600;700&family=Roboto:wght@300;400;500;600;700&display=swap');
+
+:root {
+  /* --------------------------------------------------------
+     COLOURS — ink + surface (dark)
+     The brand uses a very specific near-black: 22/23/28.
+     -------------------------------------------------------- */
+  --hv-ink:            rgb(22, 23, 28);   /* canonical near-black, big surfaces + ad bg */
+  --hv-ink-2:          rgb(30, 30, 30);   /* secondary dark (cards on dark) */
+  --hv-ink-3:          rgb(27, 28, 33);
+  --hv-ink-4:          rgb(34, 36, 43);
+  --hv-ink-5:          rgb(47, 47, 47);
+  --hv-black:          rgb(0, 0, 0);      /* button-filled, absolute black */
+
+  /* COLOURS — light / neutrals */
+  --hv-paper:          rgb(255, 255, 255);
+  --hv-paper-chrome:   rgb(217, 217, 217); /* lines & secondary UI on paper */
+  --hv-fog:            rgb(235, 235, 235);
+  --hv-mist:           rgb(245, 245, 245);
+
+  /* COLOURS — warm greys (text on dark) */
+  --hv-grey-50:  rgb(245, 245, 245);
+  --hv-grey-100: rgb(217, 217, 217);
+  --hv-grey-200: rgb(150, 150, 150);
+  --hv-grey-300: rgb(120, 120, 120);
+  --hv-grey-400: rgb(117, 120, 125);
+  --hv-grey-500: rgb(105, 105, 110);
+  --hv-grey-600: rgb(87, 91, 98);
+  --hv-grey-700: rgb(77, 81, 87);
+  --hv-grey-800: rgb(57, 62, 79);
+  --hv-grey-900: rgb(51, 51, 51);
+
+  /* --------------------------------------------------------
+     COLOURS — brand accents ("3 colours" gradient)
+     Hypervolt's signature gradient is a punchy magenta → purple → blue,
+     shown glowing on the charger bolt and used in all hero ads.
+     -------------------------------------------------------- */
+  --hv-magenta:        rgb(235, 1, 255);   /* gradient start */
+  --hv-purple:         rgb(150, 45, 255);  /* gradient middle */
+  --hv-blue:           rgb(3, 86, 255);    /* gradient end */
+
+  /* Softer/lighter variants of the same gradient (seen on some ads) */
+  --hv-magenta-soft:   rgb(245, 127, 255);
+  --hv-blue-soft:      rgb(103, 153, 255);
+  --hv-peach:          rgb(255, 197, 104);
+  --hv-pink-soft:      rgb(239, 73, 162);
+
+  /* Signature gradients */
+  --hv-gradient-3c:    linear-gradient(135deg, var(--hv-magenta) 0%, var(--hv-purple) 50%, var(--hv-blue) 100%);
+  --hv-gradient-3c-v:  linear-gradient(180deg, var(--hv-magenta) 0%, var(--hv-purple) 50%, var(--hv-blue) 100%);
+  --hv-gradient-soft:  linear-gradient(135deg, var(--hv-magenta-soft) 0%, var(--hv-purple) 50%, var(--hv-blue-soft) 100%);
+  --hv-gradient-warm:  linear-gradient(135deg, var(--hv-peach) 0%, var(--hv-pink-soft) 50%, var(--hv-blue-soft) 100%);
+
+  /* --------------------------------------------------------
+     COLOURS — trust / status green
+     Trustpilot-adjacent: used on ratings, review count accents.
+     -------------------------------------------------------- */
+  --hv-green:          rgb(66, 184, 130);
+  --hv-green-bright:   rgb(66, 185, 130);
+  --hv-green-400:      rgb(68, 196, 143);
+  --hv-green-300:      rgb(104, 198, 155);
+  --hv-green-200:      rgb(117, 247, 187);   /* "charger active" glow */
+  --hv-green-shadow:   rgb(36, 116, 83);
+
+  /* --------------------------------------------------------
+     SEMANTIC — foreground / background
+     Default context is LIGHT (marketing site); add .on-dark to flip.
+     -------------------------------------------------------- */
+  --fg-1:         var(--hv-black);
+  --fg-2:         var(--hv-grey-700);
+  --fg-3:         var(--hv-grey-400);
+  --fg-muted:     var(--hv-grey-300);
+  --fg-invert:    var(--hv-paper);
+
+  --bg-1:         var(--hv-paper);
+  --bg-2:         var(--hv-mist);
+  --bg-3:         var(--hv-fog);
+
+  --accent:       var(--hv-green);
+  --accent-glow:  var(--hv-green-200);
+  --brand:        var(--hv-ink);          /* the "brand" in most UI is ink-black */
+  --brand-gradient: var(--hv-gradient-3c);
+
+  --border:       rgb(0, 0, 0);           /* outlines are near-black */
+  --border-soft:  rgba(0, 0, 0, 0.1);
+  --border-on-dark: rgba(255, 255, 255, 0.1);
+
+  /* --------------------------------------------------------
+     TYPOGRAPHY — families
+     -------------------------------------------------------- */
+  --font-display:  "Rubik", system-ui, sans-serif;  /* ads, hero callouts */
+  --font-sans:     "Roboto", system-ui, sans-serif; /* UI, body, buttons */
+  --font-mono:     "Monaco", ui-monospace, monospace;
+
+  /* Letter-spacing notes from Figma:
+     - Button labels: 0.040em tracking
+     - Display hero: default (no tracking)
+     - Tagline small caps: 0 */
+  --tracking-button:  0.040em;
+  --tracking-wide:    0.080em;
+
+  /* --------------------------------------------------------
+     SIZE SCALE — derived directly from Figma frame values
+     (Home page desktop hero 56/48/18/16, ads 70/34/22)
+     -------------------------------------------------------- */
+  --fs-hero:     56px;  /* UK's most trusted EV charger */
+  --fs-display:  48px;  /* Section headings on marketing */
+  --fs-ad:       70px;  /* Out-of-home / social ad hero */
+  --fs-h1:       40px;
+  --fs-h2:       32px;
+  --fs-h3:       24px;
+  --fs-h4:       20px;
+  --fs-lead:     18px;  /* marketing body */
+  --fs-body:     16px;  /* default body / buttons */
+  --fs-small:    14px;
+  --fs-xs:       12px;
+  --fs-tagline:  16px;  /* the "Say hello to the" mini-label */
+
+  /* Line heights */
+  --lh-tight:    1.2;
+  --lh-normal:   1.5;
+  --lh-display:  1.1;
+
+  /* --------------------------------------------------------
+     SPACING — modular 4 grid seen in Figma (8/16/24/32/48/64/80/112)
+     -------------------------------------------------------- */
+  --sp-1:   4px;
+  --sp-2:   8px;
+  --sp-3:   12px;
+  --sp-4:   16px;
+  --sp-5:   24px;
+  --sp-6:   32px;
+  --sp-7:   48px;
+  --sp-8:   64px;
+  --sp-9:   80px;
+  --sp-10: 112px;  /* marketing section padding-y */
+
+  /* --------------------------------------------------------
+     RADII / SHADOWS / EFFECTS
+     Buttons are 0 or fully pill (1024). Cards are sharp 0 or 16-32.
+     -------------------------------------------------------- */
+  --radius-none:   0px;
+  --radius-sm:     8px;
+  --radius-md:     16px;
+  --radius-lg:     24px;
+  --radius-xl:     32px;
+  --radius-pill:   1024px;
+
+  --shadow-card:      0 4px 32px 0 rgba(0,0,0,0.10);       /* light-mode cards */
+  --shadow-card-dark: 0 4px 32px 0 rgba(0,0,0,0.40);       /* dark-mode cards */
+  --shadow-elevate:   0 12px 40px 0 rgba(0,0,0,0.18);
+  --shadow-button:    none;                                /* flat buttons */
+
+  /* Signature neon "glow" from the charger bolt */
+  --glow-bolt:        0 0 40px rgba(150,45,255,0.55),
+                      0 0 80px rgba(235,1,255,0.35),
+                      0 0 120px rgba(3,86,255,0.25);
+
+  /* Borders */
+  --border-width:  1px;
+  --border-width-thick: 2px;
+
+  /* Motion — marketing is mostly still; we use these subtly */
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-in:       cubic-bezier(0.4, 0, 1, 1);
+  --ease-out:      cubic-bezier(0, 0, 0.2, 1);
+  --dur-fast:      140ms;
+  --dur-base:      220ms;
+  --dur-slow:      420ms;
+}
+
+/* ============================================================
+   SEMANTIC ELEMENT STYLES
+   Drop-in defaults. Apply the .hv-* classes or reset <body>.
+   ============================================================ */
+
+.hv-body, body.hv {
+  font-family: var(--font-sans);
+  font-size: var(--fs-body);
+  line-height: var(--lh-normal);
+  color: var(--fg-1);
+  background: var(--bg-1);
+  font-weight: 400;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+.hv-on-dark, .on-dark {
+  background: var(--hv-ink);
+  color: var(--fg-invert);
+  --fg-1: var(--hv-paper);
+  --fg-2: rgba(255,255,255,0.75);
+  --fg-3: rgba(255,255,255,0.55);
+  --border: rgba(255,255,255,0.12);
+  --border-soft: rgba(255,255,255,0.06);
+}
+
+/* Display / headings */
+.hv-hero, h1.hv {
+  font-family: var(--font-sans);
+  font-weight: 700;
+  font-size: var(--fs-hero);
+  line-height: var(--lh-tight);
+  letter-spacing: -0.01em;
+  color: var(--fg-1);
+}
+.hv-display, h2.hv {
+  font-family: var(--font-sans);
+  font-weight: 700;
+  font-size: var(--fs-display);
+  line-height: var(--lh-tight);
+  color: var(--fg-1);
+}
+.hv-ad-hero {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: var(--fs-ad);
+  line-height: 1.1;
+  color: var(--hv-paper);
+}
+h3.hv, .hv-h3 { font-family: var(--font-sans); font-weight: 700; font-size: var(--fs-h3); line-height: var(--lh-tight); }
+h4.hv, .hv-h4 { font-family: var(--font-sans); font-weight: 700; font-size: var(--fs-h4); line-height: var(--lh-tight); }
+
+/* Body */
+.hv-lead, p.hv-lead { font-size: var(--fs-lead); line-height: var(--lh-normal); color: var(--fg-1); }
+.hv-body-text, p.hv { font-size: var(--fs-body); line-height: var(--lh-normal); color: var(--fg-2); }
+.hv-small { font-size: var(--fs-small); line-height: 1.45; }
+.hv-xs    { font-size: var(--fs-xs); line-height: 1.4; }
+
+/* Tagline (the "Features" / "Product Reviews" mini-label above big headings) */
+.hv-tagline {
+  font-family: var(--font-sans);
+  font-weight: 700;
+  font-size: var(--fs-tagline);
+  line-height: var(--lh-normal);
+  color: var(--fg-1);
+}
+
+/* Code / mono (used sparingly, install guides etc.) */
+code.hv, .hv-mono {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+}
+
+/* ============================================================
+   UTILITY — gradient text / bolt glow
+   ============================================================ */
+.hv-gradient-text {
+  background: var(--hv-gradient-3c);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.hv-gradient-bg { background: var(--hv-gradient-3c); }
