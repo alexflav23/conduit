@@ -2,7 +2,6 @@ package com.hypervolt.conduit.gl
 
 import cats.effect.Async
 import cats.syntax.all._
-import com.hypervolt.conduit.ledger.LedgerAccountCode
 import doobie._
 import doobie.implicits._
 import doobie.postgres.circe.jsonb.implicits._
@@ -14,7 +13,6 @@ import java.time.LocalDate
 import java.time.LocalTime
 import java.time.ZoneOffset
 import java.util.UUID
-import scala.math.BigDecimal.RoundingMode
 
 // One translated account on a consolidation run — the native-currency balance plus the provenanced rate (hedge or
 // closing/spot) it was translated at, so the presentation figure re-derives exactly.
@@ -103,17 +101,7 @@ object ConsolidationRepo {
 // storage — only here, on demand (a re-projection, like fiscal period assignment).
 final class ConsolidationService[F[_]: Async](xa: Transactor[F]) {
 
-  import LedgerAccountCode._
-
   private def asOfInstant(d: LocalDate) = d.atTime(LocalTime.MAX).toInstant(ZoneOffset.UTC)
-
-  private def rateClass(role: Int): String =
-    if (role == Inv || role == OpeningEquity || role == InvWriteOff) "non_monetary"
-    else if (
-      role == Revenue || role == CosClearing || role == FeeExpense || role == CarriageExpense ||
-      role == CommissionExpense || role == IcMargin
-    ) "pnl"
-    else "monetary"
 
   def run(asOf: LocalDate, presentation: String, runBy: Option[UUID]): F[Json] =
     program(asOf, presentation, runBy).transact(xa)
@@ -128,20 +116,8 @@ final class ConsolidationService[F[_]: Async](xa: Transactor[F]) {
                 .asOfBalances(entity, asOfInstant(asOf))
                 .map(_.map {
                   case (key, role, _, netMinor) =>
-                    val func = (netMinor / 100).setScale(2, RoundingMode.HALF_UP)
-                    ConsLine(
-                      entity,
-                      key,
-                      role,
-                      rateClass(role),
-                      fc,
-                      func,
-                      rate,
-                      src,
-                      exId,
-                      hId,
-                      (func * rate).setScale(2, RoundingMode.HALF_UP)
-                    )
+                    val (func, pres) = GlMath.translate(netMinor, rate)
+                    ConsLine(entity, key, role, GlMath.rateClass(role), fc, func, rate, src, exId, hId, pres)
                 })
           }
       })
@@ -153,21 +129,7 @@ final class ConsolidationService[F[_]: Async](xa: Transactor[F]) {
       runBy: Option[UUID],
       lines: List[ConsLine]
   ): ConnectionIO[Json] = {
-    val assets      = lines.filter(_.balancePresentation > 0).map(_.balancePresentation).sum
-    val liabilities = lines.filter(_.balancePresentation < 0).map(l => -l.balancePresentation).sum
-    val equity      = (assets - liabilities).setScale(2, RoundingMode.HALF_UP)
-    val cta         = (-equity).setScale(2, RoundingMode.HALF_UP)
-    val fxResidual = lines
-      .filter(_.accountKey.startsWith("FX_CLEARING:"))
-      .map(_.balancePresentation)
-      .sum
-      .setScale(2, RoundingMode.HALF_UP)
-    // CTA is sound when every entity's native books balance (Σ functional == 0) — nothing lost in translation.
-    val nativeSound = lines
-      .groupBy(_.entity)
-      .values
-      .forall(_.map(_.balanceFunctional).sum.setScale(2, RoundingMode.HALF_UP).signum == 0)
-    val fxClean = fxResidual.abs < BigDecimal("0.01")
+    val GlMath.ConsSummary(assets, liabilities, equity, cta, fxResidual, nativeSound, fxClean) = GlMath.summarise(lines)
     for {
       runId <- ConsolidationRepo.insertRun(
         asOf,

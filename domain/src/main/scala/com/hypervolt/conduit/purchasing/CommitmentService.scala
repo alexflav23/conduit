@@ -37,8 +37,8 @@ final class CommitmentService[F[_]: Async](xa: Transactor[F]) {
     val tx: ConnectionIO[Option[UUID]] = for {
       demand <- monthlyDemand(asOf, asOf.plusMonths(horizonMonths.toLong))
       last   <- latestLines(supplier)
-      deviation = maxDeviation(demand, last, flexUntil)
-      issue     = force || last.isEmpty || deviation > deviationThresholdPct
+      deviation = CommitmentLadder.maxDeviation(demand, last, flexUntil)
+      issue     = CommitmentLadder.shouldIssue(force, last.isEmpty, deviation, deviationThresholdPct)
       result <-
         if (!issue) Option.empty[UUID].pure[ConnectionIO]
         else
@@ -51,10 +51,7 @@ final class CommitmentService[F[_]: Async](xa: Transactor[F]) {
                         RETURNING id""".query[UUID].unique
             _ <- demand.toList.traverse_ {
               case ((variant, month), qty) =>
-                val zone =
-                  if (month.isBefore(firmUntil)) "firm"
-                  else if (month.isBefore(flexUntil)) "flex"
-                  else "indicative"
+                val zone = CommitmentLadder.zoneFor(month, firmUntil, flexUntil)
                 sql"""INSERT INTO cm_commitment_line (commitment_id, product_variant_id, period_month, qty, zone)
                       VALUES ($id, $variant, $month, $qty, $zone)""".update.run
             }
@@ -107,19 +104,4 @@ final class CommitmentService[F[_]: Async](xa: Transactor[F]) {
       .query[(UUID, LocalDate, BigDecimal)]
       .to[List]
       .map(_.map { case (v, m, q) => (v, m) -> q }.toMap)
-
-  // the signal: the largest relative move on any firm/flex bucket vs what was last communicated
-  private def maxDeviation(
-      now: Map[(UUID, LocalDate), BigDecimal],
-      last: Map[(UUID, LocalDate), BigDecimal],
-      flexUntil: LocalDate
-  ): BigDecimal =
-    last.toList
-      .map {
-        case (key @ (_, month), prev) if month.isBefore(flexUntil) && prev > 0 =>
-          (now.getOrElse(key, BigDecimal(0)) - prev).abs / prev * 100
-        case _ => BigDecimal(0)
-      }
-      .maxOption
-      .getOrElse(BigDecimal(0))
 }

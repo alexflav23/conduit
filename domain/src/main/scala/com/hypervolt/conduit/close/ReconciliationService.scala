@@ -10,7 +10,6 @@ import doobie.implicits._
 import doobie.postgres.implicits._
 import doobie.util.transactor.Transactor
 import java.util.UUID
-import scala.math.BigDecimal.RoundingMode
 
 final case class ReconResult(id: UUID, expected: BigDecimal, actual: BigDecimal, variance: BigDecimal, status: String)
 
@@ -20,7 +19,7 @@ final case class ReconResult(id: UUID, expected: BigDecimal, actual: BigDecimal,
 // blocks the period lock (PeriodCloseService).
 final class ReconciliationService[F[_]: Async](xa: Transactor[F]) {
 
-  private def money(minor: BigDecimal): BigDecimal = (minor / 100).setScale(2, RoundingMode.HALF_UP)
+  private def money(minor: BigDecimal): BigDecimal = ReconMath.money(minor)
 
   // AR ↔ open invoices: the AR posted balance (debits − credits) must equal the sum of open invoices for the entity.
   def arVsInvoices(periodId: UUID, entity: UUID, currency: String): F[ReconResult] =
@@ -96,8 +95,7 @@ final class ReconciliationService[F[_]: Async](xa: Transactor[F]) {
       actual: BigDecimal,
       currency: String
   ): F[ReconResult] = {
-    val variance = (actual - expected).setScale(2, RoundingMode.HALF_UP)
-    val status   = if (variance.signum == 0) "matched" else "exception"
+    val ReconMath.Eval(variance, status) = ReconMath.evaluate(expected, actual)
     sql"""INSERT INTO reconciliation (type, period_id, expected, actual, currency, variance, status)
           VALUES ($reconType, $periodId, $expected, $actual, $currency, $variance, $status) RETURNING id"""
       .query[UUID]

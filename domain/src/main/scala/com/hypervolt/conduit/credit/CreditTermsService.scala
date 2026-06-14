@@ -17,15 +17,16 @@ final class CreditTermsService[F[_]: Async](xa: Transactor[F]) {
 
   def get(party: UUID): F[CreditTerms] =
     sql"""SELECT
-            COALESCE(
-              (SELECT bp.payment_terms_days FROM billing_profile bp WHERE bp.party_id = $party AND bp.status='active' ORDER BY bp.id LIMIT 1),
-              (SELECT cp.terms_days FROM credit_profile cp WHERE cp.party_id = $party ORDER BY cp.id LIMIT 1),
-              30),
+            (SELECT bp.payment_terms_days FROM billing_profile bp WHERE bp.party_id = $party AND bp.status='active' ORDER BY bp.id LIMIT 1),
+            (SELECT cp.terms_days FROM credit_profile cp WHERE cp.party_id = $party ORDER BY cp.id LIMIT 1),
             (SELECT cp.credit_limit FROM credit_profile cp WHERE cp.party_id = $party ORDER BY cp.id LIMIT 1),
             (SELECT cp.currency FROM credit_profile cp WHERE cp.party_id = $party ORDER BY cp.id LIMIT 1)"""
-      .query[CreditTerms]
+      .query[(Option[Int], Option[Int], Option[BigDecimal], Option[String])]
       .unique
       .transact(xa)
+      .map {
+        case (billing, credit, limit, ccy) => CreditTerms(PaymentTerms.resolveTermsDays(billing, credit), limit, ccy)
+      }
 
   // Upsert the contact's terms: billing_profile carries the invoice payment terms; credit_profile carries the
   // limit (+ a mirrored terms_days). Both rows are created on first set so a brand-new contact is admin-able.
@@ -35,11 +36,18 @@ final class CreditTermsService[F[_]: Async](xa: Transactor[F]) {
       creditLimit: Option[BigDecimal],
       currency: Option[String]
   ): F[Either[String, Unit]] =
-    if (paymentTermsDays < 0) "payment_terms_days must be >= 0".asLeft[Unit].pure[F]
-    else
-      (upsertBilling(party, paymentTermsDays, currency) *> upsertCredit(party, paymentTermsDays, creditLimit, currency))
-        .transact(xa)
-        .as(().asRight[String])
+    PaymentTerms.validateTermsDays(paymentTermsDays) match {
+      case Left(msg) => msg.asLeft[Unit].pure[F]
+      case Right(_) =>
+        (upsertBilling(party, paymentTermsDays, currency) *> upsertCredit(
+          party,
+          paymentTermsDays,
+          creditLimit,
+          currency
+        ))
+          .transact(xa)
+          .as(().asRight[String])
+    }
 
   private def upsertBilling(party: UUID, days: Int, currency: Option[String]): ConnectionIO[Int] =
     sql"UPDATE billing_profile SET payment_terms_days = $days WHERE party_id = $party".update.run.flatMap {

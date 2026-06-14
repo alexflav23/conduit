@@ -8,7 +8,6 @@ import io.circe.Json
 import io.circe.syntax._
 import java.time.Instant
 import java.util.UUID
-import scala.math.BigDecimal.RoundingMode
 
 // GL / AR / AP trial balance off the gl_entry MIRROR (doc 07 M13, Option B). gl_entry faithfully mirrors the
 // TigerBeetle immutable ledger (reconciled by CTRL-GL-MIRROR), so the trial balance reads as plain SQL with no TB
@@ -16,7 +15,7 @@ import scala.math.BigDecimal.RoundingMode
 // (period assignment is a re-projection, never baked into rows).
 final class GlProjectionService[F[_]: Async](xa: Transactor[F]) {
 
-  private def money(minor: BigDecimal): BigDecimal = (minor / 100).setScale(2, RoundingMode.HALF_UP)
+  private def money(minor: BigDecimal): BigDecimal = GlMath.money(minor)
 
   def trialBalance(entity: UUID): F[Json] =
     GlEntryRepo.entityBalances(entity).transact(xa).map { rows =>
@@ -36,7 +35,7 @@ final class GlProjectionService[F[_]: Async](xa: Transactor[F]) {
         }.asJson,
         "total_debits"  -> money(totalDr).asJson,
         "total_credits" -> money(totalCr).asJson,
-        "balanced"      -> (totalDr == totalCr).asJson // proof: the ledger projection ties out
+        "balanced"      -> GlMath.balanced(totalDr, totalCr).asJson // proof: the ledger projection ties out
       )
     }
 
