@@ -123,6 +123,13 @@ object Main extends IOApp.Simple {
               shadowGuard
             )
           val notifyLoop: IO[Unit] = (notifyDelivery.deliverPending() *> IO.sleep(5.second)).foreverM
+          // The forecast engine's rolling-origin cycle (doc 26 §5–6) as a background job: calendar-derived
+          // origins fitted → scored → materialized → live-published every 6h, each capturing its censored
+          // depletion snapshot. Activations already feed account_forecast_state via the placement consumer; this
+          // closes the loop so run history + depletion deltas accrue automatically — no external script.
+          val forecastCycle = new com.hypervolt.conduit.forecast.ForecastCycle[IO](xa)
+          val forecastLoop: IO[Unit] =
+            (IO(java.time.LocalDate.now()).flatMap(forecastCycle.runOnce).attempt.void *> IO.sleep(6.hours)).foreverM
           PulsarEventPublisher.create[IO](pulsar).flatMap { publisher =>
             val relay                                           = new OutboxRelay[IO](xa, publisher)
             val relayLoop: IO[Unit]                             = (relay.runOnce() *> IO.sleep(1.second)).foreverM
@@ -142,7 +149,8 @@ object Main extends IOApp.Simple {
                 Supervised("rebate-accrual", rebateAccrualConsumer.runForever),
                 Supervised("placement", placementConsumer.runForever),
                 Supervised("return-effector", returnConsumer.runForever),
-                Supervised("notification-delivery", notifyLoop)
+                Supervised("notification-delivery", notifyLoop),
+                Supervised("forecast-cycle", forecastLoop)
               ).parSequence_
           }
         }

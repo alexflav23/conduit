@@ -71,6 +71,21 @@ champion switches (and how many moved onto a **structural** model — real telem
 statistical shape), and the structural-champion share shift. Structural classification is by token
 (`depletion`/`sell_through`/`order_book`/`mrp_order_book`/`retail_funnel`/`pantry_reversal`), blend-aware.
 
+## 5b. How it runs — automatic, in-process (no scripts)
+Two automated layers, both in the consumer — nothing requires a CLI:
+1. **Live depletion state** — `PlacementConsumer` subscribes the activation Pulsar topic and updates
+   `account_forecast_state` via `RunwayService` on every activation (shelf/velocity/runway live).
+2. **The rolling-origin cycle** — `ForecastCycle` (domain) computes the calendar-derived origins and, every
+   **6h** as a `Supervised("forecast-cycle")` consumer fiber, fits → scores → materialises each origin and
+   publishes the live forecast. `BacktestEngine.runOrigin` and `LiveForecast.publish` each write the
+   `depletion_snapshot` for their origin, so **run history + depletion deltas accrue as a side effect of the
+   engine simply running** — the same place revenue/recognition/relay jobs live. Idempotent, so reboots and
+   re-runs converge.
+
+The scripting mains (`RealBacktest`, `LivePublish`) remain only as manual/local equivalents (e.g. a laptop run
+against a tunnelled DB); the production path is the in-process cycle above. There is no backfill CLI — a past
+origin not yet snapshotted is captured the next time the cycle runs it (idempotent, reproducible from the log).
+
 ## 6. Tests
 - `RunDiffSpec` (Docker-free): classification, stats (total-level error nets offsetting accounts),
   champion-change/added/dropped detection, error-delta sign.
