@@ -1,7 +1,13 @@
 # Creates the conduit-api.push IAM user (scoped to conduit's pkgs/nix S3 prefixes), mints its access key, and
 # writes AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY/AWS_DEFAULT_REGION into hypervolt/conduit's protected CI/CD
-# variables, so the `publish` CI job can push artifacts to the pkgs + nix buckets. Mirrors
-# athena/terraform/gitlab-global. Apply MANUALLY from a dev laptop (GITLAB_TOKEN + AWS creds), never from CI.
+# variables (via the gitlab provider), so the `publish` CI job can push artifacts to the pkgs + nix buckets.
+# Mirrors athena/terraform/gitlab-global. Apply MANUALLY from a dev laptop:
+#
+#   export GITLAB_TOKEN=<PAT with api scope on hypervolt/conduit>
+#   aws-vault exec default -- terraform init
+#   aws-vault exec default -- terraform apply
+#
+# Never run from CI.
 module "gitlab-push-user" {
   source = "git::ssh://git@gitlab.com/hypervolt/terraform.git//modules/iam-gitlab-roles"
 

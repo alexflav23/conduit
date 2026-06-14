@@ -42,5 +42,6 @@ provider "aws" {
 }
 
 provider "gitlab" {
-  # Set GITLAB_TOKEN in the environment to authenticate (a token with api scope on hypervolt/conduit).
+  # Authenticates via the GITLAB_TOKEN environment variable (a PAT with api scope on hypervolt/conduit).
+  # Export it in your shell before `terraform apply`; never commit it to a file.
 }
