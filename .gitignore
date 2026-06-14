@@ -29,6 +29,6 @@ local/.venv/
 local/*.env
 
 # direnv: the .envrc is committed; its SSM-derived cache + personal overrides are not
-.envrc_cached
+.envrc_cached*
 .envrc.private
 .direnv/
