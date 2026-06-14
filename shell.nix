@@ -1,5 +1,6 @@
 # Reproducible dev shell, mirroring the house pattern (Athena). nixpkgs pinned via npins.
-# Local dev without Nix is supported too (homebrew sbt + JDK 19); this is what CI uses.
+# Local dev without Nix is supported too (homebrew sbt + JDK 21); this is what CI uses.
+# JDK 21 (current LTS): Temurin 19 was non-LTS and is removed from nixpkgs at EOL.
 {
   nixpkgs ? (import ./npins).nixpkgs,
 }:
@@ -9,7 +10,7 @@ in
 pkgs.mkShell {
   nativeBuildInputs = [
     pkgs.sbt
-    pkgs.temurin-bin-19
+    pkgs.temurin-bin-21
     pkgs.awscli2
     pkgs.git
     pkgs.docker-compose

@@ -419,7 +419,7 @@ Projections (read models / materialised views: H6Q coverage, account history, st
 **Release process (GitLab CI, CLAUDE.md §6):**
 - **lint** — `scalafmtCheck` + **`schemaCheck`** (Avro BACKWARD gate) + **no-float** money lint + **`secretScan`** (§B.1).
 - **compile/test** — unit (weaver) + integration (`api-it`, testcontainers: pg/pulsar/consul) + the **ScalaCheck financial property suite** (doc 14 §5.4).
-- **package** — `Universal/packageXzTarball`; multi-stage Docker (`19-jdk`→`19-jre`).
+- **package** — `Universal/packageXzTarball`; Docker on `eclipse-temurin:21-jre` (21 LTS — 19 was EOL).
 - **publish/deploy** — S3 + deploy-versions on **protected branches** only; deploy via Terraform/house deploy path; Flyway runs migrations on startup (CLAUDE.md §2).
 - Deploys are **branch-first / no direct prod**; promotion dev→staging→prod is gated on green pipelines + (for prod) sign-off.
 

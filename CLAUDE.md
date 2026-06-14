@@ -30,7 +30,8 @@ There is **no internal artifact registry** for Scala — copy patterns, don't im
 
 ## 2. Backend stack & exact versions (pinned to Athena)
 
-Scala **2.13.16**, sbt **1.12.9**, JDK **19** (temurin; `eclipse-temurin:19-jdk` build / `19-jre` runtime).
+Scala **2.13.16**, sbt **1.12.9**, JDK **21** LTS (temurin; `eclipse-temurin:21-jre` runtime). JDK 19 was
+non-LTS and is removed from nixpkgs at EOL — the dev shell + CI build on `temurin-bin-21`.
 
 ```
 http4s 0.23.26 (ember)      tapir 1.10.4 (+ json-circe, http4s-server, swagger-ui-bundle,
@@ -168,7 +169,7 @@ Stack = **hyperstore**, replicated exactly:
   topic creation at deploy (improvement; record if we add it to TF).
 - **Consul**: service registers (`services.consul.services.conduit`, health check → :9990 `/health`); discovers
   deps via `*.service.consul` (`pulsar.service.consul:6650`, etc.). Config via env/HOCON + Secrets Manager (KV used minimally).
-- **Docker**: multi-stage `eclipse-temurin:19-jdk` → `19-jre`, `sbt api/stage`, expose 8080/9990/9464.
+- **Docker**: `eclipse-temurin:21-jre` runtime, `sbt api/stage` builds the launcher first, expose 8080/9990/9464.
 - **Local dev compose** (new `docker-compose.yml` in this repo, modeled on `docker-compose.checkout.yml`):
   postgres:16, apachepulsar/pulsar:4.0.1 standalone, hashicorp/consul, **ghcr.io/tigerbeetle/tigerbeetle:0.16.46**
   (reuse Athena's tigerbeetle entrypoint), keycloak (for auth dev). Use non-colliding host ports (Athena occupies the defaults).

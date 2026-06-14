@@ -34,7 +34,8 @@ terraform-fmt:
   tags:
     - x86_64-nix-24.11
   script:
-    - nix-shell -p terraform --run "terraform fmt -check -recursive terraform/"
+    # terraform is unfree in nixpkgs (BSL) — NIXPKGS_ALLOW_UNFREE + --impure to permit it.
+    - NIXPKGS_ALLOW_UNFREE=1 nix-shell --impure -p terraform --run "terraform fmt -check -recursive terraform/"
 
 # Enforcing on every pipeline: backend-less init (fetches the private module sources over the estate runner's
 # GitLab SSH key — no AWS needed) + validate catches malformed HCL and broken module wiring before the deploy
@@ -47,7 +48,7 @@ terraform-validate:
     # TF_WORKSPACE=staging so workspace-keyed locals (per_env, deploy_versions, indexed by terraform.workspace)
     # resolve during validate — validate otherwise runs in `default`, which those maps don't key. roles-global is
     # applied in the `default` workspace, so it validates there. -backend=false keeps it AWS-free (no plan/state).
-    - nix-shell -p terraform --run '
+    - NIXPKGS_ALLOW_UNFREE=1 nix-shell --impure -p terraform --run '
         for m in roles-global rds conduit-records conduit-tigerbeetle conduit-api conduit-consumer; do
           echo "== validate $m ==";
           ws=staging; [ "$m" = "roles-global" ] && ws=default;
@@ -64,7 +65,7 @@ terraform-plan:
   rules:
     - if: '$CI_COMMIT_REF_PROTECTED == "true"'
   script:
-    - nix-shell -p terraform awscli2 --run '
+    - NIXPKGS_ALLOW_UNFREE=1 nix-shell --impure -p terraform awscli2 --run '
         for m in roles-global rds conduit-records conduit-tigerbeetle conduit-api conduit-consumer; do
           (cd terraform/$m && terraform init -input=false && terraform validate && terraform plan -input=false -lock=false);
         done'
