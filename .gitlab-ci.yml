@@ -48,7 +48,8 @@ terraform-validate:
     # TF_WORKSPACE=staging so workspace-keyed locals (per_env, deploy_versions, indexed by terraform.workspace)
     # resolve during validate — validate otherwise runs in `default`, which those maps don't key. roles-global is
     # applied in the `default` workspace, so it validates there. -backend=false keeps it AWS-free (no plan/state).
-    - NIXPKGS_ALLOW_UNFREE=1 nix-shell --impure -p terraform --run '
+    # cacert: the nix-built terraform has no CA bundle, so the GitLab module-registry fetch fails TLS verify.
+    - NIXPKGS_ALLOW_UNFREE=1 nix-shell --impure -p terraform cacert --run '
         for m in roles-global rds conduit-records conduit-tigerbeetle conduit-api conduit-consumer; do
           echo "== validate $m ==";
           ws=staging; [ "$m" = "roles-global" ] && ws=default;
@@ -65,7 +66,7 @@ terraform-plan:
   rules:
     - if: '$CI_COMMIT_REF_PROTECTED == "true"'
   script:
-    - NIXPKGS_ALLOW_UNFREE=1 nix-shell --impure -p terraform awscli2 --run '
+    - NIXPKGS_ALLOW_UNFREE=1 nix-shell --impure -p terraform awscli2 cacert --run '
         for m in roles-global rds conduit-records conduit-tigerbeetle conduit-api conduit-consumer; do
           (cd terraform/$m && terraform init -input=false && terraform validate && terraform plan -input=false -lock=false);
         done'
