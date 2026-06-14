@@ -1,37 +1,21 @@
 import React, { useState } from 'react';
-import * as stylex from '@stylexjs/stylex';
-import { colors } from './styles/tokens.stylex';
 import { listExceptions, getException, submitNarrative, decide } from './api';
+import { PageHead, Card, Chip } from './kit/kit';
+import { I } from './kit/icons';
 
-const styles = stylex.create({
-  card: { backgroundColor: colors.surface, border: `1px solid ${colors.border}`, borderRadius: '14px', padding: '1.25rem', marginBottom: '1.25rem', maxWidth: '620px' },
-  section: { fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.06em', color: colors.muted, marginBottom: '0.6rem' },
-  row: { display: 'flex', gap: '0.75rem', alignItems: 'center', marginBottom: '0.6rem', flexWrap: 'wrap' },
-  label: { color: colors.muted, fontSize: '0.8rem', width: '150px' },
-  input: { backgroundColor: colors.bg, color: colors.text, border: `1px solid ${colors.border}`, borderRadius: '8px', padding: '0.5rem 0.7rem', fontSize: '0.95rem', flexGrow: 1 },
-  textarea: { backgroundColor: colors.bg, color: colors.text, border: `1px solid ${colors.border}`, borderRadius: '8px', padding: '0.5rem 0.7rem', fontSize: '0.95rem', width: '100%', minHeight: '64px' },
-  button: { backgroundColor: colors.accent, color: '#fff', border: 'none', borderRadius: '10px', padding: '0.6rem 1.1rem', fontSize: '0.95rem', fontWeight: 600, cursor: 'pointer', marginRight: '0.75rem' },
-  ghost: { backgroundColor: 'transparent', color: colors.text, border: `1px solid ${colors.border}`, borderRadius: '10px', padding: '0.6rem 1.1rem', fontWeight: 600, cursor: 'pointer', marginRight: '0.75rem' },
-  // Price banding — the visual heart of the desk
-  band: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.5rem', marginBottom: '0.75rem' },
-  bandCell: { backgroundColor: colors.bg, border: `1px solid ${colors.border}`, borderRadius: '10px', padding: '0.6rem' },
-  bandLabel: { color: colors.muted, fontSize: '0.7rem' },
-  bandValue: { fontSize: '1.15rem', fontWeight: 700 },
-  exceptionChip: { backgroundColor: colors.warn, color: '#3a2400', padding: '0.25rem 0.7rem', borderRadius: '999px', fontWeight: 700, fontSize: '0.85rem' },
-  approvedChip: { backgroundColor: colors.ok, color: '#06210f', padding: '0.25rem 0.7rem', borderRadius: '999px', fontWeight: 700, fontSize: '0.85rem' },
-  pendingChip: { backgroundColor: colors.border, color: colors.text, padding: '0.25rem 0.7rem', borderRadius: '999px', fontWeight: 700, fontSize: '0.85rem' },
-});
+// Deal Desk (M4/M-Pricing / spec/ui/03-dealdesk.md): the maker-checker for governed price-tier requests.
+// An out-of-band line lands here as pending_ceo; the agent writes the proposal narrative, the CEO (single
+// approver) decides — approval mints the tier and releases the held order. Ported to the desk kit; the
+// price-band strip becomes four metric cells. testids preserved.
 
 export function DealDesk({ token }: { token: string }) {
   const [exc, setExc] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
-  // agent narrative
   const [justification, setJustification] = useState('');
   const [volume, setVolume] = useState('500');
   const [denomination, setDenomination] = useState('P50');
   const [strategic, setStrategic] = useState('');
   const [notes, setNotes] = useState('');
-  // ceo decision
   const [memo, setMemo] = useState('');
   const [validTo, setValidTo] = useState('2026-09-01T00:00:00Z');
   const [volumeMin, setVolumeMin] = useState('400');
@@ -60,47 +44,67 @@ export function DealDesk({ token }: { token: string }) {
     ? (((parseFloat(exc.list_price) - parseFloat(exc.requested_price)) / parseFloat(exc.list_price)) * 100).toFixed(2)
     : '—';
 
+  const cell = (label: string, value: React.ReactNode, testid: string) => (
+    <div className="metric" style={{ background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 10, padding: '10px 12px' }}>
+      <div className="ml">{label}</div>
+      <div className="mv" style={{ fontSize: 20, marginTop: 4 }} data-testid={testid}>{value}</div>
+    </div>
+  );
+
   return (
-    <div>
-      <div {...stylex.props(styles.card)}>
-        <button {...stylex.props(styles.button)} data-testid="load-pending" onClick={loadPending}>Load deal-desk queue</button>
-        {error && <span data-testid="dd-error" style={{ color: colors.warn }}>{error}</span>}
-      </div>
+    <>
+      <PageHead title="Deal Desk" sub="Governed price-tier requests — maker-checker; CEO is the single approver" />
+      <Card style={{ maxWidth: 640 }}>
+        <div className="row g8">
+          <button className="btn primary" data-testid="load-pending" onClick={loadPending}>{I.flag({ size: 14 })} Load deal-desk queue</button>
+          {error && <span className="dim" data-testid="dd-error" style={{ color: 'var(--danger)' }}>{error}</span>}
+        </div>
+      </Card>
 
       {exc && (
-        <div {...stylex.props(styles.card)} data-testid="exception">
-          <div {...stylex.props(styles.row)}>
-            <span {...stylex.props(styles.section)}>Price deviation</span>
-            <span {...stylex.props(exc.status === 'approved' ? styles.approvedChip : exc.status === 'rejected' ? styles.exceptionChip : styles.pendingChip)} data-testid="exc-status">{exc.status}</span>
-          </div>
-          <div {...stylex.props(styles.band)}>
-            <div {...stylex.props(styles.bandCell)}><div {...stylex.props(styles.bandLabel)}>List (ex-VAT)</div><div {...stylex.props(styles.bandValue)} data-testid="exc-list-price">{exc.list_price ?? '—'}</div></div>
-            <div {...stylex.props(styles.bandCell)}><div {...stylex.props(styles.bandLabel)}>ADLP band</div><div {...stylex.props(styles.bandValue)} data-testid="exc-band">{exc.max_discount_pct ?? '—'}%</div></div>
-            <div {...stylex.props(styles.bandCell)}><div {...stylex.props(styles.bandLabel)}>Requested</div><div {...stylex.props(styles.bandValue)} data-testid="exc-requested">{exc.requested_price ?? '—'}</div></div>
-            <div {...stylex.props(styles.bandCell)}><div {...stylex.props(styles.bandLabel)}>Deviation</div><div {...stylex.props(styles.bandValue)} data-testid="exc-deviation">{deviation}%</div></div>
-          </div>
-          <div {...stylex.props(styles.row)}><span {...stylex.props(styles.exceptionChip)} data-testid="exc-chip">Out of band — CEO approval required</span></div>
+        <Card title="Price deviation" icon={I.flag} style={{ maxWidth: 640 }}
+          aux={<Chip s={exc.status === 'approved' ? 'approved' : exc.status === 'rejected' ? 'rejected' : 'pending_ceo'}><span data-testid="exc-status">{exc.status}</span></Chip>}>
+          <div data-testid="exception">
+            <div className="grid" style={{ gridTemplateColumns: 'repeat(4, 1fr)', marginBottom: 14 }}>
+              {cell('List (ex-VAT)', exc.list_price ?? '—', 'exc-list-price')}
+              {cell('ADLP band', (exc.max_discount_pct ?? '—') + '%', 'exc-band')}
+              {cell('Requested', exc.requested_price ?? '—', 'exc-requested')}
+              {cell('Deviation', deviation + '%', 'exc-deviation')}
+            </div>
+            <div style={{ marginBottom: 16 }}><Chip s="exception"><span data-testid="exc-chip">Out of band — CEO approval required</span></Chip></div>
 
-          <div {...stylex.props(styles.section)} style={{ marginTop: '1rem' }}>Agent proposal</div>
-          <div {...stylex.props(styles.row)}><span {...stylex.props(styles.label)}>Volume expectation</span>
-            <input {...stylex.props(styles.input)} data-testid="narr-volume" value={volume} onChange={(e) => setVolume(e.target.value)} />
-            <select {...stylex.props(styles.input)} data-testid="narr-denomination" value={denomination} onChange={(e) => setDenomination(e.target.value)}>
-              <option>P20</option><option>P50</option><option>P80</option>
-            </select>
-          </div>
-          <div {...stylex.props(styles.row)}><span {...stylex.props(styles.label)}>Strategic importance</span><input {...stylex.props(styles.input)} data-testid="narr-strategic" value={strategic} onChange={(e) => setStrategic(e.target.value)} /></div>
-          <textarea {...stylex.props(styles.textarea)} data-testid="narr-justification" placeholder="Narrative — the value you see in this deal" value={justification} onChange={(e) => setJustification(e.target.value)} />
-          <textarea {...stylex.props(styles.textarea)} data-testid="narr-notes" placeholder="Notes" value={notes} onChange={(e) => setNotes(e.target.value)} />
-          <button {...stylex.props(styles.button)} data-testid="submit-narrative" onClick={onSubmit}>Submit proposal</button>
+            <div className="dim" style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 10 }}>Agent proposal</div>
+            <div className="kv" style={{ gridTemplateColumns: '150px 1fr', rowGap: 10, marginBottom: 10 }}>
+              <span className="k">Volume expectation</span>
+              <div className="row g8">
+                <input className="fld" style={{ flexGrow: 1 }} data-testid="narr-volume" value={volume} onChange={(e) => setVolume(e.target.value)} />
+                <select className="fld sel" data-testid="narr-denomination" value={denomination} onChange={(e) => setDenomination(e.target.value)}>
+                  <option>P20</option><option>P50</option><option>P80</option>
+                </select>
+              </div>
+              <span className="k">Strategic importance</span>
+              <input className="fld" data-testid="narr-strategic" value={strategic} onChange={(e) => setStrategic(e.target.value)} />
+            </div>
+            <textarea className="fld" style={{ width: '100%', minHeight: 64, marginBottom: 8 }} data-testid="narr-justification" placeholder="Narrative — the value you see in this deal" value={justification} onChange={(e) => setJustification(e.target.value)} />
+            <textarea className="fld" style={{ width: '100%', minHeight: 64, marginBottom: 12 }} data-testid="narr-notes" placeholder="Notes" value={notes} onChange={(e) => setNotes(e.target.value)} />
+            <button className="btn primary" data-testid="submit-narrative" onClick={onSubmit}>Submit proposal</button>
 
-          <div {...stylex.props(styles.section)} style={{ marginTop: '1.25rem' }}>CEO decision (single approver)</div>
-          <div {...stylex.props(styles.row)}><span {...stylex.props(styles.label)}>Approval memo</span><input {...stylex.props(styles.input)} data-testid="dec-memo" value={memo} onChange={(e) => setMemo(e.target.value)} /></div>
-          <div {...stylex.props(styles.row)}><span {...stylex.props(styles.label)}>Valid until</span><input {...stylex.props(styles.input)} data-testid="dec-valid-to" value={validTo} onChange={(e) => setValidTo(e.target.value)} /></div>
-          <div {...stylex.props(styles.row)}><span {...stylex.props(styles.label)}>Min volume</span><input {...stylex.props(styles.input)} data-testid="dec-volume-min" value={volumeMin} onChange={(e) => setVolumeMin(e.target.value)} /></div>
-          <button {...stylex.props(styles.button)} data-testid="approve-btn" onClick={() => onDecision('approve')}>Approve</button>
-          <button {...stylex.props(styles.ghost)} data-testid="reject-btn" onClick={() => onDecision('reject')}>Reject</button>
-        </div>
+            <div className="dim" style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.06em', margin: '20px 0 10px' }}>CEO decision (single approver)</div>
+            <div className="kv" style={{ gridTemplateColumns: '150px 1fr', rowGap: 10, marginBottom: 12 }}>
+              <span className="k">Approval memo</span>
+              <input className="fld" data-testid="dec-memo" value={memo} onChange={(e) => setMemo(e.target.value)} />
+              <span className="k">Valid until</span>
+              <input className="fld" data-testid="dec-valid-to" value={validTo} onChange={(e) => setValidTo(e.target.value)} />
+              <span className="k">Min volume</span>
+              <input className="fld" data-testid="dec-volume-min" value={volumeMin} onChange={(e) => setVolumeMin(e.target.value)} />
+            </div>
+            <div className="row g8">
+              <button className="btn primary" data-testid="approve-btn" onClick={() => onDecision('approve')}>Approve</button>
+              <button className="btn danger" data-testid="reject-btn" onClick={() => onDecision('reject')}>Reject</button>
+            </div>
+          </div>
+        </Card>
       )}
-    </div>
+    </>
   );
 }

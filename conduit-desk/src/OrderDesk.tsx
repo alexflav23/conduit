@@ -1,19 +1,11 @@
 import React, { useState } from 'react';
-import * as stylex from '@stylexjs/stylex';
-import { colors } from './styles/tokens.stylex';
 import { quote, placeOrder, QuoteLine } from './api';
+import { PageHead, Card, Chip, Money } from './kit/kit';
+import { I } from './kit/icons';
 
-const styles = stylex.create({
-  card: { backgroundColor: colors.surface, border: `1px solid ${colors.border}`, borderRadius: '14px', padding: '1.25rem', marginBottom: '1.25rem', maxWidth: '560px' },
-  row: { display: 'flex', gap: '0.75rem', alignItems: 'center', marginBottom: '0.75rem', flexWrap: 'wrap' },
-  label: { color: colors.muted, fontSize: '0.8rem', width: '130px' },
-  input: { backgroundColor: colors.bg, color: colors.text, border: `1px solid ${colors.border}`, borderRadius: '8px', padding: '0.5rem 0.7rem', fontSize: '0.95rem', flexGrow: 1 },
-  button: { backgroundColor: colors.accent, color: '#fff', border: 'none', borderRadius: '10px', padding: '0.6rem 1.1rem', fontSize: '0.95rem', fontWeight: 600, cursor: 'pointer', marginRight: '0.75rem' },
-  big: { fontSize: '1.6rem', fontWeight: 700 },
-  kv: { display: 'flex', justifyContent: 'space-between', padding: '0.3rem 0', borderBottom: `1px solid ${colors.border}` },
-  chipStandard: { backgroundColor: colors.ok, color: '#06210f', padding: '0.2rem 0.6rem', borderRadius: '999px', fontWeight: 700, fontSize: '0.8rem' },
-  chipException: { backgroundColor: colors.warn, color: '#3a2400', padding: '0.2rem 0.6rem', borderRadius: '999px', fontWeight: 700, fontSize: '0.8rem' },
-});
+// Order capture (M4 / spec/ui/02-order.md): SKU + qty + optional list price → governed quote (the server
+// rejects any non-tier price) → place. Standard vs exception ADLP is the server's call; an exception line
+// holds pending_ceo. Ported to the desk kit, testids preserved.
 
 export function OrderDesk({ token }: { token: string }) {
   const [sku, setSku] = useState('HV-310');
@@ -38,29 +30,41 @@ export function OrderDesk({ token }: { token: string }) {
 
   const line = quoteResult?.lines?.[0];
   return (
-    <div>
-      <div {...stylex.props(styles.card)}>
-        <div {...stylex.props(styles.row)}><span {...stylex.props(styles.label)}>SKU</span><input {...stylex.props(styles.input)} data-testid="sku" value={sku} onChange={(e) => setSku(e.target.value)} /></div>
-        <div {...stylex.props(styles.row)}><span {...stylex.props(styles.label)}>Qty</span><input {...stylex.props(styles.input)} data-testid="qty" value={qty} onChange={(e) => setQty(e.target.value)} /></div>
-        <div {...stylex.props(styles.row)}><span {...stylex.props(styles.label)}>Unit price (opt)</span><input {...stylex.props(styles.input)} data-testid="unit-price" value={unitPrice} onChange={(e) => setUnitPrice(e.target.value)} placeholder="list price" /></div>
-        <button {...stylex.props(styles.button)} data-testid="quote-btn" onClick={onQuote}>Get quote</button>
-        <button {...stylex.props(styles.button)} data-testid="place-btn" onClick={onPlace}>Place order</button>
-      </div>
-      {error && <div {...stylex.props(styles.card)} data-testid="error">{error}</div>}
-      {quoteResult && (
-        <div {...stylex.props(styles.card)} data-testid="quote">
-          <div {...stylex.props(styles.kv)}><span>Resolved ex-VAT</span><span data-testid="resolved-ex-vat">{line?.resolvedExVat}</span></div>
-          <div {...stylex.props(styles.kv)}><span>VAT total</span><span data-testid="vat-total">{quoteResult.vatTotal}</span></div>
-          <div {...stylex.props(styles.kv)}><span>Total inc VAT</span><span {...stylex.props(styles.big)} data-testid="total-inc-vat">{quoteResult.totalIncVat}</span></div>
-          <div {...stylex.props(styles.kv)}><span>ADLP</span><span {...stylex.props(line?.adlpCategory === 'exception' ? styles.chipException : styles.chipStandard)} data-testid="adlp">{line?.adlpCategory === 'exception' ? 'Exception' : 'Standard'}</span></div>
+    <>
+      <PageHead title="Order desk" sub="Capture a governed order — every price is a contract tier; the server rejects ad-hoc numbers" />
+      <Card title="New order" icon={I.charger} style={{ maxWidth: 560 }}>
+        <div className="kv" style={{ gridTemplateColumns: '130px 1fr', rowGap: 12 }}>
+          <span className="k">SKU</span>
+          <input className="fld" data-testid="sku" value={sku} onChange={(e) => setSku(e.target.value)} />
+          <span className="k">Qty</span>
+          <input className="fld" data-testid="qty" value={qty} onChange={(e) => setQty(e.target.value)} />
+          <span className="k">Unit price (opt)</span>
+          <input className="fld" data-testid="unit-price" value={unitPrice} onChange={(e) => setUnitPrice(e.target.value)} placeholder="list price" />
         </div>
+        <div className="row g8" style={{ marginTop: 16 }}>
+          <button className="btn primary" data-testid="quote-btn" onClick={onQuote}>{I.scale({ size: 14 })} Get quote</button>
+          <button className="btn" data-testid="place-btn" onClick={onPlace}>{I.check({ size: 14 })} Place order</button>
+        </div>
+      </Card>
+      {error && <Card style={{ maxWidth: 560 }}><span className="dim" data-testid="error">{error}</span></Card>}
+      {quoteResult && (
+        <Card title="Quote" icon={I.scale} style={{ maxWidth: 560 }}>
+          <div data-testid="quote">
+            <div className="kvrow"><span className="dim">Resolved ex-VAT</span><span className="num" data-testid="resolved-ex-vat">{line?.resolvedExVat}</span></div>
+            <div className="kvrow"><span className="dim">VAT total</span><span className="num" data-testid="vat-total">{quoteResult.vatTotal}</span></div>
+            <div className="kvrow"><span className="dim">Total inc VAT</span><span className="num" style={{ fontFamily: 'var(--font-disp)', fontSize: 24, fontWeight: 700 }} data-testid="total-inc-vat">{quoteResult.totalIncVat}</span></div>
+            <div className="kvrow" style={{ borderBottom: 'none' }}><span className="dim">ADLP</span><Chip s={line?.adlpCategory === 'exception' ? 'exception' : 'ok'}><span data-testid="adlp">{line?.adlpCategory === 'exception' ? 'Exception' : 'Standard'}</span></Chip></div>
+          </div>
+        </Card>
       )}
       {order && (
-        <div {...stylex.props(styles.card)} data-testid="order">
-          <div {...stylex.props(styles.kv)}><span>Order</span><span data-testid="order-no">{order.orderNo}</span></div>
-          <div {...stylex.props(styles.kv)}><span>Status</span><span data-testid="order-status">{order.status}</span></div>
-        </div>
+        <Card title="Order placed" icon={I.check} style={{ maxWidth: 560 }}>
+          <div data-testid="order">
+            <div className="kvrow"><span className="dim">Order</span><span className="mono" data-testid="order-no">{order.orderNo}</span></div>
+            <div className="kvrow" style={{ borderBottom: 'none' }}><span className="dim">Status</span><Chip s={order.status}><span data-testid="order-status">{order.status}</span></Chip></div>
+          </div>
+        </Card>
       )}
-    </div>
+    </>
   );
 }
