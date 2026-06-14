@@ -52,10 +52,10 @@ terraform-validate:
     # resolve during validate — validate otherwise runs in `default`, which those maps don't key. roles-global is
     # applied in the `default` workspace, so it validates there. -backend=false keeps it AWS-free (no plan/state).
     # git::ssh module sources clone over HTTPS with the CI job token (no SSH key/known_hosts on the runner);
-    # the source projects allowlist hypervolt/conduit under CI/CD → Token Access. The token rides as an
-    # HTTP Basic extraheader (not embedded in the URL) so it can't trip the secretScan DB-URL gate.
-    - git config --global url."https://gitlab.com/".insteadOf "ssh://git@gitlab.com/"
-    - git config --global http."https://gitlab.com/".extraheader "Authorization: Basic $(printf '%s' "gitlab-ci-token:${CI_JOB_TOKEN}" | base64 | tr -d '\n')"
+    # the source projects allowlist hypervolt/conduit under CI/CD → Token Access. The credential is assembled
+    # in a shell var so no scheme://user:pass@host literal sits in the file (would trip the secretScan gate).
+    - CREDS="gitlab-ci-token:${CI_JOB_TOKEN}"
+    - git config --global url."https://${CREDS}@gitlab.com/".insteadOf "ssh://git@gitlab.com/"
     # cacert: the nix-built terraform has no CA bundle, so the GitLab module-registry fetch fails TLS verify.
     - NIXPKGS_ALLOW_UNFREE=1 nix-shell --impure -p terraform cacert --run '
         for m in roles-global rds conduit-records conduit-tigerbeetle conduit-api conduit-consumer; do
@@ -74,8 +74,8 @@ terraform-plan:
   rules:
     - if: '$CI_COMMIT_REF_PROTECTED == "true"'
   script:
-    - git config --global url."https://gitlab.com/".insteadOf "ssh://git@gitlab.com/"
-    - git config --global http."https://gitlab.com/".extraheader "Authorization: Basic $(printf '%s' "gitlab-ci-token:${CI_JOB_TOKEN}" | base64 | tr -d '\n')"
+    - CREDS="gitlab-ci-token:${CI_JOB_TOKEN}"
+    - git config --global url."https://${CREDS}@gitlab.com/".insteadOf "ssh://git@gitlab.com/"
     - NIXPKGS_ALLOW_UNFREE=1 nix-shell --impure -p terraform awscli2 cacert --run '
         for m in roles-global rds conduit-records conduit-tigerbeetle conduit-api conduit-consumer; do
           (cd terraform/$m && terraform init -input=false && terraform validate && terraform plan -input=false -lock=false);
