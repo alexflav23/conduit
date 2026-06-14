@@ -73,7 +73,7 @@ issuer = Google, `hd = hypervolt.co.uk`, verified e-mail, expiry. One-time Googl
 1. **APIs & Services → OAuth consent screen** → User type **Internal** (restricts to the Workspace).
 2. **Credentials → Create credentials → OAuth client ID → Web application**:
    - Authorized JavaScript origins: `https://conduit.hypervolt.com`, `https://staging-conduit.hypervolt.com`,
-     `http://localhost:3002` (dev). No redirect URI (Google Identity Services button flow).
+     `http://localhost:3060` (dev). No redirect URI (Google Identity Services button flow).
 3. The client id (`…apps.googleusercontent.com`) is public, not a secret:
    - SSM `/<env>/conduit/GOOGLE_OAUTH_CLIENT_ID` (flat name = env var, per the mk-env convention) → the API
    - `VITE_GOOGLE_CLIENT_ID` at desk build time → the sign-in button

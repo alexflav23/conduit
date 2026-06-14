@@ -45,7 +45,7 @@ export default defineConfig(({ command }) => ({
       ? [stylexDevPlugin(), react()]
       : [react(), stylexRollup({ fileName: 'stylex.css', dev: false, unstable_moduleResolution: { type: 'commonJS', rootDir: path.resolve(__dirname) } })],
   server: {
-    port: 3002,
+    port: 3060,
     proxy: {
       '/api': { target: 'http://localhost:8080', changeOrigin: true },
     },

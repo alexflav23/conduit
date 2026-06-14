@@ -8,7 +8,7 @@ PGBIN=/opt/homebrew/opt/postgresql@15/bin
 kill_port() { for pid in $(lsof -ti tcp:"$1" 2>/dev/null); do kill "$pid" 2>/dev/null || true; done; }
 
 echo "== freeing ports =="
-kill_port 8080; kill_port 9990; kill_port 3002
+kill_port 8080; kill_port 9990; kill_port 3060
 pkill -f "conduit-api" 2>/dev/null || true
 sleep 1
 
@@ -29,6 +29,6 @@ npx playwright test
 RESULT=$?
 
 echo "== teardown =="
-kill_port 8080; kill_port 9990; kill_port 3002
+kill_port 8080; kill_port 9990; kill_port 3060
 pkill -f "conduit-api" 2>/dev/null || true
 exit $RESULT

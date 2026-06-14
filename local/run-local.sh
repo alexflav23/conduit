@@ -10,11 +10,12 @@
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DESK="$ROOT/conduit-desk"
-# Pick the first free desk port (3002 is often taken by hyperstore; don't silently collide).
-DESK_PORT=3002
-for p in 3002 4321 4322 5180 3009 3019; do
-  if ! lsof -iTCP:$p -sTCP:LISTEN >/dev/null 2>&1; then DESK_PORT=$p; break; fi
-done
+# The desk MUST run on 3060 — that is the JavaScript origin registered on the Google OAuth client, and Google
+# rejects any other origin (Error 400: origin_mismatch). So fix the port; don't fall back to a random one.
+DESK_PORT=3060
+if lsof -iTCP:$DESK_PORT -sTCP:LISTEN >/dev/null 2>&1; then
+  echo "WARNING: port $DESK_PORT is already in use — free it, or Google sign-in will fail (origin_mismatch)." >&2
+fi
 IMPORT=false; NODESK=false
 for a in "$@"; do case "$a" in --import) IMPORT=true;; --no-desk) NODESK=true;; esac; done
 

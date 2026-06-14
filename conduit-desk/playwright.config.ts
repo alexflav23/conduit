@@ -7,14 +7,14 @@ export default defineConfig({
   expect: { timeout: 10_000 },
   reporter: 'list',
   use: {
-    baseURL: 'http://localhost:3002',
+    baseURL: 'http://localhost:3060',
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
   },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
   webServer: {
-    command: 'npm run start -- --port 3002',
-    url: 'http://localhost:3002',
+    command: 'npm run start -- --port 3060',
+    url: 'http://localhost:3060',
     reuseExistingServer: true,
     timeout: 120_000,
   },

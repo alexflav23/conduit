@@ -34,7 +34,7 @@ seasonal demo account): `psql -h localhost -p 5532 -U conduit -d conduit -f scri
 **The desk (back-office UI):**
 
 ```sh
-cd conduit-desk && yarn && yarn start    # vite on :3002, proxies /api → :8080
+cd conduit-desk && yarn && yarn start    # vite on :3060, proxies /api → :8080
 ```
 
 Sign in with a dev token (`dev:demo-ceo` after the demo seed; `dev:agent-e2e` after the e2e seed) — the dev
@@ -60,7 +60,7 @@ yarn test                # vitest unit layer (state machine / api contract / ses
                          # e2e/seed.sql, runs all Playwright specs, tears down. Needs a local postgres
                          # with a `conduit` db. NOTE: frees port 8080 (kills the compose API) — re-run
                          # `docker compose up -d` afterwards.
-node scripts/capture-screens.mjs   # re-captures spec/design-assets/desk/*.png against the live API (:3002 + :8080)
+node scripts/capture-screens.mjs   # re-captures spec/design-assets/desk/*.png against the live API (:3060 + :8080)
 ```
 
 ## The forecast engine (doc 26) — operating it

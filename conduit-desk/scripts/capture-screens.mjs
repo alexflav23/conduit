@@ -1,6 +1,6 @@
 // Captures every desk tab against the LIVE local API into spec/design-assets/desk/ — the visual ground
 // truth for the design handoff (spec/27). Tabs with a one-click loader are clicked first so the captures
-// show real data, not empty states. Run: node scripts/capture-screens.mjs (dev server on :3002, api on :8080).
+// show real data, not empty states. Run: node scripts/capture-screens.mjs (dev server on :3060, api on :8080).
 import { chromium } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
 
@@ -25,7 +25,7 @@ const TABS = [
 const browser = await chromium.launch();
 const page = await browser.newPage({ viewport: { width: 1600, height: 1000 } });
 page.on('pageerror', (e) => console.log(`  pageerror: ${String(e).slice(0, 160)}`));
-await page.goto('http://localhost:3002/');
+await page.goto('http://localhost:3060/');
 
 for (const t of TABS) {
   try {
@@ -44,7 +44,7 @@ for (const t of TABS) {
     console.log(`captured ${t.name}`);
   } catch (e) {
     console.log(`FAILED ${t.name}: ${String(e).slice(0, 140)}`);
-    await page.goto('http://localhost:3002/'); // recover: a crashed tab must not sink the rest
+    await page.goto('http://localhost:3060/'); // recover: a crashed tab must not sink the rest
     await page.getByTestId('token').fill('dev:agent-e2e');
   }
 }
