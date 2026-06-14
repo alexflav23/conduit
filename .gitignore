@@ -24,3 +24,6 @@ local/.venv/
 # terraform working dirs (provider/module downloads from `terraform init`) — never committed
 **/.terraform/
 **/.terraform.lock.hcl
+
+# local-only service secrets (piped from the estate, never committed)
+local/*.env
