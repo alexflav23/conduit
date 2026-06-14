@@ -78,6 +78,7 @@ services:
       conduit-tigerbeetle: { condition: service_started }
     environment:
       HYPERVOLT_ENV: local
+      HYPERVOLT_SHADOW: "true"
       CONDUIT_DB_HOST: conduit-postgres
       CONDUIT_DB_PORT: "5432"
       CONDUIT_PULSAR_URL: pulsar://conduit-pulsar:6650
@@ -98,6 +99,7 @@ services:
       conduit-api: { condition: service_started }
     environment:
       HYPERVOLT_ENV: local
+      HYPERVOLT_SHADOW: "true"
       CONDUIT_DB_HOST: conduit-postgres
       CONDUIT_DB_PORT: "5432"
       CONDUIT_PULSAR_URL: pulsar://conduit-pulsar:6650
