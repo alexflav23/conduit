@@ -27,3 +27,8 @@ local/.venv/
 
 # local-only service secrets (piped from the estate, never committed)
 local/*.env
+
+# direnv: the .envrc is committed; its SSM-derived cache + personal overrides are not
+.envrc_cached
+.envrc.private
+.direnv/
