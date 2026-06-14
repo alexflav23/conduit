@@ -14,6 +14,7 @@ import { Lifecycle } from './Lifecycle';
 import { Auditability } from './Auditability';
 import { Tax } from './Tax';
 import { Forecasting } from './Forecasting';
+import { ForecastRuns } from './ForecastRuns';
 import { Proof } from './Proof';
 import { Period } from './Period';
 import { Sync } from './Sync';
@@ -26,7 +27,7 @@ import { SignIn, sessionEmail, signOutGoogle } from './SignIn';
 
 type TabId =
   | 'order' | 'dealdesk' | 'h6q' | 'flow' | 'supply' | 'shelf' | 'finance' | 'docs'
-  | 'lifecycle' | 'audit' | 'period' | 'sync' | 'tax' | 'engine' | 'proof';
+  | 'lifecycle' | 'audit' | 'period' | 'sync' | 'tax' | 'engine' | 'runs' | 'proof';
 
 const GROUPS: { sec: string; items: { id: TabId; key: string; icon: keyof typeof I }[] }[] = [
   { sec: 'Sell', items: [
@@ -39,6 +40,7 @@ const GROUPS: { sec: string; items: { id: TabId; key: string; icon: keyof typeof
     { id: 'supply', key: 'nav.supply', icon: 'cpu' },
     { id: 'shelf', key: 'nav.shelf', icon: 'battery' },
     { id: 'engine', key: 'nav.engine', icon: 'pulse' },
+    { id: 'runs', key: 'nav.runs', icon: 'clock' },
   ]},
   { sec: 'Finance & control', items: [
     { id: 'finance', key: 'nav.finance', icon: 'sessions' },
@@ -58,7 +60,7 @@ const ALL = GROUPS.flatMap((g) => g.items);
 const PAGES: Record<TabId, React.ComponentType<{ token: string }>> = {
   order: OrderDesk, dealdesk: DealDesk, h6q: H6Q, flow: Flow, supply: SupplyWindow, shelf: Shelf,
   finance: Finance, docs: Documents, lifecycle: Lifecycle, audit: Auditability, period: Period,
-  sync: Sync, tax: Tax, engine: Forecasting, proof: Proof,
+  sync: Sync, tax: Tax, engine: Forecasting, runs: ForecastRuns, proof: Proof,
 };
 
 export function App() {

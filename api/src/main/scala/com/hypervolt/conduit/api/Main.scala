@@ -13,6 +13,7 @@ import com.hypervolt.conduit.api.routes.AuditRoutes
 import com.hypervolt.conduit.api.routes.CommerceRoutes
 import com.hypervolt.conduit.api.routes.CreditRoutes
 import com.hypervolt.conduit.api.routes.DealDeskRoutes
+import com.hypervolt.conduit.api.routes.ForecastRunRoutes
 import com.hypervolt.conduit.api.routes.H6QRoutes
 import com.hypervolt.conduit.api.routes.HealthRoutes
 import com.hypervolt.conduit.api.routes.IntercompanyRoutes
@@ -88,15 +89,16 @@ object Main extends IOApp.Simple {
             cfg.googleAuth.workspaceDomain
           )
         )
-        val auth           = new AuthService[IO](xa, devMode = cfg.env != "prod", google = googleVerifier)
-        val accessRoutes   = new AccessRoutes[IO](xa, auth).routes
-        val pricingRoutes  = new PricingRoutes[IO](xa, auth).routes
-        val commerceRoutes = new CommerceRoutes[IO](xa, auth).routes
-        val dealDeskRoutes = new DealDeskRoutes[IO](xa, auth).routes
-        val h6qRoutes      = new H6QRoutes[IO](xa, auth).routes
-        val icRoutes       = new IntercompanyRoutes[IO](xa, auth).routes
-        val creditRoutes   = new CreditRoutes[IO](xa, auth).routes
-        val auditRoutes    = new AuditRoutes[IO](xa, auth).routes
+        val auth              = new AuthService[IO](xa, devMode = cfg.env != "prod", google = googleVerifier)
+        val accessRoutes      = new AccessRoutes[IO](xa, auth).routes
+        val pricingRoutes     = new PricingRoutes[IO](xa, auth).routes
+        val commerceRoutes    = new CommerceRoutes[IO](xa, auth).routes
+        val dealDeskRoutes    = new DealDeskRoutes[IO](xa, auth).routes
+        val h6qRoutes         = new H6QRoutes[IO](xa, auth).routes
+        val forecastRunRoutes = new ForecastRunRoutes[IO](xa, auth).routes
+        val icRoutes          = new IntercompanyRoutes[IO](xa, auth).routes
+        val creditRoutes      = new CreditRoutes[IO](xa, auth).routes
+        val auditRoutes       = new AuditRoutes[IO](xa, auth).routes
         val stripeVerifier = Option.when(cfg.stripe.verifies)(
           new com.hypervolt.conduit.payment.StripeSignatureVerifier(cfg.stripe.webhookSecret)
         )
@@ -139,7 +141,7 @@ object Main extends IOApp.Simple {
             "/" -> (HealthRoutes
               .routes[
                 IO
-              ] <+> accessRoutes <+> pricingRoutes <+> commerceRoutes <+> dealDeskRoutes <+> h6qRoutes <+> icRoutes <+> creditRoutes <+> auditRoutes <+> stripeRoutes <+> documentRoutes <+> attachmentRoutes <+> voidRoutes <+> lifecycleRoutes <+> taxRoutes <+> procurementRoutes <+> structureRoutes <+> returnRoutes <+> privacyRoutes <+> proofRoutes)
+              ] <+> accessRoutes <+> pricingRoutes <+> commerceRoutes <+> dealDeskRoutes <+> h6qRoutes <+> forecastRunRoutes <+> icRoutes <+> creditRoutes <+> auditRoutes <+> stripeRoutes <+> documentRoutes <+> attachmentRoutes <+> voidRoutes <+> lifecycleRoutes <+> taxRoutes <+> procurementRoutes <+> structureRoutes <+> returnRoutes <+> privacyRoutes <+> proofRoutes)
           ).orNotFound
         val host      = Ipv4Address.fromString(cfg.http.host).getOrElse(ipv4"0.0.0.0")
         val apiPort   = Port.fromInt(cfg.http.port).getOrElse(port"8080")

@@ -1,9 +1,23 @@
 {
   "app.title": "Conduit — Arbeitsplatz",
   "app.signOut": "Abmelden",
-  "nav.order": "Auftragsdesk", "nav.dealdesk": "Deal-Desk", "nav.h6q": "H6Q", "nav.flow": "Fluss",
-  "nav.supply": "Beschaffung", "nav.shelf": "Bestand", "nav.finance": "Finanzen", "nav.docs": "Dokumente",
-  "nav.lifecycle": "Lebenszyklus", "nav.audit": "Prüfung", "nav.period": "Periode", "nav.sync": "Sync",
-  "nav.tax": "Steuer", "nav.engine": "Prognose-Engine", "nav.proof": "Nachweis",
-  "action.load": "Laden", "action.refresh": "Aktualisieren", "common.language": "Sprache"
+  "nav.order": "Auftragsdesk",
+  "nav.dealdesk": "Deal-Desk",
+  "nav.h6q": "H6Q",
+  "nav.flow": "Fluss",
+  "nav.supply": "Beschaffung",
+  "nav.shelf": "Bestand",
+  "nav.finance": "Finanzen",
+  "nav.docs": "Dokumente",
+  "nav.lifecycle": "Lebenszyklus",
+  "nav.audit": "Prüfung",
+  "nav.period": "Periode",
+  "nav.sync": "Sync",
+  "nav.tax": "Steuer",
+  "nav.engine": "Prognose-Engine",
+  "nav.runs": "Prognoseläufe",
+  "nav.proof": "Nachweis",
+  "action.load": "Laden",
+  "action.refresh": "Aktualisieren",
+  "common.language": "Sprache"
 }

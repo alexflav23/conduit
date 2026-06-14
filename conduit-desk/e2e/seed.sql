@@ -267,3 +267,42 @@ INSERT INTO sync_state (source, dataset, cursor, last_run_at, last_status, recor
 VALUES ('xero', 'invoices', '2026-06-03T12:30:00Z', now() - interval '45 seconds', 'ok', 128, 128),
        ('mrpeasy', 'customer_orders', '1717497600', now() - interval '5 minutes', 'ok', 530, 528)
 ON CONFLICT (source, dataset) DO NOTHING;
+
+-- Forecast-run tracking (doc 26 §7): two origins so the Forecast Runs desk shows a timeline, a per-run report
+-- (the bake-off basis + provenance), and a diff with a champion change (runrate3 → depletion) + error improvement.
+DO $$
+DECLARE acct uuid; acct2 uuid; v_id uuid; r1_rr uuid; r1_dep uuid; r2_rr uuid; r2_dep uuid;
+BEGIN
+  SELECT id INTO acct  FROM party WHERE display_name = 'H6Q Leeds';
+  SELECT id INTO acct2 FROM party WHERE display_name = 'Flow Cust';
+  SELECT id INTO v_id  FROM product_variant WHERE sku = 'HV-310';
+  IF acct IS NULL OR v_id IS NULL THEN RETURN; END IF;
+
+  DELETE FROM model_accuracy   WHERE origin_month IN ('2026-03-01','2026-06-01');
+  DELETE FROM policy_selection WHERE origin_month IN ('2026-03-01','2026-06-01');
+  DELETE FROM forecast_run     WHERE origin_month IN ('2026-03-01','2026-06-01') AND purpose = 'backtest';
+
+  INSERT INTO forecast_run (origin_month, horizon_months, model_key, model_version, data_sha, purpose)
+    VALUES ('2026-03-01',3,'runrate3',1,'sha-mar-0001','backtest') RETURNING id INTO r1_rr;
+  INSERT INTO forecast_run (origin_month, horizon_months, model_key, model_version, data_sha, purpose)
+    VALUES ('2026-03-01',3,'depletion',1,'sha-mar-0001','backtest') RETURNING id INTO r1_dep;
+  INSERT INTO forecast_run (origin_month, horizon_months, model_key, model_version, data_sha, purpose)
+    VALUES ('2026-06-01',3,'runrate3',1,'sha-jun-0002','backtest') RETURNING id INTO r2_rr;
+  INSERT INTO forecast_run (origin_month, horizon_months, model_key, model_version, data_sha, purpose)
+    VALUES ('2026-06-01',3,'depletion',1,'sha-jun-0002','backtest') RETURNING id INTO r2_dep;
+
+  INSERT INTO model_accuracy (run_id, company_id, product_variant_id, model_key, origin_month, period_month, horizon, forecast_qty, actual_qty, abs_error) VALUES
+    (r1_rr,  acct, v_id, 'runrate3', '2026-03-01','2026-04-01',1, 130,100,30),
+    (r1_dep, acct, v_id, 'depletion','2026-03-01','2026-04-01',1, 145,100,45),
+    (r2_rr,  acct, v_id, 'runrate3', '2026-06-01','2026-07-01',1, 128,100,28),
+    (r2_dep, acct, v_id, 'depletion','2026-06-01','2026-07-01',1, 110,100,10);
+
+  INSERT INTO policy_selection (origin_month, company_id, policy_key, weights, forecast_qty, actual_qty) VALUES
+    ('2026-03-01', acct, 'runrate3',  '{"runrate3":1.0}'::jsonb,  130, 100),
+    ('2026-06-01', acct, 'depletion', '{"depletion":1.0}'::jsonb, 110, 100);
+  IF acct2 IS NOT NULL THEN
+    INSERT INTO policy_selection (origin_month, company_id, policy_key, weights, forecast_qty, actual_qty) VALUES
+      ('2026-03-01', acct2, 'seasonal_naive', '{"seasonal_naive":1.0}'::jsonb, 90, 100),
+      ('2026-06-01', acct2, 'seasonal_naive', '{"seasonal_naive":1.0}'::jsonb, 95, 100);
+  END IF;
+END $$;

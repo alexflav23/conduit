@@ -1,9 +1,23 @@
 {
   "app.title": "Conduit — 工作台",
   "app.signOut": "退出登录",
-  "nav.order": "订单台", "nav.dealdesk": "交易台", "nav.h6q": "H6Q", "nav.flow": "流程",
-  "nav.supply": "供应", "nav.shelf": "库存", "nav.finance": "财务", "nav.docs": "文档",
-  "nav.lifecycle": "生命周期", "nav.audit": "审计", "nav.period": "会计期间", "nav.sync": "同步",
-  "nav.tax": "税务", "nav.engine": "预测引擎", "nav.proof": "证明",
-  "action.load": "加载", "action.refresh": "刷新", "common.language": "语言"
+  "nav.order": "订单台",
+  "nav.dealdesk": "交易台",
+  "nav.h6q": "H6Q",
+  "nav.flow": "流程",
+  "nav.supply": "供应",
+  "nav.shelf": "库存",
+  "nav.finance": "财务",
+  "nav.docs": "文档",
+  "nav.lifecycle": "生命周期",
+  "nav.audit": "审计",
+  "nav.period": "会计期间",
+  "nav.sync": "同步",
+  "nav.tax": "税务",
+  "nav.engine": "预测引擎",
+  "nav.runs": "预测运行",
+  "nav.proof": "证明",
+  "action.load": "加载",
+  "action.refresh": "刷新",
+  "common.language": "语言"
 }

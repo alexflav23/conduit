@@ -208,6 +208,17 @@ export function getSyncState(token: string) {
   return call('/api/v1/finance/sync-state', token, 'GET');
 }
 
+// Forecast-run tracking (doc 26 §7): the run timeline, a comprehensive per-run report, and the run-to-run diff.
+export function getForecastRuns(token: string) {
+  return call('/api/v1/forecast/runs', token, 'GET');
+}
+export function getForecastRunReport(token: string, origin: string) {
+  return call(`/api/v1/forecast/runs/${encodeURIComponent(origin)}/report`, token, 'GET');
+}
+export function getForecastRunDiff(token: string, from: string, to: string) {
+  return call(`/api/v1/forecast/runs/diff?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`, token, 'GET');
+}
+
 // ----- M13 documents + invoice invalidation (void / credit note / refund) -----
 
 export function getDocuments(token: string, params: { invoiceNo?: string; orderId?: string }) {
