@@ -134,7 +134,8 @@ const initials = (s: string) => s.split(/[ @.]/).filter(Boolean).map((w) => w[0]
 export interface Ctx { entity: string; market: string; period: string; scenario: string }
 const CTX_OPTS = {
   entity: ['Hypervolt Ltd (UK)', 'Hypervolt Manufacturing (UK)', 'Hypervolt IE'],
-  market: ['UK', 'IE'],
+  // Only markets that actually exist in the data (year-1 is UK-only, doc 08); offering IE 400'd every scoped call.
+  market: ['UK'],
   scenario: ['P20', 'P50', 'P80'],
 };
 const PERIODS: { key: string; status: 'open' | 'closed' | 'locked' }[] = [
@@ -160,8 +161,16 @@ export function App() {
   const [route, setRoute] = useState<TabId>(() => (localStorage.getItem('conduit.route') as TabId) || 'order');
   const [theme, setTheme] = useState(() => localStorage.getItem('conduit.theme') || 'dark');
   const [ctx, setCtx] = useState<Ctx>(() => {
-    try { return { entity: 'Hypervolt Ltd (UK)', market: 'UK', period: '2026-09', scenario: 'P50', ...JSON.parse(localStorage.getItem('conduit.ctx') || '{}') }; }
-    catch { return { entity: 'Hypervolt Ltd (UK)', market: 'UK', period: '2026-09', scenario: 'P50' }; }
+    const base = { entity: 'Hypervolt Ltd (UK)', market: 'UK', period: '2026-09', scenario: 'P50' };
+    try {
+      const merged = { ...base, ...JSON.parse(localStorage.getItem('conduit.ctx') || '{}') };
+      // Coerce a stale/invalid market or scenario (e.g. a previously-selected "IE") back to a real option.
+      if (!CTX_OPTS.market.includes(merged.market)) merged.market = 'UK';
+      if (!CTX_OPTS.scenario.includes(merged.scenario)) merged.scenario = 'P50';
+      return merged;
+    } catch {
+      return base;
+    }
   });
   const [menu, setMenu] = useState<string | null>(null);
   const [palOpen, setPalOpen] = useState(false);
