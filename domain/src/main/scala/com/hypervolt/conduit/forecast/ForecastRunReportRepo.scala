@@ -106,4 +106,67 @@ object ForecastRunReportRepo {
             "structural"      -> RunDiff.isStructural(key).asJson
           )
       })
+
+  // The dimensions a delta can browse by, mapped to their (group, label) SQL — whitelisted, never user strings.
+  private def axisFrag(axis: String): (Fragment, Fragment) =
+    axis match {
+      case "market"  => (fr"p.market_id", fr"COALESCE(m.name, p.market_id::text, '(none)')")
+      case "channel" => (fr"p.channel_id", fr"COALESCE(p.channel_id::text, '(none)')")
+      case _         => (fr"p.segment", fr"COALESCE(p.segment, '(none)')")
+    }
+
+  // The browsable run-to-run delta along one axis (segment | channel | market), optionally filtered to one
+  // market — so "channel by channel for each market" is group=channel + a market filter. Each cell carries the
+  // from/to outturn; RunDiff turns the sums into the total-level error + deltas (the single source of truth).
+  def dimensionDelta(
+      from: LocalDate,
+      to: LocalDate,
+      axis: String,
+      marketFilter: Option[UUID]
+  ): ConnectionIO[List[Json]] = {
+    val (grp, label) = axisFrag(axis)
+    val marketWhere  = marketFilter.fold(Fragment.empty)(m => fr"AND p.market_id = $m")
+    (fr"SELECT " ++ label ++ fr""" AS cell,
+            count(*) FILTER (WHERE ps.origin_month = $from),
+            COALESCE(sum(ps.forecast_qty) FILTER (WHERE ps.origin_month = $from), 0),
+            COALESCE(sum(ps.actual_qty)   FILTER (WHERE ps.origin_month = $from), 0),
+            count(*) FILTER (WHERE ps.origin_month = $to),
+            COALESCE(sum(ps.forecast_qty) FILTER (WHERE ps.origin_month = $to), 0),
+            COALESCE(sum(ps.actual_qty)   FILTER (WHERE ps.origin_month = $to), 0)
+          FROM policy_selection ps
+          JOIN party p ON p.id = ps.company_id
+          LEFT JOIN market m ON m.id = p.market_id
+          WHERE ps.origin_month IN ($from, $to) """ ++ marketWhere ++ fr" GROUP BY " ++ grp ++ fr", " ++ label)
+      .query[(String, Int, BigDecimal, BigDecimal, Int, BigDecimal, BigDecimal)]
+      .to[List]
+      .map(_.map {
+        case (cell, fAcc, fFc, fAc, tAcc, tFc, tAc) =>
+          val fErr = RunDiff.totalLevelErrorPct(fFc, fAc)
+          val tErr = RunDiff.totalLevelErrorPct(tFc, tAc)
+          Json.obj(
+            "cell"            -> cell.asJson,
+            "from_accounts"   -> fAcc.asJson,
+            "to_accounts"     -> tAcc.asJson,
+            "from_error_pct"  -> fErr.asJson,
+            "to_error_pct"    -> tErr.asJson,
+            "error_delta_pct" -> (tErr - fErr).asJson,
+            "forecast_delta"  -> (tFc - fFc).asJson,
+            "actual_delta"    -> (tAc - fAc).asJson,
+            "to_forecast"     -> tFc.asJson,
+            "to_actual"       -> tAc.asJson
+          )
+      })
+      .map(_.sortBy(j => -j.hcursor.get[BigDecimal]("error_delta_pct").getOrElse(BigDecimal(0)).abs))
+  }
+
+  // The markets present across two origins — populates the delta's market filter.
+  def marketsFor(from: LocalDate, to: LocalDate): ConnectionIO[List[Json]] =
+    sql"""SELECT DISTINCT p.market_id, COALESCE(m.name, p.market_id::text)
+          FROM policy_selection ps JOIN party p ON p.id = ps.company_id
+          LEFT JOIN market m ON m.id = p.market_id
+          WHERE ps.origin_month IN ($from, $to) AND p.market_id IS NOT NULL
+          ORDER BY 2"""
+      .query[(UUID, String)]
+      .to[List]
+      .map(_.map { case (id, name) => Json.obj("id" -> id.toString.asJson, "name" -> name.asJson) })
 }

@@ -20,6 +20,8 @@ export function ForecastRuns({ token }: { token: string }) {
   const [report, setReport] = useState<any | null>(null);
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
+  const [groupBy, setGroupBy] = useState('segment');
+  const [market, setMarket] = useState('');
   const [diff, setDiff] = useState<any | null>(null);
 
   const load = async () => {
@@ -42,9 +44,9 @@ export function ForecastRuns({ token }: { token: string }) {
     setReport(r.status === 200 ? r.json : null);
   };
 
-  const compare = async () => {
+  const compare = async (gb?: string, mkt?: string) => {
     if (!from || !to) return;
-    const r = await getForecastRunDiff(token, from, to);
+    const r = await getForecastRunDiff(token, from, to, gb ?? groupBy, mkt ?? market);
     setDiff(r.status === 200 ? r.json : null);
   };
 
@@ -159,13 +161,50 @@ export function ForecastRuns({ token }: { token: string }) {
           <select className="fld sel" data-testid="fr-to" value={to} onChange={(e) => setTo(e.target.value)}>
             <option value="">—</option>{runs.map((r: any) => <option key={r.origin} value={r.origin}>{r.origin}</option>)}
           </select>
-          <button className="btn primary" data-testid="fr-compare" onClick={compare}>Compare</button>
+          <button className="btn primary" data-testid="fr-compare" onClick={() => compare()}>Compare</button>
         </LoadBar>
 
         {diff && (
           <div data-testid="fr-diff" style={{ marginTop: 14 }}>
             <div className="lineage" data-testid="fr-narrative" style={{ marginBottom: 14 }}>
               {asArray<string>(diff.narrative).map((n) => `• ${n}`).join('\n')}
+            </div>
+
+            <div className="row g8" style={{ flexWrap: 'wrap', marginBottom: 10 }}>
+              <span className="dim">Browse delta by</span>
+              <div className="seg">
+                {['segment', 'channel', 'market'].map((a) => (
+                  <button key={a} className={groupBy === a ? 'on' : ''} data-testid={`fr-by-${a}`} onClick={() => { setGroupBy(a); compare(a, market); }}>{a[0].toUpperCase() + a.slice(1)}</button>
+                ))}
+              </div>
+              <span className="dim">Market</span>
+              <select className="fld sel" data-testid="fr-market" value={market} onChange={(e) => { setMarket(e.target.value); compare(groupBy, e.target.value); }}>
+                <option value="">All markets</option>
+                {asArray(diff.markets).map((m: any) => <option key={m.id} value={m.id}>{m.name}</option>)}
+              </select>
+            </div>
+            <div className="tablewrap" style={{ marginBottom: 14 }}>
+              <table className="tbl" data-testid="fr-breakdown">
+                <thead><tr>
+                  <th>{groupBy[0].toUpperCase() + groupBy.slice(1)}</th>
+                  <th className="num">From error</th><th className="num">To error</th><th className="num">Error Δ</th>
+                  <th className="num">Forecast Δ</th><th className="num">Actual Δ</th><th className="num">Accts</th>
+                </tr></thead>
+                <tbody>
+                  {asArray(diff.breakdown).map((b: any, i: number) => (
+                    <tr key={i} data-testid="fr-breakdown-row">
+                      <td><b>{b.cell}</b></td>
+                      <td className="num">{b.from_error_pct}%</td>
+                      <td className="num">{b.to_error_pct}%</td>
+                      <td className="num"><Chip s={Number(b.error_delta_pct) <= 0 ? 'ok' : 'warn'}>{Number(b.error_delta_pct) > 0 ? '+' : ''}{b.error_delta_pct}</Chip></td>
+                      <td className="num">{Number(b.forecast_delta).toLocaleString('en-GB')}</td>
+                      <td className="num">{Number(b.actual_delta).toLocaleString('en-GB')}</td>
+                      <td className="num">{b.to_accounts}</td>
+                    </tr>
+                  ))}
+                  {asArray(diff.breakdown).length === 0 && <tr><td className="dim" colSpan={7} style={{ padding: '12px' }}>No cells on this axis.</td></tr>}
+                </tbody>
+              </table>
             </div>
             <div className="row" style={{ gap: 26, flexWrap: 'wrap', marginBottom: 14 }}>
               {stat('Error Δ', `${diff.error_delta_pct > 0 ? '+' : ''}${diff.error_delta_pct} pts`, 'fr-diff-error', true)}

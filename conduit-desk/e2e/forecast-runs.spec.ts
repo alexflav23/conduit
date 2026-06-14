@@ -27,4 +27,10 @@ test('Forecast Runs: timeline loads, a run report opens, and a diff narrates the
   await expect(page.getByTestId('fr-diff')).toBeVisible();
   await expect(page.getByTestId('fr-narrative')).toContainText('improved');
   await expect(page.getByTestId('fr-champion-changes')).toContainText('depletion');
+
+  // the browsable delta: a per-segment breakdown, then re-grouped by market (channel-by-channel-for-market lives here)
+  await expect(page.getByTestId('fr-breakdown-row').first()).toBeVisible();
+  await expect(page.getByTestId('fr-breakdown')).toContainText('wholesale');
+  await page.getByTestId('fr-by-market').click();
+  await expect(page.getByTestId('fr-breakdown')).toBeVisible();
 });

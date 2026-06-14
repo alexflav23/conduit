@@ -31,6 +31,9 @@ object RunDiff {
   private def pct(n: BigDecimal, d: BigDecimal): BigDecimal =
     (n.abs / (if (d.abs < BigDecimal(1)) BigDecimal(1) else d.abs) * 100).setScale(1, RoundingMode.HALF_UP)
 
+  // total-level (served-grain) error for a forecast/actual pair — the per-cell headline of the browsable delta.
+  def totalLevelErrorPct(forecast: BigDecimal, actual: BigDecimal): BigDecimal = pct(forecast - actual, actual)
+
   def stats(rows: List[SelRow]): RunStats = {
     val fc     = rows.map(_.forecast).sum
     val ac     = rows.map(_.actual).sum

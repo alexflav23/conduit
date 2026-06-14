@@ -94,28 +94,40 @@ final class ForecastRunRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[
             }
       )
 
+  private val axes = Set("segment", "channel", "market")
+
   private val diff =
     base.get
       .in("api" / "v1" / "forecast" / "runs" / "diff")
       .in(query[String]("from"))
       .in(query[String]("to"))
+      .in(query[Option[String]]("group_by"))
+      .in(query[Option[String]]("market"))
       .out(jsonBody[Json])
       .serverLogic(p => {
-        case (fromStr, toStr) =>
+        case (fromStr, toStr, groupByOpt, marketOpt) =>
           if (!gate(p)) Async[F].pure(Left(denied))
-          else
+          else {
+            val axis      = groupByOpt.filter(axes).getOrElse("segment")
+            val marketFil = marketOpt.flatMap(s => Try(java.util.UUID.fromString(s)).toOption)
             (origin(fromStr), origin(toStr)).tupled match {
               case Left(e) => Async[F].pure(Left(e))
               case Right((fromO, toO)) =>
-                (ForecastRunReportRepo.selections(fromO), ForecastRunReportRepo.selections(toO)).tupled
+                (
+                  ForecastRunReportRepo.selections(fromO),
+                  ForecastRunReportRepo.selections(toO),
+                  ForecastRunReportRepo.dimensionDelta(fromO, toO, axis, marketFil),
+                  ForecastRunReportRepo.marketsFor(fromO, toO)
+                ).tupled
                   .transact(xa)
                   .map {
-                    case (from, to) =>
+                    case (from, to, breakdown, markets) =>
                       val d = RunDiff.diff(from, to)
                       Right(
                         Json.obj(
                           "from"             -> fromStr.asJson,
                           "to"               -> toStr.asJson,
+                          "group_by"         -> axis.asJson,
                           "from_stats"       -> statsJson(d.fromStats),
                           "to_stats"         -> statsJson(d.toStats),
                           "error_delta_pct"  -> d.errorDeltaPct.asJson,
@@ -132,11 +144,14 @@ final class ForecastRunRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[
                           ),
                           "policy_mix_from" -> mixJson(d.policyMixFrom),
                           "policy_mix_to"   -> mixJson(d.policyMixTo),
+                          "breakdown"       -> Json.fromValues(breakdown),
+                          "markets"         -> Json.fromValues(markets),
                           "narrative"       -> Json.fromValues(d.narrative.map(_.asJson))
                         )
                       )
                   }
             }
+          }
       })
 
   val routes: HttpRoutes[F] =

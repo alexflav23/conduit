@@ -215,8 +215,11 @@ export function getForecastRuns(token: string) {
 export function getForecastRunReport(token: string, origin: string) {
   return call(`/api/v1/forecast/runs/${encodeURIComponent(origin)}/report`, token, 'GET');
 }
-export function getForecastRunDiff(token: string, from: string, to: string) {
-  return call(`/api/v1/forecast/runs/diff?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`, token, 'GET');
+export function getForecastRunDiff(token: string, from: string, to: string, groupBy?: string, market?: string) {
+  const q = new URLSearchParams({ from, to });
+  if (groupBy) q.set('group_by', groupBy);
+  if (market) q.set('market', market);
+  return call(`/api/v1/forecast/runs/diff?${q.toString()}`, token, 'GET');
 }
 
 // ----- M13 documents + invoice invalidation (void / credit note / refund) -----
