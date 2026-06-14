@@ -129,7 +129,9 @@ object SnapshotLoader {
       ).tupled match {
         case None => 0.pure[ConnectionIO]
         case Some((serial, activatedAt)) =>
-          sql"""UPDATE serial_unit su SET activated_at = $activatedAt
+          // Flip BOTH the timestamp and the lifecycle status — the shelf board (and ATP) count status='activated',
+          // so setting only activated_at left every account reading 0 activated / shipped on-shelf.
+          sql"""UPDATE serial_unit su SET activated_at = $activatedAt, status = 'activated'
                 FROM dispatch d
                 WHERE su.serial_no = $serial AND d.id = su.dispatch_id AND su.activated_at IS NULL
                   AND $activatedAt >= COALESCE(d.delivered_at, d.date::timestamptz) - interval '7 days'""".update.run
