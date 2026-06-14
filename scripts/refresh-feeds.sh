@@ -42,14 +42,14 @@ echo "[4b/4] reproducibility fingerprint (doc 29 D)"
 # (CTRL-REPRO polices it). Committed alongside the snapshot so any future drift is a visible diff.
 INGEST_SHA="$(git rev-parse --short HEAD)" sbt -batch \
     "scripting/runMain com.hypervolt.conduit.scripting.FingerprintReport" 2>&1 | grep -E '"digest"' \
-    | tee ingest/fingerprint.json
+    | sed -E 's/^\[info\] //' | tee ingest/fingerprint.json    # strip sbt's [info] prefix → valid JSON for CTRL-REPRO
 
 echo "[5/5] commit refreshed snapshots"
 git add ingest/ 2>/dev/null
 if ! git diff --cached --quiet 2>/dev/null; then
   git commit -m "ingest: automated feed refresh $(date '+%Y-%m-%d %H:%M')
 
-Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>" >/dev/null     && git push github HEAD:m0-m1-foundations >/dev/null 2>&1     && git push github HEAD:main >/dev/null 2>&1     && echo "  snapshots committed + pushed"
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>" >/dev/null     && git push github HEAD:m0-m1-foundations >/dev/null 2>&1     && git push origin HEAD:m0-m1-foundations >/dev/null 2>&1     && echo "  snapshots committed + pushed (github + gitlab, m0-m1-foundations)"
 else
   echo "  no snapshot changes"
 fi
