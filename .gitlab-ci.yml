@@ -64,22 +64,9 @@ terraform-validate:
           (cd terraform/$m && terraform init -backend=false -input=false >/dev/null && TF_WORKSPACE=$ws terraform validate) || exit 1;
         done'
 
-# Enforcing on protected branches (the estate runner holds the <env>-conduit-<component>-operator AWS role).
-# A plan failure now BLOCKS the pipeline — infrastructure drift or a bad change is caught before deploy, not
-# during it. (Was advisory while the runner creds were being wired; that gap is now closed — doc 29 G.)
-terraform-plan:
-  stage: lint
-  tags:
-    - x86_64-nix-24.11
-  rules:
-    - if: '$CI_COMMIT_REF_PROTECTED == "true"'
-  script:
-    - CREDS="gitlab-ci-token:${CI_JOB_TOKEN}"
-    - git config --global url."https://${CREDS}@gitlab.com/".insteadOf "ssh://git@gitlab.com/"
-    - NIXPKGS_ALLOW_UNFREE=1 nix-shell --impure -p terraform awscli2 cacert --run '
-        for m in roles-global rds conduit-records conduit-tigerbeetle conduit-api conduit-consumer; do
-          (cd terraform/$m && terraform init -input=false && terraform validate && terraform plan -input=false -lock=false);
-        done'
+# NOTE: there is intentionally no `terraform plan` job. plan/apply are run manually from dev laptops (which
+# carry the AWS operator role); the shared CI runner has no AWS credentials. CI's terraform gate is the
+# AWS-free fmt + validate above — it catches malformed HCL and broken module wiring before the deploy path.
 
 compile-test:
   stage: test
