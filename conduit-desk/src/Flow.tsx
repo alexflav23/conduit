@@ -1,31 +1,12 @@
 import React, { useState } from 'react';
-import * as stylex from '@stylexjs/stylex';
-import { colors } from './styles/tokens.stylex';
 import { getVariants, getWaterfall, getLedger, H6Q_MARKET } from './api';
+import { PageHead, Card, Chip } from './kit/kit';
+import { I } from './kit/icons';
 
-// The "Flow" desk (design spec doc 20 §2.3/§2.6): the H6Q VARIANTS — forecast → committed → produced →
-// delivered → ordered → shipped → revenue — and how they evolve over time, with revenue drilling to the
-// immutable TigerBeetle log. Function-first: tabular, labelled, traceable. Beauty comes later.
+// The "Flow" desk (design spec doc 20 §2.3/§2.6 / spec/ui/06-flow.md): the H6Q VARIANTS — forecast →
+// committed → produced → delivered → ordered → shipped → revenue — and how they evolve over time, with
+// revenue drilling to the immutable TigerBeetle log. Ported to the desk kit (.tbl), testids preserved.
 
-const styles = stylex.create({
-  card: { backgroundColor: colors.surface, border: `1px solid ${colors.border}`, borderRadius: '14px', padding: '1.25rem', marginBottom: '1.25rem', maxWidth: '980px' },
-  section: { fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.06em', color: colors.muted, marginBottom: '0.6rem' },
-  row: { display: 'flex', gap: '0.75rem', alignItems: 'center', marginBottom: '0.6rem', flexWrap: 'wrap' },
-  label: { color: colors.muted, fontSize: '0.8rem' },
-  input: { backgroundColor: colors.bg, color: colors.text, border: `1px solid ${colors.border}`, borderRadius: '8px', padding: '0.45rem 0.6rem', fontSize: '0.9rem' },
-  button: { backgroundColor: colors.accent, color: '#fff', border: 'none', borderRadius: '10px', padding: '0.5rem 1.05rem', fontSize: '0.92rem', fontWeight: 600, cursor: 'pointer' },
-  table: { width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem', fontVariantNumeric: 'tabular-nums' },
-  th: { textAlign: 'left', color: colors.muted, fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.05em', padding: '0.5rem 0.7rem', borderBottom: `1px solid ${colors.border}` },
-  thNum: { textAlign: 'right' },
-  td: { padding: '0.45rem 0.7rem', borderBottom: `1px solid ${colors.border}` },
-  tdNum: { textAlign: 'right', fontVariantNumeric: 'tabular-nums' },
-  variant: { fontWeight: 600 },
-  rev: { color: colors.accent, fontWeight: 700 },
-  mono: { fontFamily: 'monospace', fontSize: '0.78rem', color: colors.muted },
-  chip: { padding: '0.15rem 0.5rem', borderRadius: '999px', fontSize: '0.72rem', backgroundColor: colors.border, color: colors.text },
-});
-
-// The seven variants, in order. Each cell is a distinct quantity — never conflated.
 const VARIANTS: Array<{ key: string; label: string }> = [
   { key: 'sales_forecast', label: 'Forecast' },
   { key: 'cm_committed', label: 'Committed (firm PO)' },
@@ -75,79 +56,75 @@ export function Flow({ token }: { token: string }) {
   };
 
   return (
-    <div>
-      <div {...stylex.props(styles.card)}>
-        <div {...stylex.props(styles.row)}>
-          <button {...stylex.props(styles.button)} data-testid="flow-load" onClick={init}>Load flow</button>
-          {variant && (
-            <select {...stylex.props(styles.input)} data-testid="flow-variant" value={variant} onChange={(e) => { setVariant(e.target.value); load(e.target.value); }}>
-              {variants.map((v) => <option key={v.id} value={v.id}>{v.sku} — {v.family}</option>)}
-            </select>
-          )}
-          {error && <span data-testid="flow-error" style={{ color: colors.warn }}>{error}</span>}
-        </div>
+    <>
+      <PageHead
+        title="Flow"
+        sub="The H6Q variants over time — forecast → committed → produced → delivered → ordered → shipped → revenue"
+        right={
+          <div className="row g8">
+            <button className="btn primary" data-testid="flow-load" onClick={init}>{I.refresh({ size: 14 })} Load flow</button>
+            {variant && (
+              <select className="fld sel" data-testid="flow-variant" value={variant} onChange={(e) => { setVariant(e.target.value); load(e.target.value); }}>
+                {variants.map((v) => <option key={v.id} value={v.id}>{v.sku} — {v.family}</option>)}
+              </select>
+            )}
+            {error && <span className="dim" data-testid="flow-error" style={{ color: 'var(--danger)' }}>{error}</span>}
+          </div>
+        }
+      />
 
-        <div {...stylex.props(styles.section)}>H6Q variants over time — the same demand, each stage distinct</div>
-        <table {...stylex.props(styles.table)} data-testid="flow-grid">
-          <thead>
-            <tr>
-              <th {...stylex.props(styles.th)}>Variant</th>
-              {MONTHS.map((m) => <th key={m} {...stylex.props(styles.th, styles.thNum)}>{m}</th>)}
-            </tr>
-          </thead>
-          <tbody>
-            {VARIANTS.map((vr) => (
-              <tr key={vr.key} data-testid={`flow-row-${vr.key}`}>
-                <td {...stylex.props(styles.td, styles.variant)}>{vr.label}</td>
-                {MONTHS.map((m) => <td key={m} {...stylex.props(styles.td, styles.tdNum)} data-testid={`flow-cell-${vr.key}-${m}`}>{cell(m, vr.key)}</td>)}
+      <Card title="H6Q variants over time" icon={I.trend} aux={<span className="dim" style={{ fontSize: 12 }}>the same demand, each stage distinct</span>}>
+        <div className="tablewrap">
+          <table className="tbl" data-testid="flow-grid">
+            <thead><tr><th>Variant</th>{MONTHS.map((m) => <th key={m} className="num">{m}</th>)}</tr></thead>
+            <tbody>
+              {VARIANTS.map((vr) => (
+                <tr key={vr.key} data-testid={`flow-row-${vr.key}`}>
+                  <td style={{ fontWeight: 600 }}>{vr.label}</td>
+                  {MONTHS.map((m) => <td key={m} className="num" data-testid={`flow-cell-${vr.key}-${m}`}>{cell(m, vr.key)}</td>)}
+                </tr>
+              ))}
+              <tr data-testid="flow-row-revenue">
+                <td style={{ fontWeight: 700, color: 'var(--accent)' }}>Revenue ex-VAT (£)</td>
+                {MONTHS.map((m) => <td key={m} className="num" style={{ fontWeight: 700, color: 'var(--accent)' }}>{cell(m, 'revenue_ex_vat')}</td>)}
               </tr>
-            ))}
-            <tr data-testid="flow-row-revenue">
-              <td {...stylex.props(styles.td, styles.variant, styles.rev)}>Revenue ex-VAT (£)</td>
-              {MONTHS.map((m) => <td key={m} {...stylex.props(styles.td, styles.tdNum, styles.rev)}>{cell(m, 'revenue_ex_vat')}</td>)}
-            </tr>
-          </tbody>
-        </table>
-      </div>
+            </tbody>
+          </table>
+        </div>
+      </Card>
 
-      <div {...stylex.props(styles.card)}>
-        <div {...stylex.props(styles.section)}>Immutable ledger — recognised revenue traced to TigerBeetle transfers ({MONTHS[1]})</div>
+      <Card title={`Immutable ledger — recognised revenue traced to TigerBeetle (${MONTHS[1]})`} icon={I.scale}>
         {ledger && (
           <>
-            <div {...stylex.props(styles.row)} data-testid="ledger-totals">
-              <span {...stylex.props(styles.chip)}>Revenue £{ledger.totals?.revenue_ex_vat ?? '0'}</span>
-              <span {...stylex.props(styles.chip)}>VAT £{ledger.totals?.vat ?? '0'}</span>
-              <span {...stylex.props(styles.chip)}>COGS £{ledger.totals?.cogs ?? '0'}</span>
-              <span {...stylex.props(styles.chip)}>Gross margin £{ledger.totals?.gross_margin ?? '0'}</span>
+            <div className="row g8" style={{ flexWrap: 'wrap', marginBottom: 12 }} data-testid="ledger-totals">
+              <Chip s="neutral">Revenue £{ledger.totals?.revenue_ex_vat ?? '0'}</Chip>
+              <Chip s="neutral">VAT £{ledger.totals?.vat ?? '0'}</Chip>
+              <Chip s="neutral">COGS £{ledger.totals?.cogs ?? '0'}</Chip>
+              <Chip s="neutral">Gross margin £{ledger.totals?.gross_margin ?? '0'}</Chip>
             </div>
-            <table {...stylex.props(styles.table)} data-testid="ledger-table">
-              <thead>
-                <tr>
-                  <th {...stylex.props(styles.th)}>Invoice</th>
-                  <th {...stylex.props(styles.th, styles.thNum)}>Revenue</th>
-                  <th {...stylex.props(styles.th, styles.thNum)}>VAT</th>
-                  <th {...stylex.props(styles.th, styles.thNum)}>COGS</th>
-                  <th {...stylex.props(styles.th, styles.thNum)}>Margin</th>
-                  <th {...stylex.props(styles.th)}>AR transfer (TigerBeetle id)</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(ledger.recognitions ?? []).map((r: any, i: number) => (
-                  <tr key={i} data-testid="ledger-row">
-                    <td {...stylex.props(styles.td)}>{r.invoice_no ?? '—'}</td>
-                    <td {...stylex.props(styles.td, styles.tdNum)}>{r.revenue_ex_vat}</td>
-                    <td {...stylex.props(styles.td, styles.tdNum)}>{r.vat}</td>
-                    <td {...stylex.props(styles.td, styles.tdNum)}>{r.cogs}</td>
-                    <td {...stylex.props(styles.td, styles.tdNum)}>{r.gross_margin}</td>
-                    <td {...stylex.props(styles.td, styles.mono)}>{(r.ar_transfer_id ?? '').slice(0, 24)}…</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            <p {...stylex.props(styles.label)} style={{ marginTop: '0.6rem' }}>Each revenue figure is posted as DR AR / CR Revenue + VAT and DR COGS / CR INV in the immutable log — the transfer ids above are the proof.</p>
+            <div className="tablewrap">
+              <table className="tbl" data-testid="ledger-table">
+                <thead><tr>
+                  <th>Invoice</th><th className="num">Revenue</th><th className="num">VAT</th><th className="num">COGS</th><th className="num">Margin</th><th>AR transfer (TigerBeetle id)</th>
+                </tr></thead>
+                <tbody>
+                  {(ledger.recognitions ?? []).map((r: any, i: number) => (
+                    <tr key={i} data-testid="ledger-row">
+                      <td>{r.invoice_no ?? '—'}</td>
+                      <td className="num">{r.revenue_ex_vat}</td>
+                      <td className="num">{r.vat}</td>
+                      <td className="num">{r.cogs}</td>
+                      <td className="num">{r.gross_margin}</td>
+                      <td className="mono dim">{(r.ar_transfer_id ?? '').slice(0, 24)}…</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p className="dim" style={{ marginTop: 10, fontSize: 12.5 }}>Each revenue figure is posted as DR AR / CR Revenue + VAT and DR COGS / CR INV in the immutable log — the transfer ids above are the proof.</p>
           </>
         )}
-      </div>
-    </div>
+      </Card>
+    </>
   );
 }

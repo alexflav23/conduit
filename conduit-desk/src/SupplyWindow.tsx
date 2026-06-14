@@ -1,29 +1,11 @@
 import React, { useState } from 'react';
-import * as stylex from '@stylexjs/stylex';
-import { colors } from './styles/tokens.stylex';
 import { getContractManufacturers, getSupplyCommitments, getProposals, getSupplyWarnings, approvePo } from './api';
+import { PageHead, Card, ZoneTag } from './kit/kit';
+import { I } from './kit/icons';
 
-// The Supply window desk (design spec doc 20 §2.4): the firm-commitment horizon (frozen/flex/free), the auto-PO
-// proposals (auto-fill within headroom + blocked remainder), and the divergence warnings — per contract manufacturer.
-
-const styles = stylex.create({
-  card: { backgroundColor: colors.surface, border: `1px solid ${colors.border}`, borderRadius: '14px', padding: '1.25rem', marginBottom: '1.25rem', maxWidth: '980px' },
-  section: { fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.06em', color: colors.muted, marginBottom: '0.6rem' },
-  row: { display: 'flex', gap: '0.75rem', alignItems: 'center', marginBottom: '0.6rem', flexWrap: 'wrap' },
-  input: { backgroundColor: colors.bg, color: colors.text, border: `1px solid ${colors.border}`, borderRadius: '8px', padding: '0.45rem 0.6rem', fontSize: '0.9rem' },
-  button: { backgroundColor: colors.accent, color: '#fff', border: 'none', borderRadius: '10px', padding: '0.5rem 1.05rem', fontSize: '0.92rem', fontWeight: 600, cursor: 'pointer' },
-  approve: { backgroundColor: colors.ok, color: '#06210f', border: 'none', borderRadius: '8px', padding: '0.3rem 0.7rem', fontWeight: 700, fontSize: '0.78rem', cursor: 'pointer' },
-  table: { width: '100%', borderCollapse: 'collapse', fontSize: '0.88rem', fontVariantNumeric: 'tabular-nums' },
-  th: { textAlign: 'left', color: colors.muted, fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.05em', padding: '0.45rem 0.6rem', borderBottom: `1px solid ${colors.border}` },
-  td: { padding: '0.4rem 0.6rem', borderBottom: `1px solid ${colors.border}` },
-  num: { textAlign: 'right' },
-  zoneFrozen: { color: '#7aa2ff', fontWeight: 700 },
-  zoneFlex: { color: colors.warn, fontWeight: 700 },
-  zoneFree: { color: colors.ok, fontWeight: 700 },
-  blocked: { color: colors.warn, fontWeight: 700 },
-});
-
-const zoneStyle = (z: string) => z === 'frozen' ? styles.zoneFrozen : z === 'flex' ? styles.zoneFlex : styles.zoneFree;
+// The Supply window desk (design spec doc 20 §2.4 / spec/ui/07-supply.md): the firm-commitment horizon
+// (frozen/flex/free), the auto-PO proposals (auto-fill within headroom + blocked remainder), and the
+// divergence warnings — per contract manufacturer. Ported to the desk kit (.tbl + ZoneTag), testids preserved.
 
 export function SupplyWindow({ token }: { token: string }) {
   const [cms, setCms] = useState<any[]>([]);
@@ -51,79 +33,83 @@ export function SupplyWindow({ token }: { token: string }) {
   };
 
   return (
-    <div>
-      <div {...stylex.props(styles.card)}>
-        <div {...stylex.props(styles.row)}>
-          <button {...stylex.props(styles.button)} data-testid="supply-load" onClick={init}>Load supply window</button>
-          {supplier && (
-            <select {...stylex.props(styles.input)} data-testid="supply-cm" value={supplier} onChange={(e) => { setSupplier(e.target.value); load(e.target.value); }}>
-              {cms.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
-          )}
-          {error && <span data-testid="supply-error" style={{ color: colors.warn }}>{error}</span>}
+    <>
+      <PageHead
+        title="Supply window"
+        sub="Firm-commitment horizon, auto-PO proposals within headroom, and divergence warnings per CM"
+        right={
+          <div className="row g8">
+            <button className="btn primary" data-testid="supply-load" onClick={init}>{I.refresh({ size: 14 })} Load supply window</button>
+            {supplier && (
+              <select className="fld sel" data-testid="supply-cm" value={supplier} onChange={(e) => { setSupplier(e.target.value); load(e.target.value); }}>
+                {cms.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            )}
+            {error && <span className="dim" data-testid="supply-error" style={{ color: 'var(--danger)' }}>{error}</span>}
+          </div>
+        }
+      />
+
+      <Card title="Firm-commitment horizon" icon={I.cpu} aux={<span className="dim" style={{ fontSize: 12 }}>frozen (can't move) · flex (±tolerance) · free</span>}>
+        <div className="tablewrap">
+          <table className="tbl" data-testid="supply-commitments">
+            <thead><tr><th>SKU</th><th>Week</th><th className="num">Firm PO</th><th>Zone</th></tr></thead>
+            <tbody>
+              {commitments.map((c, i) => (
+                <tr key={i} data-testid="supply-commit-row">
+                  <td><b>{c.sku}</b></td><td>{c.target_date}</td><td className="num">{c.qty}</td><td><ZoneTag zone={c.zone} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
+      </Card>
 
-        <div {...stylex.props(styles.section)}>Firm-commitment horizon — frozen (can't move) · flex (±tolerance) · free</div>
-        <table {...stylex.props(styles.table)} data-testid="supply-commitments">
-          <thead><tr><th {...stylex.props(styles.th)}>SKU</th><th {...stylex.props(styles.th)}>Week</th><th {...stylex.props(styles.th, styles.num)}>Firm PO</th><th {...stylex.props(styles.th)}>Zone</th></tr></thead>
-          <tbody>
-            {commitments.map((c, i) => (
-              <tr key={i} data-testid="supply-commit-row">
-                <td {...stylex.props(styles.td)}>{c.sku}</td>
-                <td {...stylex.props(styles.td)}>{c.target_date}</td>
-                <td {...stylex.props(styles.td, styles.num)}>{c.qty}</td>
-                <td {...stylex.props(styles.td, zoneStyle(c.zone))}>{c.zone}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <Card title="Auto-PO proposals" icon={I.list} aux={<span className="dim" style={{ fontSize: 12 }}>proposed within headroom; blocked = needs escalation</span>}>
+        <div className="tablewrap">
+          <table className="tbl" data-testid="supply-proposals">
+            <thead><tr>
+              <th>SKU</th><th>Week</th><th className="num">Demand</th><th className="num">Committed</th>
+              <th className="num">Net need</th><th className="num">Proposed</th><th className="num">Blocked</th><th>Zone</th><th></th>
+            </tr></thead>
+            <tbody>
+              {proposals.map((p, i) => (
+                <tr key={i} data-testid="supply-proposal-row">
+                  <td><b>{p.sku}</b></td>
+                  <td>{p.target_date}</td>
+                  <td className="num">{p.demand}</td>
+                  <td className="num">{p.committed}</td>
+                  <td className="num">{p.net_need}</td>
+                  <td className="num">{p.proposed_delta}</td>
+                  <td className="num" style={p.blocked_qty > 0 ? { color: 'var(--danger)', fontWeight: 700 } : undefined}>{p.blocked_qty > 0 ? `⚠ ${p.blocked_qty}` : '0'}</td>
+                  <td><ZoneTag zone={p.zone} /></td>
+                  <td>{p.status === 'proposed' && p.proposed_delta > 0 && <button className="btn primary sm" data-testid="supply-approve" onClick={() => approve(p.product_variant_id, p.target_date)}>Approve</button>}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Card>
 
-      <div {...stylex.props(styles.card)}>
-        <div {...stylex.props(styles.section)}>Auto-PO proposals — proposed within headroom; blocked = needs escalation</div>
-        <table {...stylex.props(styles.table)} data-testid="supply-proposals">
-          <thead><tr>
-            <th {...stylex.props(styles.th)}>SKU</th><th {...stylex.props(styles.th)}>Week</th>
-            <th {...stylex.props(styles.th, styles.num)}>Demand</th><th {...stylex.props(styles.th, styles.num)}>Committed</th>
-            <th {...stylex.props(styles.th, styles.num)}>Net need</th><th {...stylex.props(styles.th, styles.num)}>Proposed</th>
-            <th {...stylex.props(styles.th, styles.num)}>Blocked</th><th {...stylex.props(styles.th)}>Zone</th><th {...stylex.props(styles.th)}></th>
-          </tr></thead>
-          <tbody>
-            {proposals.map((p, i) => (
-              <tr key={i} data-testid="supply-proposal-row">
-                <td {...stylex.props(styles.td)}>{p.sku}</td>
-                <td {...stylex.props(styles.td)}>{p.target_date}</td>
-                <td {...stylex.props(styles.td, styles.num)}>{p.demand}</td>
-                <td {...stylex.props(styles.td, styles.num)}>{p.committed}</td>
-                <td {...stylex.props(styles.td, styles.num)}>{p.net_need}</td>
-                <td {...stylex.props(styles.td, styles.num)}>{p.proposed_delta}</td>
-                <td {...stylex.props(styles.td, styles.num)} {...(p.blocked_qty > 0 ? stylex.props(styles.td, styles.num, styles.blocked) : {})}>{p.blocked_qty > 0 ? `⚠ ${p.blocked_qty}` : '0'}</td>
-                <td {...stylex.props(styles.td, zoneStyle(p.zone))}>{p.zone}</td>
-                <td {...stylex.props(styles.td)}>{p.status === 'proposed' && p.proposed_delta > 0 && <button {...stylex.props(styles.approve)} data-testid="supply-approve" onClick={() => approve(p.product_variant_id, p.target_date)}>Approve</button>}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      <div {...stylex.props(styles.card)}>
-        <div {...stylex.props(styles.section)}>Divergence warnings — sales/automated demand vs a firm PO that can't move</div>
-        <table {...stylex.props(styles.table)} data-testid="supply-warnings">
-          <thead><tr><th {...stylex.props(styles.th)}>SKU</th><th {...stylex.props(styles.th)}>Zone</th><th {...stylex.props(styles.th, styles.num)}>Committed</th><th {...stylex.props(styles.th, styles.num)}>Demand</th><th {...stylex.props(styles.th)}>Severity</th><th {...stylex.props(styles.th)}>Message</th></tr></thead>
-          <tbody>
-            {warnings.map((w, i) => (
-              <tr key={i} data-testid="supply-warning-row">
-                <td {...stylex.props(styles.td)}>{w.sku}</td>
-                <td {...stylex.props(styles.td, zoneStyle(w.zone))}>{w.zone}</td>
-                <td {...stylex.props(styles.td, styles.num)}>{w.committed}</td>
-                <td {...stylex.props(styles.td, styles.num)}>{w.demand}</td>
-                <td {...stylex.props(styles.td, styles.blocked)}>{w.severity}</td>
-                <td {...stylex.props(styles.td)}>{w.message}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
+      <Card title="Divergence warnings" icon={I.shield} aux={<span className="dim" style={{ fontSize: 12 }}>sales/automated demand vs a firm PO that can't move</span>}>
+        <div className="tablewrap">
+          <table className="tbl" data-testid="supply-warnings">
+            <thead><tr><th>SKU</th><th>Zone</th><th className="num">Committed</th><th className="num">Demand</th><th>Severity</th><th>Message</th></tr></thead>
+            <tbody>
+              {warnings.map((w, i) => (
+                <tr key={i} data-testid="supply-warning-row">
+                  <td><b>{w.sku}</b></td>
+                  <td><ZoneTag zone={w.zone} /></td>
+                  <td className="num">{w.committed}</td>
+                  <td className="num">{w.demand}</td>
+                  <td style={{ color: 'var(--danger)', fontWeight: 700 }}>{w.severity}</td>
+                  <td className="dim">{w.message}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+    </>
   );
 }
