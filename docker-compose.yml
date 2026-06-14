@@ -83,6 +83,8 @@ services:
       CONDUIT_PULSAR_URL: pulsar://conduit-pulsar:6650
       CONDUIT_TB_ADDRESSES: 172.31.250.10:3000
       INGEST_DIR: /app/ingest
+      # Google Workspace sign-in (flows in from direnv via the shell). Empty = verifier off, dev:<id> tokens only.
+      GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:-}
     volumes:
       - ./ingest:/app/ingest:ro
     ports: ["8080:8080", "9990:9990", "9464:9464"]
