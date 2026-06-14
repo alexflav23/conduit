@@ -1,29 +1,12 @@
 import React, { useState } from 'react';
-import * as stylex from '@stylexjs/stylex';
-import { colors } from './styles/tokens.stylex';
 import { getDocuments, documentPdfUrl, voidInvoice } from './api';
+import { PageHead, Card, Chip, LoadBar } from './kit/kit';
+import { I } from './kit/icons';
 
-// The Documents desk (M13 doc 17 §6 + §void): the legal artefacts for an invoice — the invoice PDF and, once an
-// invoice is invalidated, the credit note that supersedes it — plus the void/credit/refund action. Voiding an
-// invoice is an immutable reversal: the original PDF is kept (WORM) but badged, and a credit note is minted.
-const styles = stylex.create({
-  card: { backgroundColor: colors.surface, border: `1px solid ${colors.border}`, borderRadius: '14px', padding: '1.25rem', marginBottom: '1.25rem', maxWidth: '900px' },
-  section: { fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.06em', color: colors.muted, marginBottom: '0.6rem' },
-  row: { display: 'flex', gap: '0.75rem', alignItems: 'center', marginBottom: '0.7rem', flexWrap: 'wrap' },
-  button: { backgroundColor: colors.accent, color: '#fff', border: 'none', borderRadius: '10px', padding: '0.5rem 1.05rem', fontSize: '0.92rem', fontWeight: 600, cursor: 'pointer' },
-  danger: { backgroundColor: '#b3261e' },
-  input: { backgroundColor: colors.bg, color: colors.text, border: `1px solid ${colors.border}`, borderRadius: '8px', padding: '0.45rem 0.6rem', fontSize: '0.9rem' },
-  label: { color: colors.muted, fontSize: '0.8rem' },
-  table: { width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem', fontVariantNumeric: 'tabular-nums' },
-  th: { textAlign: 'left', color: colors.muted, fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.05em', padding: '0.45rem 0.7rem', borderBottom: `1px solid ${colors.border}` },
-  td: { padding: '0.45rem 0.7rem', borderBottom: `1px solid ${colors.border}` },
-  num: { textAlign: 'right' },
-  link: { color: colors.accent, cursor: 'pointer', textDecoration: 'underline', background: 'none', border: 'none', padding: 0, font: 'inherit' },
-  badge: { fontSize: '0.68rem', fontWeight: 700, padding: '0.1rem 0.45rem', borderRadius: '999px', textTransform: 'uppercase', letterSpacing: '0.04em' },
-  badgeCredit: { backgroundColor: 'rgba(150,45,255,0.18)', color: colors.accent },
-  badgeVoid: { backgroundColor: 'rgba(179,38,30,0.18)', color: '#ff6b6b' },
-  select: { backgroundColor: colors.bg, color: colors.text, border: `1px solid ${colors.border}`, borderRadius: '8px', padding: '0.45rem 0.6rem', fontSize: '0.9rem' },
-});
+// The Documents desk (M13 doc 17 §6 + §void / spec/ui/10-documents.md): the legal artefacts for an invoice —
+// the invoice PDF and, once an invoice is invalidated, the credit note that supersedes it — plus the
+// void/credit/refund action. Voiding is an immutable reversal: the original PDF is kept (WORM) but badged,
+// and a credit note is minted. Ported to the desk kit (.tbl + Chip), testids preserved.
 
 export function Documents({ token }: { token: string }) {
   const [invoiceNo, setInvoiceNo] = useState('INV-FLOW');
@@ -56,61 +39,45 @@ export function Documents({ token }: { token: string }) {
   const m = (v: any) => (v == null ? '—' : `£${Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
 
   return (
-    <div>
-      <div {...stylex.props(styles.card)}>
-        <div {...stylex.props(styles.section)}>Documents — legal artefacts for an invoice (WORM)</div>
-        <div {...stylex.props(styles.row)}>
-          <span {...stylex.props(styles.label)}>Invoice no</span>
-          <input {...stylex.props(styles.input)} data-testid="doc-invoice-no" value={invoiceNo} onChange={(e) => setInvoiceNo(e.target.value)} style={{ width: '280px' }} />
-          <button {...stylex.props(styles.button)} data-testid="doc-load" onClick={load}>Load documents</button>
-        </div>
-        <table {...stylex.props(styles.table)} data-testid="doc-table">
-          <thead><tr>
-            <th {...stylex.props(styles.th)}>Number</th>
-            <th {...stylex.props(styles.th)}>Type</th>
-            <th {...stylex.props(styles.th, styles.num)}>Total</th>
-            <th {...stylex.props(styles.th)}>State</th>
-            <th {...stylex.props(styles.th)}>PDF</th>
-          </tr></thead>
-          <tbody>
-            {docs.map((d, i) => (
-              <tr key={i} data-testid="doc-row">
-                <td {...stylex.props(styles.td)}>{d.formatted_number ?? '—'}</td>
-                <td {...stylex.props(styles.td)}>
-                  {d.document_type}
-                  {d.document_type === 'credit_note' && <span {...stylex.props(styles.badge, styles.badgeCredit)} style={{ marginLeft: '0.4rem' }}>credit</span>}
-                </td>
-                <td {...stylex.props(styles.td, styles.num)}>{m(d.total_amount)}</td>
-                <td {...stylex.props(styles.td)}>
-                  {d.voided_at ? <span {...stylex.props(styles.badge, styles.badgeVoid)} data-testid="doc-voided">voided</span> : d.status}
-                </td>
-                <td {...stylex.props(styles.td)}>
-                  <button {...stylex.props(styles.link)} data-testid="doc-download" onClick={() => download(d.id)}>Download</button>
-                </td>
-              </tr>
-            ))}
-            {loaded && docs.length === 0 && <tr><td {...stylex.props(styles.td)} colSpan={5} style={{ color: colors.muted }}>No documents for this invoice yet.</td></tr>}
-          </tbody>
-        </table>
-      </div>
+    <>
+      <PageHead title="Documents" sub="Legal artefacts for an invoice (WORM) — PDF, credit notes, and immutable invalidation" />
 
-      {/* Invalidation — void / cancel / refund / correct (immutable reversal) */}
-      <div {...stylex.props(styles.card)}>
-        <div {...stylex.props(styles.section)}>Invalidate this invoice (reverses the ledger + mints a credit note)</div>
-        <div {...stylex.props(styles.row)}>
-          <span {...stylex.props(styles.label)}>Kind</span>
-          <select {...stylex.props(styles.select)} data-testid="void-kind" value={kind} onChange={(e) => setKind(e.target.value)}>
+      <Card title="Documents" icon={I.list} style={{ maxWidth: 900 }}
+        aux={<LoadBar><span className="dim">Invoice no</span><input className="fld" style={{ width: 220 }} data-testid="doc-invoice-no" value={invoiceNo} onChange={(e) => setInvoiceNo(e.target.value)} /><button className="btn primary sm" data-testid="doc-load" onClick={load}>Load</button></LoadBar>}>
+        <div className="tablewrap">
+          <table className="tbl" data-testid="doc-table">
+            <thead><tr><th>Number</th><th>Type</th><th className="num">Total</th><th>State</th><th>PDF</th></tr></thead>
+            <tbody>
+              {docs.map((d, i) => (
+                <tr key={i} data-testid="doc-row">
+                  <td className="mono">{d.formatted_number ?? '—'}</td>
+                  <td>{d.document_type}{d.document_type === 'credit_note' && <span style={{ marginLeft: 6 }}><Chip s="accent">credit</Chip></span>}</td>
+                  <td className="num">{m(d.total_amount)}</td>
+                  <td>{d.voided_at ? <Chip s="danger"><span data-testid="doc-voided">voided</span></Chip> : <Chip s={d.status}>{d.status}</Chip>}</td>
+                  <td><button className="btn sm" data-testid="doc-download" onClick={() => download(d.id)}>{I.download({ size: 13 })} Download</button></td>
+                </tr>
+              ))}
+              {loaded && docs.length === 0 && <tr><td className="dim" colSpan={5} style={{ padding: '14px 12px' }}>No documents for this invoice yet.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
+      <Card title="Invalidate this invoice" icon={I.shield} style={{ maxWidth: 900 }} aux={<span className="dim" style={{ fontSize: 12 }}>reverses the ledger + mints a credit note</span>}>
+        <div className="row g8" style={{ flexWrap: 'wrap' }}>
+          <span className="dim">Kind</span>
+          <select className="fld sel" data-testid="void-kind" value={kind} onChange={(e) => setKind(e.target.value)}>
             <option value="mistake">mistake</option>
             <option value="cancellation">cancellation</option>
             <option value="refund">refund (needs approval)</option>
             <option value="correction">correction</option>
           </select>
-          <input {...stylex.props(styles.input)} data-testid="void-reason" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="reason" style={{ width: '320px' }} />
-          <button {...stylex.props(styles.button, styles.danger)} data-testid="void-submit" onClick={doVoid}>Void invoice</button>
-          {status && <span {...stylex.props(styles.label)} data-testid="void-status">{status}</span>}
+          <input className="fld" style={{ width: 320 }} data-testid="void-reason" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="reason" />
+          <button className="btn danger" data-testid="void-submit" onClick={doVoid}>Void invoice</button>
+          {status && <span className="dim" data-testid="void-status">{status}</span>}
         </div>
-        <span {...stylex.props(styles.label)}>The original PDF is kept (WORM) and badged; a credit note supersedes it. A refund returns the cash.</span>
-      </div>
-    </div>
+        <p className="dim" style={{ marginTop: 10, fontSize: 12.5 }}>The original PDF is kept (WORM) and badged; a credit note supersedes it. A refund returns the cash.</p>
+      </Card>
+    </>
   );
 }

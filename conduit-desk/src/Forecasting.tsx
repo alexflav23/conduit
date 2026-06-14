@@ -1,65 +1,30 @@
 import React, { useMemo, useState } from 'react';
-import * as stylex from '@stylexjs/stylex';
-import { colors } from './styles/tokens.stylex';
+import { PageHead } from './kit/kit';
 
-// The forecast-engine explainer (doc 26, productized): how the self-improving per-account engine works,
-// why it is bulletproof (the honesty rules + the falsification discipline), and how it scales. Every
-// number on this page is a real measurement from the backtest ledger — nothing illustrative.
+// The forecast-engine explainer (doc 26, productized / spec/ui/15-engine.md): how the self-improving
+// per-account engine works, why it is bulletproof (the honesty rules + the falsification discipline), and how
+// it scales. Every number on this page is a real measurement from the backtest ledger — nothing illustrative.
+// Ported to the desk kit (PageHead / .card / .tbl / .metric); the bespoke sliders + SVG bars are kept (no kit
+// equivalent), restyled with the design tokens. Every data-testid and SVG aria-label is preserved verbatim.
 
-const styles = stylex.create({
-  wrap: { maxWidth: '1080px' },
-  h2: { fontSize: '1.05rem', fontWeight: 700, color: '#b9a7e8', marginTop: '0.2rem', marginBottom: '0.6rem' },
-  section: { backgroundColor: colors.surface, border: `1px solid ${colors.border}`, borderRadius: '12px', padding: '1rem 1.25rem', marginBottom: '0.9rem' },
-  sectionHead: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' },
-  sectionTitle: { fontSize: '1rem', fontWeight: 700 },
-  badge: { fontSize: '0.7rem', fontWeight: 700, borderRadius: '999px', padding: '0.15rem 0.6rem', marginLeft: '0.5rem' },
-  badgeStruct: { backgroundColor: '#1d4029', color: '#6ee7a0' },
-  badgeStat: { backgroundColor: '#1d2a40', color: '#6eb2e7' },
-  badgeGuard: { backgroundColor: '#402a1d', color: '#e7b26e' },
-  muted: { color: colors.muted, fontSize: '0.85rem', lineHeight: 1.55 },
-  body: { fontSize: '0.9rem', lineHeight: 1.6, marginTop: '0.6rem' },
-  grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: '0.6rem', marginTop: '0.6rem' },
-  card: { backgroundColor: colors.bg, border: `1px solid ${colors.border}`, borderRadius: '10px', padding: '0.7rem 0.85rem', cursor: 'pointer' },
-  cardKey: { fontFamily: 'ui-monospace, monospace', fontSize: '0.8rem', color: colors.accent, fontWeight: 700 },
-  cardBody: { fontSize: '0.78rem', color: colors.muted, marginTop: '0.35rem', lineHeight: 1.5 },
-  table: { width: '100%', borderCollapse: 'collapse', marginTop: '0.6rem', fontSize: '0.82rem' },
-  th: { textAlign: 'left', color: colors.muted, fontWeight: 600, padding: '0.35rem 0.6rem', borderBottom: `1px solid ${colors.border}` },
-  td: { padding: '0.35rem 0.6rem', borderBottom: `1px solid ${colors.border}` },
-  num: { textAlign: 'right', fontVariantNumeric: 'tabular-nums' },
-  good: { color: '#6ee7a0', fontWeight: 700 },
-  bad: { color: '#e76e6e', fontWeight: 700 },
-  warn2: { color: '#e7c76e', fontWeight: 700 },
-  kpiRow: { display: 'flex', gap: '0.7rem', flexWrap: 'wrap', marginTop: '0.6rem' },
-  kpi: { backgroundColor: colors.bg, border: `1px solid ${colors.border}`, borderRadius: '10px', padding: '0.7rem 1rem', minWidth: '170px' },
-  kpiBig: { display: 'block', fontSize: '1.35rem', fontWeight: 800, color: colors.accent },
-  kpiLabel: { fontSize: '0.72rem', color: colors.muted },
-  slider: { width: '100%' },
-  sliderRow: { display: 'flex', gap: '1.2rem', alignItems: 'center', marginTop: '0.6rem' },
-  sliderBox: { flexGrow: 1 },
-  mono: { fontFamily: 'ui-monospace, monospace', fontSize: '0.82rem' },
-  stepBtn: { backgroundColor: 'transparent', color: colors.text, border: `1px solid ${colors.border}`, borderRadius: '8px', padding: '0.35rem 0.9rem', cursor: 'pointer', fontWeight: 600 },
-  stepBtnActive: { backgroundColor: colors.accent, color: '#fff', borderColor: colors.accent },
-  pipeline: { display: 'flex', gap: '0.4rem', flexWrap: 'wrap', alignItems: 'stretch', marginTop: '0.6rem' },
-  pipeBox: { backgroundColor: colors.bg, border: `1px solid ${colors.border}`, borderRadius: '10px', padding: '0.6rem 0.8rem', fontSize: '0.78rem', flexBasis: '150px', flexGrow: 1 },
-  pipeTitle: { fontWeight: 700, color: colors.accent, fontSize: '0.8rem' },
-  arrow: { alignSelf: 'center', color: colors.muted, fontWeight: 700 },
-  flag: { backgroundColor: '#2a1430', border: '1px solid #5a2a6a', borderRadius: '10px', padding: '0.7rem 1rem', marginTop: '0.6rem', fontSize: '0.85rem', lineHeight: 1.55 },
+const badgeStyle = (kind: 'struct' | 'stat' | 'guard'): React.CSSProperties => ({
+  fontSize: 10.5, fontWeight: 700, borderRadius: 999, padding: '2px 9px', marginLeft: 8,
+  ...(kind === 'struct' ? { background: '#1d4029', color: '#6ee7a0' }
+    : kind === 'stat' ? { background: '#1d2a40', color: '#6eb2e7' }
+    : { background: '#402a1d', color: '#e7b26e' }),
 });
 
-function Section({ title, badge, badgeStyle, defaultOpen, children }: {
-  title: string; badge?: string; badgeStyle?: object; defaultOpen?: boolean; children: React.ReactNode;
+function Section({ title, badge, badgeKind, defaultOpen, children }: {
+  title: string; badge?: string; badgeKind?: 'struct' | 'stat' | 'guard'; defaultOpen?: boolean; children: React.ReactNode;
 }) {
   const [open, setOpen] = useState(!!defaultOpen);
   return (
-    <div {...stylex.props(styles.section)}>
-      <div {...stylex.props(styles.sectionHead)} onClick={() => setOpen(!open)} data-testid={`explainer-${title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`}>
-        <span {...stylex.props(styles.sectionTitle)}>
-          {title}
-          {badge ? <span {...stylex.props(styles.badge, badgeStyle as never)}>{badge}</span> : null}
-        </span>
-        <span {...stylex.props(styles.muted)}>{open ? '▾ collapse' : '▸ expand'}</span>
+    <div className="card" style={{ marginBottom: 14 }}>
+      <div className="ct" style={{ cursor: 'pointer', marginBottom: open ? undefined : 0 }} onClick={() => setOpen(!open)} data-testid={`explainer-${title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`}>
+        <div className="t">{title}{badge ? <span style={badgeStyle(badgeKind ?? 'guard')}>{badge}</span> : null}</div>
+        <div className="aux dim">{open ? '▾ collapse' : '▸ expand'}</div>
       </div>
-      {open ? <div {...stylex.props(styles.body)}>{children}</div> : null}
+      {open ? <div style={{ fontSize: 14, lineHeight: 1.6 }}>{children}</div> : null}
     </div>
   );
 }
@@ -107,6 +72,13 @@ const NEGATIVES = [
   ['sell_through ranking prior', '0.9 prior to overindex sell-through', 'promoted it onto procurement-cycle accounts where it loses: 50.7 → 64.8%'],
 ];
 
+const td: React.CSSProperties = { padding: '6px 10px', borderBottom: '1px solid var(--border)' };
+const tdNum: React.CSSProperties = { ...td, textAlign: 'right', fontVariantNumeric: 'tabular-nums' };
+const good: React.CSSProperties = { color: '#6ee7a0', fontWeight: 700 };
+const bad: React.CSSProperties = { color: '#e76e6e', fontWeight: 700 };
+const warn2: React.CSSProperties = { color: '#e7c76e', fontWeight: 700 };
+const mono: React.CSSProperties = { fontFamily: 'var(--font-mono)', fontSize: 13 };
+
 export function Forecasting(_props: { token: string }) {
   const [shelf, setShelf] = useState(5000);
   const [velocity, setVelocity] = useState(2950);
@@ -125,99 +97,98 @@ export function Forecasting(_props: { token: string }) {
   ];
 
   return (
-    <div {...stylex.props(styles.wrap)}>
-      <div {...stylex.props(styles.h2)}>How the Conduit forecast engine works — and why you can trust it</div>
-      <div {...stylex.props(styles.muted)}>
+    <>
+      <PageHead title="Forecast engine" sub="How the self-improving per-account engine works — and why every number on this page is falsifiable" />
+
+      <div className="dim" style={{ fontSize: 14, lineHeight: 1.55, marginBottom: 14, maxWidth: 1080 }}>
         Every number on this page is a real measurement from the engine’s own immutable ledger. The system’s defining property is that it is
         <b> falsifiable</b>: every claim below was earned against history the model was never allowed to see.
       </div>
 
-      <div {...stylex.props(styles.kpiRow)}>
-        <div {...stylex.props(styles.kpi)}><span {...stylex.props(styles.kpiBig)}>9–16%</span><span {...stylex.props(styles.kpiLabel)}>total-level error, recent closed quarters</span></div>
-        <div {...stylex.props(styles.kpi)}><span {...stylex.props(styles.kpiBig)}>3,649</span><span {...stylex.props(styles.kpiLabel)}>independent account×SKU series</span></div>
-        <div {...stylex.props(styles.kpi)}><span {...stylex.props(styles.kpiBig)}>14</span><span {...stylex.props(styles.kpiLabel)}>deterministic models in the registry</span></div>
-        <div {...stylex.props(styles.kpi)}><span {...stylex.props(styles.kpiBig)}>7</span><span {...stylex.props(styles.kpiLabel)}>falsified ideas, documented, never retried</span></div>
-        <div {...stylex.props(styles.kpi)}><span {...stylex.props(styles.kpiBig)}>0</span><span {...stylex.props(styles.kpiLabel)}>Python / ML infra dependencies</span></div>
+      <div className="row" style={{ gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
+        {[['9–16%', 'total-level error, recent closed quarters'], ['3,649', 'independent account×SKU series'], ['14', 'deterministic models in the registry'], ['7', 'falsified ideas, documented, never retried'], ['0', 'Python / ML infra dependencies']].map(([v, l]) => (
+          <div key={l} className="metric" style={{ minWidth: 170, background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 10, padding: '12px 16px' }}>
+            <div className="mv accent" style={{ fontSize: 24 }}>{v}</div>
+            <div className="ml" style={{ marginTop: 4 }}>{l}</div>
+          </div>
+        ))}
       </div>
 
-      <div style={{ height: '1rem' }} />
-
       <Section title="The pipeline — data to bottom line" defaultOpen>
-        <div {...stylex.props(styles.pipeline)}>
-          <div {...stylex.props(styles.pipeBox)}><div {...stylex.props(styles.pipeTitle)}>1 · Ground truth</div>Serial-attributed dispatches (every charger’s serial joined to its dispatch and buyer) + live activations from the device fleet + open orders + deals + Stripe + SMMT TAM. History arrives as git-versioned NDJSON snapshots; backtests pin the data SHA.</div>
-          <div {...stylex.props(styles.arrow)}>→</div>
-          <div {...stylex.props(styles.pipeBox)}><div {...stylex.props(styles.pipeTitle)}>2 · Censored series</div>Per account×SKU, the monthly demand series AS OF a chosen origin — everything (history, shelf, velocity, open book, lags) computed strictly from rows before that date. The world as a forecaster would have seen it.</div>
-          <div {...stylex.props(styles.arrow)}>→</div>
-          <div {...stylex.props(styles.pipeBox)}><div {...stylex.props(styles.pipeTitle)}>3 · The registry</div>14 pure, deterministic models — statistical shapes + structural models that read real telemetry (shelf, activations, order books). Same inputs ⇒ same outputs, forever. A universal clamp bounds every model at 3× the series’ largest month.</div>
-          <div {...stylex.props(styles.arrow)}>→</div>
-          <div {...stylex.props(styles.pipeBox)}><div {...stylex.props(styles.pipeTitle)}>4 · The tournament</div>Per account, candidates are ranked on their own scored track record; guards demote anything unstable; the run-rate incumbent must be beaten to be displaced.</div>
-          <div {...stylex.props(styles.arrow)}>→</div>
-          <div {...stylex.props(styles.pipeBox)}><div {...stylex.props(styles.pipeTitle)}>5 · Bands + £</div>P80/P50/P20 from the model’s own measured error spread; revenue = units × each account’s contract tier (never a stored number); seasonality enters at measured pass-through, not raw TAM.</div>
+        <div className="row g8" style={{ flexWrap: 'wrap', alignItems: 'stretch' }}>
+          {[
+            ['1 · Ground truth', 'Serial-attributed dispatches (every charger’s serial joined to its dispatch and buyer) + live activations from the device fleet + open orders + deals + Stripe + SMMT TAM. History arrives as git-versioned NDJSON snapshots; backtests pin the data SHA.'],
+            ['2 · Censored series', 'Per account×SKU, the monthly demand series AS OF a chosen origin — everything (history, shelf, velocity, open book, lags) computed strictly from rows before that date. The world as a forecaster would have seen it.'],
+            ['3 · The registry', '14 pure, deterministic models — statistical shapes + structural models that read real telemetry (shelf, activations, order books). Same inputs ⇒ same outputs, forever. A universal clamp bounds every model at 3× the series’ largest month.'],
+            ['4 · The tournament', 'Per account, candidates are ranked on their own scored track record; guards demote anything unstable; the run-rate incumbent must be beaten to be displaced.'],
+            ['5 · Bands + £', 'P80/P50/P20 from the model’s own measured error spread; revenue = units × each account’s contract tier (never a stored number); seasonality enters at measured pass-through, not raw TAM.'],
+          ].map(([t, b], i, a) => (
+            <React.Fragment key={t}>
+              <div style={{ background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 10, padding: '10px 13px', fontSize: 12.5, flexBasis: 150, flexGrow: 1 }}>
+                <div style={{ fontWeight: 700, color: 'var(--accent)', fontSize: 13 }}>{t}</div>{b}
+              </div>
+              {i < a.length - 1 && <div className="dim" style={{ alignSelf: 'center', fontWeight: 700 }}>→</div>}
+            </React.Fragment>
+          ))}
         </div>
       </Section>
 
-      <Section title="Why it is bulletproof — the honesty rules" badge="THE CORE" badgeStyle={styles.badgeGuard}>
-        <table {...stylex.props(styles.table)}>
-          <tbody>
-            <tr><td {...stylex.props(styles.td)}><b>No leakage, ever</b></td><td {...stylex.props(styles.td)}>Every feature is computed from rows strictly before the forecast origin. A deal that closed after the origin appears OPEN. An activation after the origin doesn’t exist. The backtest cannot cheat because the queries cannot see the future.</td></tr>
-            <tr><td {...stylex.props(styles.td)}><b>Append-only, immutable</b></td><td {...stylex.props(styles.td)}>Every forecast run is a permanent row set — re-publishing supersedes, never deletes. Contrast: the H6Q workbook overwrites its forecasts with actuals in place, so its closed-quarter accuracy is unrecoverable. Conduit’s can never be.</td></tr>
-            <tr><td {...stylex.props(styles.td)}><b>Deterministic</b></td><td {...stylex.props(styles.td)}>Pure Scala functions — no randomness, no clock, no GPU. (data git SHA, model version) ⇒ bit-identical forecast, reproducible in any audit, forever.</td></tr>
-            <tr><td {...stylex.props(styles.td)}><b>Scored at the served grain</b></td><td {...stylex.props(styles.td)}>Selection is judged on QUARTER totals — the number the business actually reads — after measuring that monthly-grain selection picks flattering shapes that miss the quarter.</td></tr>
-            <tr><td {...stylex.props(styles.td)}><b>Business actuals stay visible</b></td><td {...stylex.props(styles.td)}>Reports separate “what the company shipped” (the full dispatch log) from “what the model could score” (accounts with enough history), with coverage % stated per quarter. The model is never allowed to present its subset as reality.</td></tr>
-            <tr><td {...stylex.props(styles.td)}><b>Humans on identical terms</b></td><td {...stylex.props(styles.td)}>The human plan (H6Q) is scored with the same machinery, same censoring, same grain — from now on, permanently.</td></tr>
-          </tbody>
-        </table>
+      <Section title="Why it is bulletproof — the honesty rules" badge="THE CORE" badgeKind="guard">
+        <table className="tbl"><tbody>
+          <tr><td style={td}><b>No leakage, ever</b></td><td style={td}>Every feature is computed from rows strictly before the forecast origin. A deal that closed after the origin appears OPEN. An activation after the origin doesn’t exist. The backtest cannot cheat because the queries cannot see the future.</td></tr>
+          <tr><td style={td}><b>Append-only, immutable</b></td><td style={td}>Every forecast run is a permanent row set — re-publishing supersedes, never deletes. Contrast: the H6Q workbook overwrites its forecasts with actuals in place, so its closed-quarter accuracy is unrecoverable. Conduit’s can never be.</td></tr>
+          <tr><td style={td}><b>Deterministic</b></td><td style={td}>Pure Scala functions — no randomness, no clock, no GPU. (data git SHA, model version) ⇒ bit-identical forecast, reproducible in any audit, forever.</td></tr>
+          <tr><td style={td}><b>Scored at the served grain</b></td><td style={td}>Selection is judged on QUARTER totals — the number the business actually reads — after measuring that monthly-grain selection picks flattering shapes that miss the quarter.</td></tr>
+          <tr><td style={td}><b>Business actuals stay visible</b></td><td style={td}>Reports separate “what the company shipped” (the full dispatch log) from “what the model could score” (accounts with enough history), with coverage % stated per quarter. The model is never allowed to present its subset as reality.</td></tr>
+          <tr><td style={td}><b>Humans on identical terms</b></td><td style={td}>The human plan (H6Q) is scored with the same machinery, same censoring, same grain — from now on, permanently.</td></tr>
+        </tbody></table>
       </Section>
 
-      <Section title="The falsification discipline — seven ideas the harness killed" badge="WHY TRUST IT" badgeStyle={styles.badgeGuard}>
-        <div {...stylex.props(styles.muted)}>
+      <Section title="The falsification discipline — seven ideas the harness killed" badge="WHY TRUST IT" badgeKind="guard">
+        <div className="dim" style={{ marginBottom: 8 }}>
           A system is only trustworthy if it can reject its own plausible ideas. Every change must improve the 8-quarter backtest means or it is reverted —
           including its evidence rows, so a dead idea can’t haunt future selections. These all sounded right. The data said no.
         </div>
-        <table {...stylex.props(styles.table)}>
-          <thead><tr><th {...stylex.props(styles.th)}>Idea</th><th {...stylex.props(styles.th)}>What it tried</th><th {...stylex.props(styles.th)}>Verdict</th></tr></thead>
+        <table className="tbl">
+          <thead><tr><th>Idea</th><th>What it tried</th><th>Verdict</th></tr></thead>
           <tbody>
             {NEGATIVES.map(([name, what, verdict]) => (
-              <tr key={name}>
-                <td {...stylex.props(styles.td)}><b>{name}</b></td>
-                <td {...stylex.props(styles.td)}>{what}</td>
-                <td {...stylex.props(styles.td, styles.bad)}>{verdict}</td>
-              </tr>
+              <tr key={name}><td style={td}><b>{name}</b></td><td style={td}>{what}</td><td style={{ ...td, ...bad }}>{verdict}</td></tr>
             ))}
           </tbody>
         </table>
       </Section>
 
       <Section title="The model registry — 14 deterministic models">
-        <div {...stylex.props(styles.muted)}>
+        <div className="dim" style={{ marginBottom: 10 }}>
           Statistical models read the series’ own shape. Structural models read the physical world — shelf stock, activations, open order books.
           Structure is privileged: a telemetry measurement is not a curve fit, so structural challengers face a lower bar against the incumbent.
         </div>
-        <div {...stylex.props(styles.grid)}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 10 }}>
           {REGISTRY.map((m) => (
-            <div key={m.key} {...stylex.props(styles.card)}>
-              <span {...stylex.props(styles.cardKey)}>{m.key}</span>
-              <span {...stylex.props(styles.badge, m.kind === 'structural' ? styles.badgeStruct : styles.badgeStat)}>{m.kind}</span>
-              <div {...stylex.props(styles.cardBody)}><b>What:</b> {m.what}</div>
-              <div {...stylex.props(styles.cardBody)}><b>Wins where:</b> {m.wins}</div>
+            <div key={m.key} style={{ background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 10, padding: '11px 13px' }}>
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12.5, color: 'var(--accent)', fontWeight: 700 }}>{m.key}</span>
+              <span style={badgeStyle(m.kind === 'structural' ? 'struct' : 'stat')}>{m.kind}</span>
+              <div className="dim" style={{ fontSize: 12.5, marginTop: 6, lineHeight: 1.5 }}><b>What:</b> {m.what}</div>
+              <div className="dim" style={{ fontSize: 12.5, marginTop: 4, lineHeight: 1.5 }}><b>Wins where:</b> {m.wins}</div>
             </div>
           ))}
         </div>
       </Section>
 
-      <Section title="Try it — the depletion model, live" badge="INTERACTIVE" badgeStyle={styles.badgeStruct}>
-        <div {...stylex.props(styles.muted)}>
+      <Section title="Try it — the depletion model, live" badge="INTERACTIVE" badgeKind="struct">
+        <div className="dim" style={{ marginBottom: 10 }}>
           This is the exact arithmetic that called the Q2’25 Octopus collapse at 11% error (shelf 5,003 × velocity ≈ 2,950/mo) while every
           statistical model said 6,500–8,800. The customer’s shelf must empty before they reorder — drag the sliders.
         </div>
-        <div {...stylex.props(styles.sliderRow)}>
-          <div {...stylex.props(styles.sliderBox)}>
-            <div {...stylex.props(styles.muted)}>Shelf stock (shipped − activated): <b {...stylex.props(styles.mono)}>{shelf.toLocaleString()}</b></div>
-            <input {...stylex.props(styles.slider)} data-testid="shelf-slider" type="range" min={0} max={15000} step={100} value={shelf} onChange={(e) => setShelf(Number(e.target.value))} />
+        <div className="row" style={{ gap: 19, alignItems: 'center' }}>
+          <div style={{ flexGrow: 1 }}>
+            <div className="dim">Shelf stock (shipped − activated): <b style={mono}>{shelf.toLocaleString()}</b></div>
+            <input style={{ width: '100%' }} data-testid="shelf-slider" type="range" min={0} max={15000} step={100} value={shelf} onChange={(e) => setShelf(Number(e.target.value))} />
           </div>
-          <div {...stylex.props(styles.sliderBox)}>
-            <div {...stylex.props(styles.muted)}>Activation velocity (installs/month): <b {...stylex.props(styles.mono)}>{velocity.toLocaleString()}</b></div>
-            <input {...stylex.props(styles.slider)} data-testid="velocity-slider" type="range" min={100} max={6000} step={50} value={velocity} onChange={(e) => setVelocity(Number(e.target.value))} />
+          <div style={{ flexGrow: 1 }}>
+            <div className="dim">Activation velocity (installs/month): <b style={mono}>{velocity.toLocaleString()}</b></div>
+            <input style={{ width: '100%' }} data-testid="velocity-slider" type="range" min={100} max={6000} step={50} value={velocity} onChange={(e) => setVelocity(Number(e.target.value))} />
           </div>
         </div>
         <svg width="100%" height="150" viewBox="0 0 720 150" preserveAspectRatio="none" role="img" aria-label="depletion forecast bars">
@@ -232,20 +203,20 @@ export function Forecasting(_props: { token: string }) {
             );
           })}
         </svg>
-        <div {...stylex.props(styles.muted)}>
-          Quarter total: <b {...stylex.props(styles.mono)}>{Math.round(curve.slice(0, 3).reduce((a, b) => a + b, 0)).toLocaleString()}</b> units —
+        <div className="dim">
+          Quarter total: <b style={mono}>{Math.round(curve.slice(0, 3).reduce((a, b) => a + b, 0)).toLocaleString()}</b> units —
           months stay at zero until the shelf is consumed, then sell-in resumes at the install rate. No statistical model can produce this shape from sell-in alone.
         </div>
       </Section>
 
-      <Section title="The tournament — how an account gets its champion" badge="INTERACTIVE" badgeStyle={styles.badgeStat}>
-        <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginBottom: '0.6rem' }}>
+      <Section title="The tournament — how an account gets its champion" badge="INTERACTIVE" badgeKind="stat">
+        <div className="row g6" style={{ flexWrap: 'wrap', marginBottom: 10 }}>
           {tournamentSteps.map((s, i) => (
-            <button key={s.t} {...stylex.props(styles.stepBtn, step === i && styles.stepBtnActive)} data-testid={`tstep-${i}`} onClick={() => setStep(i)}>{s.t}</button>
+            <button key={s.t} className={'btn sm' + (step === i ? ' primary' : '')} data-testid={`tstep-${i}`} onClick={() => setStep(i)}>{s.t}</button>
           ))}
         </div>
-        <div {...stylex.props(styles.body)}><b>{tournamentSteps[step].t}.</b> {tournamentSteps[step].d}</div>
-        <div {...stylex.props(styles.flag)}>
+        <div style={{ fontSize: 14, lineHeight: 1.6 }}><b>{tournamentSteps[step].t}.</b> {tournamentSteps[step].d}</div>
+        <div style={{ background: '#2a1430', border: '1px solid #5a2a6a', borderRadius: 10, padding: '11px 16px', marginTop: 10, fontSize: 13.5, lineHeight: 1.55 }}>
           The keystone is step 6: <b>per-series model selection overfits noise</b> — we measured an all-run-rate baseline BEATING the unconstrained
           tournament. The incumbent prior is what turns a model zoo into a disciplined system: deviations from the simple default must be EARNED,
           per account, on evidence the challenger never saw the answer to.
@@ -253,7 +224,7 @@ export function Forecasting(_props: { token: string }) {
       </Section>
 
       <Section title="The learning loop — why early quarters look bad and recent ones don’t">
-        <div {...stylex.props(styles.muted)}>
+        <div className="dim" style={{ marginBottom: 8 }}>
           Total-level error by forecast origin (each bar = what the system would have predicted THEN, knowing only what existed then; coverage = the
           share of business units on scoreable accounts). The collapse from 229% to single digits is evidence accruing per account — not tuning.
         </div>
@@ -271,7 +242,7 @@ export function Forecasting(_props: { token: string }) {
             );
           })}
         </svg>
-        <div {...stylex.props(styles.muted)}>
+        <div className="dim">
           Q2’25 (red) is the stocking-wave collapse: every model extrapolated the Q1’25 ramp; the only signal that called it was shelf telemetry, which
           had no track record yet — an honest selector could not have picked it. Choosing it retroactively would be leakage. The system that admits
           this is the one whose recent single-digit errors you can believe. (* Q2’26 scored on its closed months.)
@@ -279,72 +250,70 @@ export function Forecasting(_props: { token: string }) {
       </Section>
 
       <Section title="Ranges, not points — P80 / P50 / P20">
-        <table {...stylex.props(styles.table)}>
-          <tbody>
-            <tr><td {...stylex.props(styles.td)}><b>P80</b></td><td {...stylex.props(styles.td)}>The dependable number — ~80% probability of meeting or beating it. Commit supply and cash against this.</td></tr>
-            <tr><td {...stylex.props(styles.td)}><b>P50</b></td><td {...stylex.props(styles.td)}>The model’s central number, NEVER recentered — bias-chasing was tested and measurably degrades it.</td></tr>
-            <tr><td {...stylex.props(styles.td)}><b>P20</b></td><td {...stylex.props(styles.td)}>Blue sky — ~20% probability. The stretch case.</td></tr>
-          </tbody>
-        </table>
-        <div {...stylex.props(styles.body)}>
+        <table className="tbl"><tbody>
+          <tr><td style={td}><b>P80</b></td><td style={td}>The dependable number — ~80% probability of meeting or beating it. Commit supply and cash against this.</td></tr>
+          <tr><td style={td}><b>P50</b></td><td style={td}>The model’s central number, NEVER recentered — bias-chasing was tested and measurably degrades it.</td></tr>
+          <tr><td style={td}><b>P20</b></td><td style={td}>Blue sky — ~20% probability. The stretch case.</td></tr>
+        </tbody></table>
+        <div style={{ fontSize: 14, lineHeight: 1.6, marginTop: 10 }}>
           The spread is <b>empirical</b>: quantiles of per-sector actual÷forecast ratios over the last three CLOSED origins — the spread the model has
-          actually exhibited, not an assumed ±X%. Currently <span {...stylex.props(styles.mono)}>×0.896 / ×1.396</span> around P50: asymmetric, because
+          actually exhibited, not an assumed ±X%. Currently <span style={mono}>×0.896 / ×1.396</span> around P50: asymmetric, because
           history says this model misses LOW more than high — the blue sky is genuinely fatter than the downside. The band narrows by itself as
           quarters close. <b>Today:</b> Q3’26 P80 £9.3M · P50 £10.1M · P20 £13.4M all-in.
         </div>
       </Section>
 
       <Section title="Seasonality — measured pass-through, not assumed (β = −0.38)">
-        <div {...stylex.props(styles.body)}>
+        <div style={{ fontSize: 14, lineHeight: 1.6 }}>
           The UK BEV market does 56% of its year in H2 (Q4 alone = 30.3%). Naively scaling our Q4 by TAM seasonality would add ~£3M of phantom revenue —
           and Q4’25 proved it: market share-of-year 30.3%, our sell-in share <b>22.5%</b>. Regressing our quarter shares on the market’s gives
           <b> β = −0.38</b>: sell-in <b>inverts</b> market seasonality, because the channel stocks AHEAD of the high season and depletes into it
           (the Q1’25 wave was that stocking). Validated where it was exposed: predicted Q4’25 share 22.6% vs actual 22.5%.
         </div>
-        <table {...stylex.props(styles.table)}>
-          <thead><tr><th {...stylex.props(styles.th)}></th><th {...stylex.props(styles.th, styles.num)}>Q1</th><th {...stylex.props(styles.th, styles.num)}>Q2</th><th {...stylex.props(styles.th, styles.num)}>Q3</th><th {...stylex.props(styles.th, styles.num)}>Q4</th></tr></thead>
+        <table className="tbl" style={{ marginTop: 10 }}>
+          <thead><tr><th></th><th className="num">Q1</th><th className="num">Q2</th><th className="num">Q3</th><th className="num">Q4</th></tr></thead>
           <tbody>
-            <tr><td {...stylex.props(styles.td)}>Market share-of-year (SMMT, 6-yr)</td><td {...stylex.props(styles.td, styles.num)}>21.9%</td><td {...stylex.props(styles.td, styles.num)}>21.8%</td><td {...stylex.props(styles.td, styles.num)}>25.9%</td><td {...stylex.props(styles.td, styles.num, styles.warn2)}>30.3%</td></tr>
-            <tr><td {...stylex.props(styles.td)}>Our sell-in share (2025 actual)</td><td {...stylex.props(styles.td, styles.num)}>25.7%</td><td {...stylex.props(styles.td, styles.num)}>27.0%</td><td {...stylex.props(styles.td, styles.num)}>24.8%</td><td {...stylex.props(styles.td, styles.num, styles.good)}>22.5%</td></tr>
+            <tr><td style={td}>Market share-of-year (SMMT, 6-yr)</td><td style={tdNum}>21.9%</td><td style={tdNum}>21.8%</td><td style={tdNum}>25.9%</td><td style={{ ...tdNum, ...warn2 }}>30.3%</td></tr>
+            <tr><td style={td}>Our sell-in share (2025 actual)</td><td style={tdNum}>25.7%</td><td style={tdNum}>27.0%</td><td style={tdNum}>24.8%</td><td style={{ ...tdNum, ...good }}>22.5%</td></tr>
           </tbody>
         </table>
-        <div {...stylex.props(styles.muted)}>β recomputes from the dispatch log + SMMT profile on every refresh — a second year of data sharpens it automatically. Per-market βs activate the same way as new markets accrue a year of history.</div>
+        <div className="dim" style={{ marginTop: 8 }}>β recomputes from the dispatch log + SMMT profile on every refresh — a second year of data sharpens it automatically. Per-market βs activate the same way as new markets accrue a year of history.</div>
       </Section>
 
       <Section title="Every level of the business, handled">
-        <table {...stylex.props(styles.table)}>
-          <thead><tr><th {...stylex.props(styles.th)}>Level</th><th {...stylex.props(styles.th)}>Mechanism</th></tr></thead>
+        <table className="tbl">
+          <thead><tr><th>Level</th><th>Mechanism</th></tr></thead>
           <tbody>
-            <tr><td {...stylex.props(styles.td)}><b>Serial</b></td><td {...stylex.props(styles.td)}>Every charger’s serial attributed to its buyer at dispatch; activation flips it in real time via the Pulsar stream.</td></tr>
-            <tr><td {...stylex.props(styles.td)}><b>Account×SKU</b></td><td {...stylex.props(styles.td)}>Its own censored series, its own champion, its own measured lags (order→dispatch, reorder point), its own contract tier for £.</td></tr>
-            <tr><td {...stylex.props(styles.td)}><b>Account</b></td><td {...stylex.props(styles.td)}>Selection at account grain (SKUs summed — no arbitrary-variant bugs); shelf/velocity/runway state live; reorder signal fires at the account’s measured threshold.</td></tr>
-            <tr><td {...stylex.props(styles.td)}><b>Channel</b></td><td {...stylex.props(styles.td)}>Aggregation of account champions + ASP×mix tracking (blended £490–497 stable while Energy 49→29% and Wholesale 18→39% of volume rotated underneath).</td></tr>
-            <tr><td {...stylex.props(styles.td)}><b>Market</b></td><td {...stylex.props(styles.td)}>TAM series + measured pass-through β per market; seasonality learned per series, never hand-configured (an inverted Australian season needs zero code).</td></tr>
-            <tr><td {...stylex.props(styles.td)}><b>Company</b></td><td {...stylex.props(styles.td)}>The bottom line: P80/P50/P20 in units and £, D2C carried on its own curve, supply commitments (the Volex/Luxshare ladder) reading the same rows.</td></tr>
+            <tr><td style={td}><b>Serial</b></td><td style={td}>Every charger’s serial attributed to its buyer at dispatch; activation flips it in real time via the Pulsar stream.</td></tr>
+            <tr><td style={td}><b>Account×SKU</b></td><td style={td}>Its own censored series, its own champion, its own measured lags (order→dispatch, reorder point), its own contract tier for £.</td></tr>
+            <tr><td style={td}><b>Account</b></td><td style={td}>Selection at account grain (SKUs summed — no arbitrary-variant bugs); shelf/velocity/runway state live; reorder signal fires at the account’s measured threshold.</td></tr>
+            <tr><td style={td}><b>Channel</b></td><td style={td}>Aggregation of account champions + ASP×mix tracking (blended £490–497 stable while Energy 49→29% and Wholesale 18→39% of volume rotated underneath).</td></tr>
+            <tr><td style={td}><b>Market</b></td><td style={td}>TAM series + measured pass-through β per market; seasonality learned per series, never hand-configured (an inverted Australian season needs zero code).</td></tr>
+            <tr><td style={td}><b>Company</b></td><td style={td}>The bottom line: P80/P50/P20 in units and £, D2C carried on its own curve, supply commitments (the Volex/Luxshare ladder) reading the same rows.</td></tr>
           </tbody>
         </table>
       </Section>
 
       <Section title="Self-updating — three loops, three speeds">
-        <table {...stylex.props(styles.table)}>
-          <thead><tr><th {...stylex.props(styles.th)}>Cadence</th><th {...stylex.props(styles.th)}>Mechanism</th><th {...stylex.props(styles.th)}>What moves</th></tr></thead>
+        <table className="tbl">
+          <thead><tr><th>Cadence</th><th>Mechanism</th><th>What moves</th></tr></thead>
           <tbody>
-            <tr><td {...stylex.props(styles.td)}><b>Per activation</b></td><td {...stylex.props(styles.td)}>Pulsar consumer (live device fleet)</td><td {...stylex.props(styles.td)}>Shelf, velocity, runway per account; reorder signal at the measured threshold</td></tr>
-            <tr><td {...stylex.props(styles.td)}><b>Every 6 hours</b></td><td {...stylex.props(styles.td)}>Feed refresher (incremental scrapes + reload + rescore + republish, snapshots git-committed)</td><td {...stylex.props(styles.td)}>Open-quarter nowcast, live forecast rows, ASP, bands</td></tr>
-            <tr><td {...stylex.props(styles.td)}><b>Quarter close</b></td><td {...stylex.props(styles.td)}>Calendar-derived origins — no human edit</td><td {...stylex.props(styles.td)}>A new evidence origin for every account; champions re-ranked; β and bands deepen</td></tr>
+            <tr><td style={td}><b>Per activation</b></td><td style={td}>Pulsar consumer (live device fleet)</td><td style={td}>Shelf, velocity, runway per account; reorder signal at the measured threshold</td></tr>
+            <tr><td style={td}><b>Every 6 hours</b></td><td style={td}>Feed refresher (incremental scrapes + reload + rescore + republish, snapshots git-committed)</td><td style={td}>Open-quarter nowcast, live forecast rows, ASP, bands</td></tr>
+            <tr><td style={td}><b>Quarter close</b></td><td style={td}>Calendar-derived origins — no human edit</td><td style={td}>A new evidence origin for every account; champions re-ranked; β and bands deepen</td></tr>
           </tbody>
         </table>
       </Section>
 
       <Section title="Why it scales — many markets, many seasonalities, many criteria">
-        <div {...stylex.props(styles.body)}>
+        <div style={{ fontSize: 14, lineHeight: 1.6 }}>
           Nothing in the system is global. Selection is per-series; seasonality is learned per series; lags are measured per account; βs are measured
           per market. Adding a market adds <b>rows, not assumptions</b> — 23 markets is the same machine with more keys, sharded trivially because
           markets are independent. Compute is linear: 3,649 series fit+score in ~6 minutes per origin on a laptop; reads are materialized
           (0.25 s). And the property that keeps a growing model zoo safe at scale is the incumbent guard: 50 new candidate models cannot cause
           curve-fit chaos, because every one of them must beat the boring default per series, on evidence, before touching a single forecast.
         </div>
-        <div {...stylex.props(styles.flag)}>
+        <div style={{ background: '#2a1430', border: '1px solid #5a2a6a', borderRadius: 10, padding: '11px 16px', marginTop: 10, fontSize: 13.5, lineHeight: 1.55 }}>
           If a model class someday needs covariates we can’t express cheaply (weather, tariffs, promos), the registry contract — a pure function over a
           censored history — admits any sidecar as just another candidate. It gets no special treatment: it wins series in the tournament or it doesn’t ship.
           Seven falsified ideas say the bar is real.
@@ -352,16 +321,16 @@ export function Forecasting(_props: { token: string }) {
       </Section>
 
       <Section title="Conduit vs the human plan (H6Q) — scored on identical terms">
-        <table {...stylex.props(styles.table)}>
-          <thead><tr><th {...stylex.props(styles.th)}></th><th {...stylex.props(styles.th, styles.num)}>Q3’26</th><th {...stylex.props(styles.th, styles.num)}>Q4’26</th></tr></thead>
+        <table className="tbl">
+          <thead><tr><th></th><th className="num">Q3’26</th><th className="num">Q4’26</th></tr></thead>
           <tbody>
-            <tr><td {...stylex.props(styles.td)}>Conduit P50</td><td {...stylex.props(styles.td, styles.num)}>16,641u</td><td {...stylex.props(styles.td, styles.num)}>15,819u</td></tr>
-            <tr><td {...stylex.props(styles.td)}>H6Q ex-Motability</td><td {...stylex.props(styles.td, styles.num)}>18,242u</td><td {...stylex.props(styles.td, styles.num)}>16,975u</td></tr>
-            <tr><td {...stylex.props(styles.td)}>H6Q inc-Motability</td><td {...stylex.props(styles.td, styles.num, styles.warn2)}>22,942u</td><td {...stylex.props(styles.td, styles.num, styles.warn2)}>22,679u</td></tr>
-            <tr><td {...stylex.props(styles.td)}>Conduit P20 (blue sky)</td><td {...stylex.props(styles.td, styles.num)}>23,231u</td><td {...stylex.props(styles.td, styles.num)}>22,083u</td></tr>
+            <tr><td style={td}>Conduit P50</td><td style={tdNum}>16,641u</td><td style={tdNum}>15,819u</td></tr>
+            <tr><td style={td}>H6Q ex-Motability</td><td style={tdNum}>18,242u</td><td style={tdNum}>16,975u</td></tr>
+            <tr><td style={td}>H6Q inc-Motability</td><td style={{ ...tdNum, ...warn2 }}>22,942u</td><td style={{ ...tdNum, ...warn2 }}>22,679u</td></tr>
+            <tr><td style={td}>Conduit P20 (blue sky)</td><td style={tdNum}>23,231u</td><td style={tdNum}>22,083u</td></tr>
           </tbody>
         </table>
-        <div {...stylex.props(styles.body)}>
+        <div style={{ fontSize: 14, lineHeight: 1.6, marginTop: 10 }}>
           On reality the two agree (FY’25 within 0.1%, the open quarter within 1–4%). Ex-new-programs they agree within 7–10%. The entire forward gap is
           <b> one named bet</b>: Motability (~4,700–5,700u/quarter) — and H6Q inc-Motability lands on Conduit’s P20 almost to the unit.
           <b> The official plan is the blue-sky scenario, contingent on one program.</b> The model carries none of it because no unit has ever shipped
@@ -369,6 +338,6 @@ export function Forecasting(_props: { token: string }) {
           tracked as the named P50→P20 mover.
         </div>
       </Section>
-    </div>
+    </>
   );
 }
