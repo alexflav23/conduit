@@ -1,5 +1,7 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { quote, placeOrder, QuoteLine } from './api';
+import React, { useState, useRef, useMemo } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { ApiError, request } from './lib/client';
+import { marketId } from './api';
 import { PageHead, Card, Chip, Money, LayerNote, Skeleton } from './kit/kit';
 import { I } from './kit/icons';
 
@@ -8,8 +10,21 @@ import { I } from './kit/icons';
 // the quote auto-runs as the grid changes (no manual button). A non-tier / out-of-band line surfaces as guidance
 // ("nearest tier …"), never a toast error, and routes through Deal Desk as a pending_ceo hold once placed.
 //
+// Real routes (api/.../routes/PricingRoutes.scala + CommerceRoutes.scala):
+//   POST /api/v1/pricing/quote  { channelId, marketId, currency, customerId?, lines:[{sku,qty}] }
+//     -> QuoteResp { lines:[{sku,qty,unitPriceExVat,adlpCategory,priceAgreementId,...}],
+//                    subtotalExVat, vatTotal, totalIncVat, requiresException }
+//     403 -> requires view:price_rule (layer-walled);  422 -> no governed tier (guidance, not failure)
+//   POST /api/v1/orders  { type, soldToPartyId, billToPartyId, channelId, marketId, currency, paymentMethod, lines }
+//     -> { orderNo, status, ... };  202 when status=pending_ceo;  409 credit block;  422 no tier
+//
 // DATA-LAYER WALL (doc 05): all money is the `commercial` layer. If the viewer lacks it, the figures COLLAPSE —
 // the kit <Money> renders nothing (a LayerNote explains it), never £0.00.
+
+// The seeded demo channel id (matches the seed constant the api.ts helpers post against). marketId() resolves the
+// ctx market label ("UK") to its UUID; the demo party ids are created on place.
+const DEMO_CHANNEL = '11111111-1111-1111-1111-111111111111';
+const COMMERCIAL = 'commercial';
 
 interface Line {
   id: number;
@@ -17,75 +32,82 @@ interface Line {
   qty: string;
 }
 
-const COMMERCIAL = 'commercial';
+interface QuoteLineResp {
+  sku: string;
+  qty: number;
+  unitPriceExVat: string;
+  adlpCategory: string;
+  priceAgreementId?: string | null;
+}
+interface QuoteResp {
+  lines: QuoteLineResp[];
+  subtotalExVat: string;
+  vatTotal: string;
+  totalIncVat: string;
+  requiresException: boolean;
+}
+
 let SEQ = 1;
 const blankLine = (): Line => ({ id: SEQ++, sku: '', qty: '1' });
 
 export function OrderDesk({ role, ctx, toast }: { role: any; ctx: any; toast: (m: string, k?: string) => void }) {
   const [lines, setLines] = useState<Line[]>([blankLine()]);
-  const [quoteResult, setQuoteResult] = useState<any>(null);
-  const [state, setState] = useState<'idle' | 'loading' | 'ready' | 'forbidden' | 'error'>('idle');
-  const [errMsg, setErrMsg] = useState<string | null>(null);
   const [placing, setPlacing] = useState(false);
   const [order, setOrder] = useState<any>(null);
 
-  const token: string = role?.token || '';
   const canSeeMoney = !role?.layers || (role.layers as string[]).indexOf(COMMERCIAL) >= 0;
+  const currency: string = ctx?.currency || 'GBP';
+  const market = marketId(ctx?.market || 'UK');
 
   // The clean, quote-able lines: a SKU plus a positive qty. Unit price is NEVER captured — the server resolves it.
-  const cleanLines = useCallback(
-    (): QuoteLine[] =>
+  const cleanLines = useMemo(
+    () =>
       lines
         .filter((l) => l.sku.trim() !== '' && parseInt(l.qty, 10) > 0)
         .map((l) => ({ sku: l.sku.trim().toUpperCase(), qty: parseInt(l.qty, 10) })),
     [lines],
   );
 
-  // Auto-quote — debounced, re-runs on any grid change or when the order context (entity/market/period) moves.
-  // No Get-quote button: quote-before-place is continuous. A fresh edit clears the last placed order.
-  const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => {
-    const cl = cleanLines();
-    setOrder(null);
-    if (cl.length === 0) {
-      setQuoteResult(null);
-      setState('idle');
-      setErrMsg(null);
-      return;
-    }
-    setState('loading');
-    if (debounce.current) clearTimeout(debounce.current);
-    debounce.current = setTimeout(() => {
-      quote(token, cl)
-        .then(({ status, json }) => {
-          if (status === 200) {
-            setQuoteResult(json);
-            setErrMsg(null);
-            setState('ready');
-          } else if (status === 403) {
-            setState('forbidden');
-          } else if (status === 422) {
-            // Non-tier rejection — guidance, not failure. Surface the server's nearest-tier hint in the panel.
-            setQuoteResult(json);
-            setErrMsg(json?.message || json?.detail || 'No governed tier matches these lines.');
-            setState('ready');
-          } else {
-            setErrMsg(`Quote failed (${status})`);
-            setState('error');
-          }
-        })
-        .catch(() => setState('error'));
-    }, 280);
-    return () => {
-      if (debounce.current) clearTimeout(debounce.current);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [JSON.stringify(cleanLines()), ctx?.entity, ctx?.market, ctx?.period, token]);
+  // Auto-quote — quote-before-place is continuous. React Query keys on the lines + the order context (entity /
+  // market / period), so a grid edit or a context switch refetches; the call is disabled until there's a line.
+  const quoteKey = JSON.stringify(cleanLines);
+  const q = useQuery<QuoteResp, ApiError>({
+    queryKey: ['order-quote', quoteKey, ctx?.entity, ctx?.market, ctx?.period, currency],
+    queryFn: () =>
+      request<QuoteResp>('/api/v1/pricing/quote', {
+        method: 'POST',
+        body: JSON.stringify({ channelId: DEMO_CHANNEL, marketId: market, currency, lines: cleanLines }),
+      }),
+    enabled: cleanLines.length > 0,
+  });
+
+  const err = q.error as ApiError | null;
+  const forbidden = !!err?.forbidden;
+  const notImplemented = !!err?.notImplemented;
+  // A 422 (no governed tier) is GUIDANCE, not failure — the body still carries the nearest-tier hint + lines.
+  const noTier = !!err && err.status === 422;
+  const otherError = !!err && !forbidden && !notImplemented && !noTier;
+
+  const quoteResult: QuoteResp | null = q.data ?? (noTier && err?.body && typeof err.body === 'object' ? (err.body as QuoteResp) : null);
+  const noTierMsg =
+    noTier && err?.body && typeof err.body === 'object'
+      ? ((err.body as any).message ?? (err.body as any).detail ?? 'No governed tier matches these lines.')
+      : null;
+
+  const idle = cleanLines.length === 0;
+  const loading = !idle && q.isLoading;
+  const ready = !idle && !forbidden && !notImplemented && !otherError && (q.isSuccess || (noTier && !!quoteResult));
 
   const setLine = (id: number, patch: Partial<Line>) =>
     setLines((ls) => ls.map((l) => (l.id === id ? { ...l, ...patch } : l)));
   const removeLine = (id: number) => setLines((ls) => (ls.length > 1 ? ls.filter((l) => l.id !== id) : ls));
   const addLine = () => setLines((ls) => [...ls, blankLine()]);
+
+  // A fresh edit clears the last placed order.
+  const onEdit = (id: number, patch: Partial<Line>) => {
+    setOrder(null);
+    setLine(id, patch);
+  };
 
   // Enter adds the next line and moves focus there (the agent's daily keyboard ceremony) — fixed Tab order.
   const onLineKey = (e: React.KeyboardEvent, idx: number) => {
@@ -99,33 +121,58 @@ export function OrderDesk({ role, ctx, toast }: { role: any; ctx: any; toast: (m
     }
   };
 
-  const qLines: any[] = quoteResult?.lines || [];
+  const qLines: QuoteLineResp[] = quoteResult?.lines || [];
   const requiresException = !!quoteResult?.requiresException || qLines.some((l) => l.adlpCategory === 'exception');
   const periodLocked = ctx?.period && /lock|clos/i.test(String(ctx?.periodStatus || ''));
 
   const onPlace = () => {
-    if (placing) return;
-    const cl = cleanLines();
-    if (cl.length === 0) return;
+    if (placing || cleanLines.length === 0) return;
     setPlacing(true);
-    placeOrder(token, cl)
-      .then(({ status, json }) => {
-        if (status === 201 || status === 202) {
-          setOrder(json);
-          if (json?.status === 'pending_ceo') {
-            toast(`${json.orderNo} — exception held for CEO decision (Deal Desk)`, 'warn');
-          } else {
-            toast(`${json.orderNo} placed`, 'ok');
-          }
-        } else if (status === 409) {
-          toast('Credit block — this party is over its limit. Finance must extend terms.', 'err');
-        } else if (status === 422) {
-          toast(json?.message || 'A line has no governed tier — resolve it before placing.', 'err');
+    // The demo flow creates the sold-to / bill-to parties, then places the order (mirrors api.ts placeOrder).
+    Promise.all([
+      request<{ id: string }>('/api/v1/parties', {
+        method: 'POST',
+        body: JSON.stringify({ displayName: 'Demo Branch', partyType: 'wholesaler', isOrganization: true }),
+      }),
+      request<{ id: string }>('/api/v1/parties', {
+        method: 'POST',
+        body: JSON.stringify({ displayName: 'Demo Master', partyType: 'wholesaler', isOrganization: true }),
+      }),
+    ])
+      .then(([soldTo, billTo]) =>
+        request<any>('/api/v1/orders', {
+          method: 'POST',
+          body: JSON.stringify({
+            type: 'trade',
+            soldToPartyId: soldTo.id,
+            billToPartyId: billTo.id,
+            channelId: DEMO_CHANNEL,
+            marketId: market,
+            currency,
+            paymentMethod: 'stripe',
+            lines: cleanLines,
+          }),
+        }),
+      )
+      .then((json) => {
+        setOrder(json);
+        if (json?.status === 'pending_ceo') {
+          toast(`${json.orderNo} — exception held for CEO decision (Deal Desk)`, 'warn');
         } else {
-          toast(`Place failed (${status})`, 'err');
+          toast(`${json.orderNo} placed`, 'ok');
         }
       })
-      .catch(() => toast('Place failed — network error', 'err'))
+      .catch((e) => {
+        if (e instanceof ApiError && e.status === 409) {
+          toast('Credit block — this party is over its limit. Finance must extend terms.', 'err');
+        } else if (e instanceof ApiError && e.status === 422) {
+          toast(e.message || 'A line has no governed tier — resolve it before placing.', 'err');
+        } else if (e instanceof ApiError) {
+          toast(`Place failed (${e.status})`, 'err');
+        } else {
+          toast('Place failed — network error', 'err');
+        }
+      })
       .finally(() => setPlacing(false));
   };
 
@@ -155,7 +202,7 @@ export function OrderDesk({ role, ctx, toast }: { role: any; ctx: any; toast: (m
             </thead>
             <tbody>
               {lines.map((l, idx) => {
-                const ql = qLines.find((q) => q.sku === l.sku.trim().toUpperCase() && (parseInt(l.qty, 10) || 0) === q.qty);
+                const ql = qLines.find((qq) => qq.sku === l.sku.trim().toUpperCase() && (parseInt(l.qty, 10) || 0) === qq.qty);
                 return (
                   <tr key={l.id} data-row={idx}>
                     <td>
@@ -165,7 +212,7 @@ export function OrderDesk({ role, ctx, toast }: { role: any; ctx: any; toast: (m
                         style={{ width: '100%', textTransform: 'uppercase' }}
                         value={l.sku}
                         placeholder="e.g. HV-310"
-                        onChange={(e) => setLine(l.id, { sku: e.target.value })}
+                        onChange={(e) => onEdit(l.id, { sku: e.target.value })}
                         onKeyDown={(e) => onLineKey(e, idx)}
                       />
                     </td>
@@ -176,13 +223,13 @@ export function OrderDesk({ role, ctx, toast }: { role: any; ctx: any; toast: (m
                         style={{ width: '100%' }}
                         inputMode="numeric"
                         value={l.qty}
-                        onChange={(e) => setLine(l.id, { qty: e.target.value.replace(/[^0-9]/g, '') })}
+                        onChange={(e) => onEdit(l.id, { qty: e.target.value.replace(/[^0-9]/g, '') })}
                         onKeyDown={(e) => onLineKey(e, idx)}
                       />
                     </td>
                     <td className="num" data-testid="resolved-unit">
                       {ql ? (
-                        canSeeMoney ? <Money value={ql.unitPriceExVat} ccy={ctx?.currency || 'GBP'} /> : <span className="dim">hidden</span>
+                        canSeeMoney ? <Money value={ql.unitPriceExVat} ccy={currency} /> : <span className="dim">hidden</span>
                       ) : (
                         <span className="dim">—</span>
                       )}
@@ -190,7 +237,7 @@ export function OrderDesk({ role, ctx, toast }: { role: any; ctx: any; toast: (m
                     <td>{ql ? adlpChip(ql.adlpCategory) : <span className="dim">—</span>}</td>
                     <td>
                       {lines.length > 1 && (
-                        <span className="ibtn" title="Remove line" onClick={() => removeLine(l.id)} style={{ cursor: 'pointer' }}>
+                        <span className="ibtn" title="Remove line" onClick={() => { setOrder(null); removeLine(l.id); }} style={{ cursor: 'pointer' }}>
                           {I.x({ size: 14 })}
                         </span>
                       )}
@@ -210,33 +257,40 @@ export function OrderDesk({ role, ctx, toast }: { role: any; ctx: any; toast: (m
 
       {/* ---- the quote panel: ex-VAT · VAT · total-inc-VAT · tier + ADLP chips ---- */}
       <Card title="Quote" icon={I.scale} style={{ maxWidth: 620 }}>
-        {state === 'idle' && (
+        {idle && (
           <div className="dim" style={{ padding: '6px 2px', fontSize: 13 }} data-testid="quote-empty">
             Add a SKU and quantity — the quote resolves automatically.
           </div>
         )}
-        {state === 'loading' && (
+        {loading && (
           <div data-testid="quote-loading">
             <Skeleton lines={3} />
           </div>
         )}
-        {state === 'forbidden' && (
+        {forbidden && (
           <LayerNote>Pricing hidden — requires the <b>commercial</b> data layer.</LayerNote>
         )}
-        {state === 'error' && (
-          <div className="banner danger" data-testid="quote-error">
-            {I.alert({ size: 16 })}
-            <span>{errMsg || 'Could not resolve a quote. Try again.'}</span>
+        {notImplemented && (
+          <div style={{ display: 'grid', placeItems: 'center', gap: 10, padding: '26px 20px', textAlign: 'center' }} data-testid="quote-unbacked">
+            <span style={{ width: 42, height: 42, borderRadius: 12, display: 'grid', placeItems: 'center', background: 'var(--panel-2)' }}>{I.scale({ size: 20 })}</span>
+            <div style={{ fontFamily: 'var(--font-disp)', fontSize: 17, fontWeight: 600 }}>Not available in this environment yet</div>
+            <div className="dim" style={{ fontSize: 12.5, maxWidth: 420 }}>The pricing engine isn’t wired here yet — quotes resolve once the catalogue and price tiers are seeded.</div>
           </div>
         )}
-        {state === 'ready' && quoteResult && (
+        {otherError && (
+          <div className="banner danger" data-testid="quote-error">
+            {I.alert({ size: 16 })}
+            <span>Could not resolve a quote (HTTP {err?.status}). Try again.</span>
+          </div>
+        )}
+        {ready && quoteResult && (
           <div data-testid="quote">
             {/* Non-tier guidance — teaching, not an error. The hero shows WHY this line is out of band. */}
-            {requiresException && (
+            {(requiresException || noTier) && (
               <div className="banner warn" style={{ marginBottom: 14 }} data-testid="nontier-guidance">
                 {I.flag({ size: 16 })}
                 <span>
-                  <span className="bb">Out-of-band line.</span> {errMsg || 'No governed tier covers this price.'} Placing it raises an
+                  <span className="bb">Out-of-band line.</span> {noTierMsg || 'No governed tier covers this price.'} Placing it raises an
                   ADLP price-tier request — it holds at <b>pending_ceo</b> on the Deal Desk and won&apos;t ship until approved.
                 </span>
               </div>
@@ -248,11 +302,11 @@ export function OrderDesk({ role, ctx, toast }: { role: any; ctx: any; toast: (m
               <>
                 <div className="kvrow">
                   <span className="dim">Resolved ex-VAT</span>
-                  <span data-testid="subtotal-ex-vat"><Money value={quoteResult.subtotalExVat} ccy={ctx?.currency || 'GBP'} layer={COMMERCIAL} role={role} /></span>
+                  <span data-testid="subtotal-ex-vat"><Money value={quoteResult.subtotalExVat} ccy={currency} layer={COMMERCIAL} role={role} /></span>
                 </div>
                 <div className="kvrow">
                   <span className="dim">VAT</span>
-                  <span data-testid="vat-total"><Money value={quoteResult.vatTotal} ccy={ctx?.currency || 'GBP'} layer={COMMERCIAL} role={role} /></span>
+                  <span data-testid="vat-total"><Money value={quoteResult.vatTotal} ccy={currency} layer={COMMERCIAL} role={role} /></span>
                 </div>
                 <div className="kvrow">
                   <span className="dim">Total inc VAT</span>
@@ -261,25 +315,31 @@ export function OrderDesk({ role, ctx, toast }: { role: any; ctx: any; toast: (m
                     style={{ fontFamily: 'var(--font-disp)', fontSize: 26, fontWeight: 700 }}
                     className="num"
                   >
-                    <Money value={quoteResult.totalIncVat} ccy={ctx?.currency || 'GBP'} layer={COMMERCIAL} role={role} />
+                    <Money value={quoteResult.totalIncVat} ccy={currency} layer={COMMERCIAL} role={role} />
                   </span>
                 </div>
               </>
             )}
 
-            {/* tier + ADLP category — first-class, never hidden behind the total */}
-            <div className="kvrow" style={{ borderBottom: 'none', alignItems: 'flex-start' }}>
-              <span className="dim">Tier · ADLP</span>
-              <div className="row g8 wrap" style={{ justifyContent: 'flex-end' }}>
-                {qLines.map((ql, i) => (
-                  <span key={i} className="row g6" data-testid="tier-chip">
-                    <span className="mono dim" style={{ fontSize: 11 }}>{ql.sku}</span>
-                    {ql.priceAgreementId ? <Chip s="approved">tier</Chip> : <Chip s="open">open list</Chip>}
-                    {adlpChip(ql.adlpCategory)}
-                  </span>
-                ))}
+            {qLines.length === 0 ? (
+              <div className="dim" style={{ padding: '6px 2px', fontSize: 12.5 }} data-testid="quote-no-lines">
+                No resolvable lines in this quote.
               </div>
-            </div>
+            ) : (
+              /* tier + ADLP category — first-class, never hidden behind the total */
+              <div className="kvrow" style={{ borderBottom: 'none', alignItems: 'flex-start' }}>
+                <span className="dim">Tier · ADLP</span>
+                <div className="row g8 wrap" style={{ justifyContent: 'flex-end' }}>
+                  {qLines.map((ql, i) => (
+                    <span key={i} className="row g6" data-testid="tier-chip">
+                      <span className="mono dim" style={{ fontSize: 11 }}>{ql.sku}</span>
+                      {ql.priceAgreementId ? <Chip s="approved">tier</Chip> : <Chip s="open">open list</Chip>}
+                      {adlpChip(ql.adlpCategory)}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
       </Card>
@@ -295,9 +355,9 @@ export function OrderDesk({ role, ctx, toast }: { role: any; ctx: any; toast: (m
           <button
             className={'btn primary'}
             data-testid="place-btn"
-            disabled={placing || state !== 'ready' || cleanLines().length === 0}
+            disabled={placing || !ready || cleanLines.length === 0}
             onClick={onPlace}
-            title={state !== 'ready' ? 'Resolve a quote first' : ''}
+            title={!ready ? 'Resolve a quote first' : ''}
           >
             {placing ? I.refresh({ size: 14 }) : I.check({ size: 14 })}
             {requiresException ? ' Place (raises exception)' : ' Place order'}

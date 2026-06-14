@@ -1,12 +1,20 @@
-import React, { useState, useEffect } from 'react';
-import { getWaterfall, getLedger } from './api';
-import { PageHead, Card, Chip, Drawer, AuditRef, LayerNote, Skeleton, SkeletonRow, EmptyRow, num, gbp } from './kit/kit';
+import React, { useState } from 'react';
+import { marketId } from './api';
+import { useApi } from './lib/query';
+import { ApiError } from './lib/client';
+import { PageHead, Card, Chip, Drawer, AuditRef, LayerNote, Skeleton, EmptyRow, num, gbp } from './kit/kit';
 import { I } from './kit/icons';
 
 // Flow (spec/ui/04-flow.md, doc 20 D9): the 7-stage demand→cash waterfall — forecast → CM-committed →
 // produced → delivered → ordered → shipped → revenue — where the GAPS BETWEEN STAGES are the story, and
 // every figure traces to its TigerBeetle transfers. Unit stages are `volume`; revenue is `commercial`;
 // COGS/margin is `profitability` (collapse, never zero). Auto-loads on mount + ctx change. No load button.
+//
+// Real endpoints (api H6QRoutes):
+//   GET /api/v1/h6q/waterfall?variant=<uuid>&period=<YYYY-MM> -> { stages{...}, revenue_ex_vat, conversion }
+//   GET /api/v1/h6q/ledger?market=<uuid>&period=<YYYY-MM>     -> { totals, recognitions[] }
+//   GET /api/v1/h6q/variants                                  -> [{ id, sku, family }]
+// Both waterfall + ledger require view:pipeline_coverage (403 -> LayerNote, volume layer).
 
 const FLOW_STAGES: Array<[string, string, string]> = [
   ['sales_forecast', 'Forecast', 'intent'],
@@ -21,59 +29,82 @@ const MONTHS = ['2026-08', '2026-09', '2026-10'];
 type Ctx = { entity: string; market: string; period: string; scenario: string };
 type Role = { token: string; name: string; title: string; layers: string[] };
 
-export function Flow({ role, ctx, toast }: { role: any; ctx: any; toast: (m: string, k?: string) => void }) {
+type Variant = { id: string; sku: string; family: string };
+type Waterfall = {
+  stages?: Record<string, number>;
+  revenue_ex_vat?: string | null;
+};
+type Recognition = {
+  invoice_no?: string;
+  revenue_ex_vat?: string | number;
+  vat?: string | number;
+  cogs?: string | number;
+  gross_margin?: string | number;
+  ar_transfer_id?: string;
+  cogs_transfer_id?: string;
+};
+type Ledger = {
+  totals?: { revenue_ex_vat?: string | number; vat?: string | number; cogs?: string | number; gross_margin?: string | number };
+  recognitions?: Recognition[];
+};
+
+const isForbidden = (e: ApiError | null | undefined) => !!e && e.forbidden;
+const isNotImplemented = (e: ApiError | null | undefined) => !!e && e.notImplemented;
+
+function NotAvailable({ testid }: { testid?: string }) {
+  return (
+    <div className="banner" data-testid={testid} style={{ padding: '14px 12px', color: 'var(--muted)' }}>
+      {I.alert({ size: 15 })} Not available in this environment yet.
+    </div>
+  );
+}
+
+export function Flow({ role, ctx }: { role: any; ctx: any; toast: (m: string, k?: string) => void }) {
   const r = role as Role;
   const c = ctx as Ctx;
-  const hasVolume = r.layers.indexOf('volume') >= 0;
   const hasCommercial = r.layers.indexOf('commercial') >= 0;
   const hasProfit = r.layers.indexOf('profitability') >= 0;
 
   const month = MONTHS.indexOf(c.period) >= 0 ? c.period : '2026-09';
-  const [variant, setVariant] = useState('ALL');
-  const [grid, setGrid] = useState<Record<string, any>>({}); // period -> waterfall json
-  const [ledger, setLedger] = useState<any | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [forbidden, setForbidden] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [drill, setDrill] = useState<any | null>(null);
+  const mkt = marketId(c.market);
 
-  useEffect(() => {
-    let live = true;
-    setLoading(true);
-    setForbidden(false);
-    setError(null);
-    (async () => {
-      try {
-        const wfs = await Promise.all(MONTHS.map((m) => getWaterfall(r.token, variant, m)));
-        if (!live) return;
-        if (wfs.some((w) => w.status === 403)) {
-          setForbidden(true);
-          setLoading(false);
-          return;
-        }
-        const bad = wfs.find((w) => w.status >= 400);
-        if (bad) {
-          setError(`Waterfall failed (${bad.status})`);
-          setLoading(false);
-          return;
-        }
-        const g: Record<string, any> = {};
-        MONTHS.forEach((m, i) => { g[m] = wfs[i].json; });
-        setGrid(g);
-        const led = await getLedger(r.token, c.market, month);
-        if (!live) return;
-        if (led.status === 200) setLedger(led.json);
-        else setLedger(null);
-        setLoading(false);
-      } catch (e) {
-        if (live) { setError('Network error'); setLoading(false); }
-      }
-    })();
-    return () => { live = false; };
-  }, [r.token, c.market, variant, month]);
+  const variantsQ = useApi<Variant[]>(['flow-variants'], '/api/v1/h6q/variants');
+  const variants = Array.isArray(variantsQ.data) ? variantsQ.data : [];
+
+  const [variant, setVariant] = useState<string>('');
+  const selectedVariant = variant || variants[0]?.id || '';
+
+  const wfPath = (m: string) => `/api/v1/h6q/waterfall?variant=${encodeURIComponent(selectedVariant)}&period=${m}`;
+  const wfEnabled = !!selectedVariant;
+  const wf0 = useApi<Waterfall>(['flow-wf', selectedVariant, MONTHS[0]], wfPath(MONTHS[0]), { enabled: wfEnabled });
+  const wf1 = useApi<Waterfall>(['flow-wf', selectedVariant, MONTHS[1]], wfPath(MONTHS[1]), { enabled: wfEnabled });
+  const wf2 = useApi<Waterfall>(['flow-wf', selectedVariant, MONTHS[2]], wfPath(MONTHS[2]), { enabled: wfEnabled });
+  const monthQueries = { [MONTHS[0]]: wf0, [MONTHS[1]]: wf1, [MONTHS[2]]: wf2 };
+  const grid: Record<string, Waterfall | undefined> = {
+    [MONTHS[0]]: wf0.data,
+    [MONTHS[1]]: wf1.data,
+    [MONTHS[2]]: wf2.data,
+  };
+
+  const wfLoading = wfEnabled ? Object.values(monthQueries).some((q) => q.isLoading) : variantsQ.isLoading;
+  const wfError = (Object.values(monthQueries).find((q) => q.error)?.error ?? variantsQ.error) as ApiError | undefined;
+  const wfForbidden = isForbidden(wfError);
+  const wfNotImpl = isNotImplemented(wfError);
+  const wfOtherError = wfError && !wfForbidden && !wfNotImpl ? wfError : null;
+
+  const ledgerQ = useApi<Ledger>(['flow-ledger', mkt, month], `/api/v1/h6q/ledger?market=${encodeURIComponent(mkt)}&period=${month}`, {
+    enabled: hasCommercial && !!mkt,
+  });
+  const ledger = ledgerQ.data ?? null;
+  const ledgerForbidden = isForbidden(ledgerQ.error as ApiError);
+  const ledgerNotImpl = isNotImplemented(ledgerQ.error as ApiError);
 
   const wf = grid[month];
-  const stages = wf ? FLOW_STAGES.map(([k, label, sub]) => ({ k, label, sub, qty: wf.stages?.[k] ?? 0 })) : [];
+  const stages = wf
+    ? FLOW_STAGES.map(([k, label, sub]) => ({ k, label, sub, qty: wf.stages?.[k] ?? 0 }))
+    : [];
+
+  const [drill, setDrill] = useState<Recognition | null>(null);
 
   const gapChip = (prev: number, cur: number, idx: number) => {
     if (!prev || cur >= prev) return null;
@@ -83,7 +114,7 @@ export function Flow({ role, ctx, toast }: { role: any; ctx: any; toast: (m: str
     return <span className={'gap ' + sev}>{num(prev - cur)} {idx === 2 ? 'short' : 'gap'}</span>;
   };
 
-  const openDrill = (rec: any) => {
+  const openDrill = (rec: Recognition) => {
     if (!hasCommercial) return;
     setDrill(rec);
   };
@@ -97,11 +128,22 @@ export function Flow({ role, ctx, toast }: { role: any; ctx: any; toast: (m: str
           </button>
         ))}
       </div>
-      <select className="fld sel" data-testid="flow-variant" value={variant} onChange={(e) => setVariant(e.target.value)}>
-        <option value="ALL">All products (master)</option>
+      <select
+        className="fld sel"
+        data-testid="flow-variant"
+        value={selectedVariant}
+        disabled={variantsQ.isLoading || variants.length === 0}
+        onChange={(e) => setVariant(e.target.value)}
+      >
+        {variants.length === 0 && <option value="">{variantsQ.isLoading ? 'Loading…' : 'No products'}</option>}
+        {variants.map((v) => (
+          <option key={v.id} value={v.id}>{v.sku} · {v.family}</option>
+        ))}
       </select>
     </div>
   );
+
+  const variantLabel = variants.find((v) => v.id === selectedVariant)?.sku ?? 'product';
 
   return (
     <div className="page">
@@ -113,31 +155,35 @@ export function Flow({ role, ctx, toast }: { role: any; ctx: any; toast: (m: str
       />
 
       <Card
-        title={`Waterfall · ${variant === 'ALL' ? 'All products' : variant} · ${month}`}
+        title={`Waterfall · ${variantLabel} · ${month}`}
         icon={I.trend}
         aux={<span className="dim" style={{ fontSize: 12 }}>conversion between stages · gaps are the story</span>}
         style={{ marginBottom: 12 }}
         className="tablewrap"
       >
-        {loading && (
+        {wfLoading && (
           <div className="row g12" data-testid="flow-loading" style={{ padding: '8px 0' }}>
             {FLOW_STAGES.map((s) => <Skeleton key={s[0]} w={132} h={86} />)}
           </div>
         )}
 
-        {!loading && forbidden && (
+        {!wfLoading && wfForbidden && (
           <LayerNote>hidden — the demand waterfall requires the <b>volume</b> layer.</LayerNote>
         )}
 
-        {!loading && error && (
-          <div className="banner danger" data-testid="flow-error">{I.alert({ size: 15 })} {error}</div>
+        {!wfLoading && !wfForbidden && wfNotImpl && (
+          <NotAvailable testid="flow-notimpl" />
         )}
 
-        {!loading && !forbidden && !error && !wf && (
+        {!wfLoading && !wfForbidden && !wfNotImpl && wfOtherError && (
+          <div className="banner danger" data-testid="flow-error">{I.alert({ size: 15 })} Waterfall failed ({wfOtherError.status}).</div>
+        )}
+
+        {!wfLoading && !wfForbidden && !wfNotImpl && !wfOtherError && !wf && (
           <div className="dim" data-testid="flow-empty" style={{ padding: '18px 4px' }}>No data for this variant/period.</div>
         )}
 
-        {!loading && !forbidden && !error && wf && (
+        {!wfLoading && !wfForbidden && !wfNotImpl && !wfOtherError && wf && (
           <>
             <div className="wf" data-testid="flow-waterfall">
               {stages.map((st, i) => (
@@ -161,7 +207,7 @@ export function Flow({ role, ctx, toast }: { role: any; ctx: any; toast: (m: str
               {hasCommercial && wf.revenue_ex_vat != null && (
                 <>
                   <div className="conn">
-                    <span className="conv">{gbp(Math.round(parseFloat(wf.revenue_ex_vat) / Math.max(1, wf.stages?.shipped ?? 1)))}/u</span>
+                    <span className="conv">{gbp(Math.round(parseFloat(String(wf.revenue_ex_vat)) / Math.max(1, wf.stages?.shipped ?? 1)))}/u</span>
                     {I.arrowR()}
                   </div>
                   <div className="stage" data-testid="flow-stage-revenue">
@@ -183,8 +229,12 @@ export function Flow({ role, ctx, toast }: { role: any; ctx: any; toast: (m: str
 
       <div className="grid" style={{ gridTemplateColumns: '1.1fr 1fr', alignItems: 'start' }}>
         <Card title="Evolution — the same demand ages across periods" icon={I.clock} className="tablewrap">
-          {loading && <Skeleton lines={6} />}
-          {!loading && !forbidden && !error && (
+          {wfLoading && <Skeleton lines={6} />}
+          {!wfLoading && wfForbidden && (
+            <LayerNote>hidden — the demand waterfall requires the <b>volume</b> layer.</LayerNote>
+          )}
+          {!wfLoading && !wfForbidden && wfNotImpl && <NotAvailable />}
+          {!wfLoading && !wfForbidden && !wfNotImpl && !wfOtherError && (
             <table className="mx" data-testid="flow-evolution">
               <thead>
                 <tr>
@@ -198,7 +248,7 @@ export function Flow({ role, ctx, toast }: { role: any; ctx: any; toast: (m: str
                     <td>{label}</td>
                     {MONTHS.map((m) => (
                       <td key={m} style={{ fontWeight: m === month ? 700 : 400, color: m === month ? 'var(--text)' : 'var(--muted)' }}>
-                        {grid[m]?.stages ? num(grid[m].stages[k]) : '—'}
+                        {grid[m]?.stages ? num(grid[m]!.stages![k]) : '—'}
                       </td>
                     ))}
                   </tr>
@@ -208,7 +258,7 @@ export function Flow({ role, ctx, toast }: { role: any; ctx: any; toast: (m: str
                     <td style={{ color: 'var(--accent-bright)', fontWeight: 600 }}>Revenue ex-VAT</td>
                     {MONTHS.map((m) => (
                       <td key={m} style={{ color: 'var(--accent-bright)', fontWeight: m === month ? 700 : 400 }}>
-                        {grid[m]?.revenue_ex_vat != null ? gbp(grid[m].revenue_ex_vat) : '—'}
+                        {grid[m]?.revenue_ex_vat != null ? gbp(grid[m]!.revenue_ex_vat) : '—'}
                       </td>
                     ))}
                   </tr>
@@ -221,11 +271,15 @@ export function Flow({ role, ctx, toast }: { role: any; ctx: any; toast: (m: str
 
         {hasCommercial && (
           <Card title={`Immutable ledger · recognised revenue (${month})`} icon={I.shield} className="tablewrap">
-            {loading && <Skeleton lines={5} />}
-            {!loading && !ledger && (
+            {ledgerQ.isLoading && <Skeleton lines={5} />}
+            {!ledgerQ.isLoading && ledgerForbidden && (
+              <LayerNote>hidden — recognised revenue requires the <b>commercial</b> layer.</LayerNote>
+            )}
+            {!ledgerQ.isLoading && !ledgerForbidden && ledgerNotImpl && <NotAvailable testid="ledger-notimpl" />}
+            {!ledgerQ.isLoading && !ledgerForbidden && !ledgerNotImpl && !ledger && (
               <div className="dim" data-testid="ledger-empty" style={{ padding: '18px 4px' }}>No recognised revenue for this period.</div>
             )}
-            {!loading && ledger && (
+            {!ledgerQ.isLoading && !ledgerForbidden && !ledgerNotImpl && ledger && (
               <>
                 <div className="row g8 wrap" style={{ marginBottom: 12 }} data-testid="ledger-totals">
                   <Chip s="neutral">Revenue {gbp(ledger.totals?.revenue_ex_vat)}</Chip>
@@ -247,7 +301,7 @@ export function Flow({ role, ctx, toast }: { role: any; ctx: any; toast: (m: str
                     {(ledger.recognitions ?? []).length === 0 ? (
                       <EmptyRow cols={hasProfit ? 5 : 4}>No revenue recognitions yet.</EmptyRow>
                     ) : (
-                      (ledger.recognitions ?? []).map((rec: any, i: number) => (
+                      (ledger.recognitions ?? []).map((rec, i) => (
                         <tr key={i} data-testid="ledger-row">
                           <td><b>{rec.invoice_no ?? '—'}</b></td>
                           <td className="num">{gbp(rec.revenue_ex_vat)}</td>

@@ -1,7 +1,6 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { getShelfBoard } from './api';
-import { tableState, asArray } from './state';
-import type { ApiResult } from './state';
+import React, { useMemo, useState } from 'react';
+import { useApi } from './lib/query';
+import { ApiError } from './lib/client';
 import { PageHead, Card, Chip, Coverage, Drawer, EmptyRow, LayerNote, SkeletonRow, num } from './kit/kit';
 import { I } from './kit/icons';
 
@@ -46,26 +45,37 @@ const runwayLabel = (r: ShelfRow) =>
 // rank by who crosses reorder next: shortest runway first (null runway sinks to the bottom).
 const runwayRank = (r: ShelfRow) => (r.runway_days == null ? Number.POSITIVE_INFINITY : r.runway_days);
 
+type Surface = 'loading' | 'forbidden' | 'notImplemented' | 'error' | 'empty' | 'ready';
+
 export function Shelf({ role, ctx, toast }: { role: any; ctx: Ctx; toast: (m: string, k?: string) => void }) {
-  const token: string = role?.token ?? '';
-  const [res, setRes] = useState<ApiResult | null>(null);
   const [sel, setSel] = useState<ShelfRow | null>(null);
 
-  useEffect(() => {
-    let live = true;
-    setRes(null);
-    getShelfBoard(token)
-      .then((r) => { if (live) setRes(r); })
-      .catch(() => { if (live) setRes({ status: 0, json: null }); });
-    return () => { live = false; };
-  }, [token, ctx.entity, ctx.market, ctx.scenario]);
+  // The fleet shelf board is scope-filtered server-side by the viewer's market/channel/sector; key the query
+  // on every ctx field so a context switch refetches. The `view:pipeline_coverage` gate -> 403 collapses to a
+  // LayerNote (never zeros), and an unbacked env -> 404 renders the honest "not available" panel.
+  const board = useApi<ShelfRow[]>(
+    ['shelf-board', ctx.entity, ctx.market, ctx.period, ctx.scenario],
+    '/api/v1/h6q/shelf',
+  );
+  const err = board.error as ApiError | null;
 
   const rows = useMemo(() => {
-    const arr = asArray<ShelfRow>(res?.json);
+    const arr = Array.isArray(board.data) ? board.data : [];
     return arr.slice().sort((a, b) => runwayRank(a) - runwayRank(b));
-  }, [res]);
+  }, [board.data]);
 
-  const state = tableState(res, res?.json);
+  const state: Surface = board.isLoading
+    ? 'loading'
+    : err?.forbidden
+      ? 'forbidden'
+      : err?.notImplemented
+        ? 'notImplemented'
+        : err
+          ? 'error'
+          : rows.length === 0
+            ? 'empty'
+            : 'ready';
+
   const atRisk = rows.filter((r) => runwayState(r) === 'danger').length;
 
   return (
@@ -105,12 +115,24 @@ export function Shelf({ role, ctx, toast }: { role: any; ctx: Ctx; toast: (m: st
             {state === 'loading' && <SkeletonRow cols={8} />}
 
             {state === 'forbidden' && (
-              <tr><td colSpan={8}><LayerNote>hidden — requires <b>volume</b></LayerNote></td></tr>
+              <tr><td colSpan={8}><LayerNote>hidden — requires <b>view:pipeline_coverage</b></LayerNote></td></tr>
+            )}
+
+            {state === 'notImplemented' && (
+              <tr>
+                <td colSpan={8} style={{ padding: '34px 24px', textAlign: 'center' }} data-testid="shelf-unbacked">
+                  <div style={{ display: 'grid', placeItems: 'center', gap: 10 }}>
+                    <span style={{ width: 44, height: 44, borderRadius: 12, display: 'grid', placeItems: 'center', background: 'var(--panel-2)' }}>{I.battery({ size: 22 })}</span>
+                    <div style={{ fontFamily: 'var(--font-disp)', fontSize: 18, fontWeight: 600 }}>Not available in this environment yet</div>
+                    <div className="dim" style={{ fontSize: 12.5, maxWidth: 460 }}>The shelf board appears once dispatched serials have been attributed to accounts in the serial register.</div>
+                  </div>
+                </td>
+              </tr>
             )}
 
             {state === 'error' && (
               <EmptyRow cols={8}>
-                <span style={{ color: 'var(--danger)' }}>Couldn't load the shelf board{res?.status ? ` (${res.status})` : ''}.</span>
+                <span style={{ color: 'var(--danger)' }}>Couldn't load the shelf board{err?.status ? ` (${err.status})` : ''}.</span>
               </EmptyRow>
             )}
 

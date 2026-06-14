@@ -1,8 +1,10 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { apiFetch } from './api';
+import React, { useEffect, useState } from 'react';
+import { marketId } from './api';
 import { asArray } from './state';
 import { PageHead, Card, Chip, LayerNote, EmptyRow, Skeleton, SkeletonRow } from './kit/kit';
 import { I } from './kit/icons';
+import { useApi } from './lib/query';
+import { ApiError } from './lib/client';
 
 // 28 — Forecast Runs (spec/ui/28-forecast-runs.md). Makes the self-improving tournament (doc 26) legible to a
 // human: every forecast origin is an immutable, idempotent record (forecast_run + model_accuracy +
@@ -12,10 +14,15 @@ import { I } from './kit/icons';
 //
 // Auto-loads the run timeline on mount + when the market context changes (no Load button). Picking a row opens
 // its report; the two newest origins seed the compare selectors. Four states everywhere: loading (skeleton) /
-// empty (EmptyRow) / 403 (LayerNote — requires view:pipeline_coverage) / error.
+// empty (EmptyRow) / 403 (LayerNote — requires view:pipeline_coverage) / 404 (not available) / error.
 //
-// Backend: GET /api/v1/forecast/runs · /runs/{origin}/report · /runs/diff?from=&to= (+ /diff/accounts,
-// /account/{company}) — ForecastRunRoutes -> ForecastRunReportRepo + pure RunDiff.
+// Real endpoints (api ForecastRunRoutes):
+//   GET /api/v1/forecast/runs
+//   GET /api/v1/forecast/runs/{origin}/report
+//   GET /api/v1/forecast/runs/diff?from=&to=&group_by=&market=
+//   GET /api/v1/forecast/runs/diff/accounts?from=&to=&market=
+//   GET /api/v1/forecast/runs/account/{company}?from=&to=
+// All gated view:pipeline_coverage (403 -> LayerNote). market is the resolved UUID from ctx.
 
 type AnyRole = { layers?: string[] };
 interface Props {
@@ -32,88 +39,103 @@ function errChip(pct: number | string | null | undefined): string {
 const signed = (v: any) => `${Number(v) > 0 ? '+' : ''}${Number(v).toLocaleString('en-GB')}`;
 const grp = (v: any) => Number(v).toLocaleString('en-GB');
 
+const asErr = (e: unknown): ApiError | null => (e instanceof ApiError ? e : null);
+
+function NotAvailable({ testid }: { testid?: string }) {
+  return (
+    <div className="banner" data-testid={testid} style={{ padding: '14px 12px', color: 'var(--muted)' }}>
+      {I.alert({ size: 15 })} Not available in this environment yet.
+    </div>
+  );
+}
+
 export function ForecastRuns({ role, ctx, toast }: Props) {
-  const layers = asArray<string>(role?.layers);
   const market = ctx?.market || '';
+  const mkt = market ? marketId(market) : '';
+  const scope = [ctx?.entity, market, ctx?.scenario, ctx?.period];
 
-  const [res, setRes] = useState<{ status: number; json: any } | null>(null);
-  const [report, setReport] = useState<{ status: number; json: any } | null>(null);
   const [openOrigin, setOpenOrigin] = useState<string | null>(null);
-
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const [groupBy, setGroupBy] = useState('segment');
-  const [diff, setDiff] = useState<{ status: number; json: any } | null>(null);
-  const [accountRows, setAccountRows] = useState<any[]>([]);
-  const [drill, setDrill] = useState<{ id: string; data: any } | null>(null);
+  const [drillId, setDrillId] = useState<string | null>(null);
 
-  // --- run timeline: auto-load on mount + when the market context changes ---
-  const loadRuns = useCallback(async () => {
-    setRes(null);
-    setReport(null);
-    setOpenOrigin(null);
-    setDiff(null);
-    const r = await apiFetch('/api/v1/forecast/runs');
-    setRes(r);
-    if (r.status === 200) {
-      const rows = asArray<any>(r.json);
-      // seed the compare selectors with the two most recent origins (rows are origin-desc)
-      if (rows.length >= 2) { setTo(rows[0].origin); setFrom(rows[1].origin); }
-      else if (rows.length === 1) { setTo(rows[0].origin); setFrom(rows[0].origin); }
-      else { setTo(''); setFrom(''); }
-    }
-  }, []);
+  // --- run timeline: auto-loads on mount + whenever the market context changes (the key carries the scope) ---
+  const runsQ = useApi<any[]>(['forecast-runs', ...scope], '/api/v1/forecast/runs');
+  const runs = asArray<any>(runsQ.data);
+  const runsErr = asErr(runsQ.error);
 
-  useEffect(() => { loadRuns(); }, [loadRuns, market]);
+  // seed the compare selectors with the two most recent origins (rows are origin-desc) once they load
+  useEffect(() => {
+    if (!runs.length) return;
+    setTo(runs[0].origin);
+    setFrom(runs.length >= 2 ? runs[1].origin : runs[0].origin);
+  }, [runsQ.dataUpdatedAt]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const runs = res && res.status === 200 ? asArray<any>(res.json) : [];
-  const state = res === null ? 'loading'
-    : (res.status === 401 || res.status === 403) ? 'forbidden'
-    : res.status >= 400 ? 'error'
-    : runs.length === 0 ? 'empty' : 'ready';
+  const state = runsQ.isLoading ? 'loading'
+    : runsErr?.forbidden ? 'forbidden'
+    : runsErr?.notImplemented ? 'notimpl'
+    : runsErr ? 'error'
+    : runs.length === 0 ? 'empty'
+    : 'ready';
 
-  // --- per-run report (opened from a timeline row) ---
-  const openReport = async (origin: string) => {
-    if (openOrigin === origin) { setOpenOrigin(null); setReport(null); return; }
-    setOpenOrigin(origin);
-    setReport(null);
-    const q = market ? `?market=${encodeURIComponent(market)}` : '';
-    const r = await apiFetch(`/api/v1/forecast/runs/${encodeURIComponent(origin)}/report${q}`);
-    setReport(r);
-    if (r.status >= 400 && r.status !== 403) toast(`report failed: ${r.status}`, 'err');
-  };
+  // --- per-run report (opened from a timeline row; the route ignores market) ---
+  const reportQ = useApi<any>(
+    ['forecast-report', openOrigin, ...scope],
+    `/api/v1/forecast/runs/${encodeURIComponent(openOrigin ?? '')}/report`,
+    { enabled: !!openOrigin },
+  );
+  const rep = openOrigin ? reportQ.data ?? null : null;
+  const reportErr = asErr(reportQ.error);
 
-  // --- compare two runs ---
-  const compare = useCallback(async (axis: string, f: string, t: string) => {
-    if (!f || !t) return;
-    setDrill(null);
-    const q = new URLSearchParams({ from: f, to: t });
-    q.set('group_by', axis === 'account' ? 'segment' : axis);
-    if (market) q.set('market', market);
-    const r = await apiFetch(`/api/v1/forecast/runs/diff?${q.toString()}`);
-    setDiff(r);
-    if (axis === 'account') {
-      const qa = new URLSearchParams({ from: f, to: t });
-      if (market) qa.set('market', market);
-      const ra = await apiFetch(`/api/v1/forecast/runs/diff/accounts?${qa.toString()}`);
-      setAccountRows(ra.status === 200 ? asArray<any>(ra.json) : []);
-    }
-    if (r.status >= 400 && r.status !== 403) toast(`compare failed: ${r.status}`, 'err');
-  }, [market, toast]);
+  const openReport = (origin: string) => setOpenOrigin((prev) => (prev === origin ? null : origin));
 
-  // auto-run the diff once both selectors are seeded (and when the axis / selection changes)
-  useEffect(() => { if (from && to && state === 'ready') compare(groupBy, from, to); }, [from, to, groupBy, state, compare]);
+  // --- compare two runs (pure RunDiff, server-side). axis 'account' uses the dedicated accounts endpoint. ---
+  const diffAxis = groupBy === 'account' ? 'segment' : groupBy;
+  const diffPath = (() => {
+    const q = new URLSearchParams({ from, to, group_by: diffAxis });
+    if (mkt) q.set('market', mkt);
+    return `/api/v1/forecast/runs/diff?${q.toString()}`;
+  })();
+  const diffQ = useApi<any>(
+    ['forecast-diff', from, to, diffAxis, mkt, ...scope],
+    diffPath,
+    { enabled: state === 'ready' && !!from && !!to },
+  );
+  const diffData = diffQ.data ?? null;
+  const diffErr = asErr(diffQ.error);
 
-  const openDrill = async (companyId: string) => {
-    if (drill?.id === companyId) { setDrill(null); return; }
-    const r = await apiFetch(`/api/v1/forecast/runs/account/${encodeURIComponent(companyId)}?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);
-    setDrill(r.status === 200 ? { id: companyId, data: r.json } : null);
-    if (r.status >= 400) toast(`account detail failed: ${r.status}`, 'err');
-  };
+  const accountsPath = (() => {
+    const q = new URLSearchParams({ from, to });
+    if (mkt) q.set('market', mkt);
+    return `/api/v1/forecast/runs/diff/accounts?${q.toString()}`;
+  })();
+  const accountsQ = useApi<any[]>(
+    ['forecast-accounts', from, to, mkt, ...scope],
+    accountsPath,
+    { enabled: state === 'ready' && groupBy === 'account' && !!from && !!to },
+  );
+  const accountRows = asArray<any>(accountsQ.data);
 
-  const rep = report && report.status === 200 ? report.json : null;
-  const diffData = diff && diff.status === 200 ? diff.json : null;
-  const dv = diff === null ? 'idle' : (diff.status === 401 || diff.status === 403) ? 'forbidden' : diff.status >= 400 ? 'error' : 'ready';
+  // --- one account's drill-down (the bake-off + per-SKU depletion snapshot, from→to) ---
+  const drillQ = useApi<any>(
+    ['forecast-account', drillId, from, to],
+    `/api/v1/forecast/runs/account/${encodeURIComponent(drillId ?? '')}?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
+    { enabled: !!drillId && !!from && !!to },
+  );
+  const drill = drillId ? drillQ.data ?? null : null;
+  const openDrill = (companyId: string) => setDrillId((prev) => (prev === companyId ? null : companyId));
+
+  // surface non-terminal failures as toasts (forbidden/404 render inline, not a toast)
+  useEffect(() => { if (reportErr && !reportErr.forbidden && !reportErr.notImplemented) toast(`report failed: ${reportErr.status}`, 'err'); }, [reportErr, toast]);
+  useEffect(() => { if (diffErr && !diffErr.forbidden && !diffErr.notImplemented) toast(`compare failed: ${diffErr.status}`, 'err'); }, [diffErr, toast]);
+
+  const dv = !from || !to || diffQ.isLoading || (diffQ.fetchStatus === 'idle' && !diffData)
+    ? 'idle'
+    : diffErr?.forbidden ? 'forbidden'
+    : diffErr?.notImplemented ? 'notimpl'
+    : diffErr ? 'error'
+    : 'ready';
 
   const stat = (label: string, value: React.ReactNode, testid: string, accent?: boolean) => (
     <div className="metric" style={{ minWidth: 130 }}>
@@ -136,8 +158,10 @@ export function ForecastRuns({ role, ctx, toast }: Props) {
       <Card title="Run timeline" icon={I.clock} aux={<span className="dim" style={{ fontSize: 12 }}>each origin is an immutable, reproducible record — newest first</span>}>
         {state === 'forbidden'
           ? <LayerNote>hidden — requires <span className="mono">view:pipeline_coverage</span></LayerNote>
+          : state === 'notimpl'
+          ? <NotAvailable testid="fr-notimpl" />
           : state === 'error'
-          ? <div className="banner danger" data-testid="fr-error">{I.alert({ size: 15 })} Couldn't load forecast runs ({res?.status}). The run timeline is served from the stored tournament record.</div>
+          ? <div className="banner danger" data-testid="fr-error">{I.alert({ size: 15 })} Couldn't load forecast runs ({runsErr?.status}). The run timeline is served from the stored tournament record.</div>
           : (
         <div className="tablewrap">
           <table className="tbl" data-testid="fr-runs">
@@ -168,10 +192,11 @@ export function ForecastRuns({ role, ctx, toast }: Props) {
 
       {openOrigin && (
         <Card title={`Run report · ${openOrigin}`} icon={I.pulse} aux={<span className="dim" style={{ fontSize: 12 }}>the basis the champions were chosen on</span>}>
-          {report === null && <Skeleton lines={4} />}
-          {report && (report.status === 401 || report.status === 403) && <LayerNote>hidden — requires <span className="mono">view:pipeline_coverage</span></LayerNote>}
-          {report && report.status >= 400 && report.status !== 403 && report.status !== 401 && <div className="banner danger">{I.alert({ size: 15 })} Couldn't load the report for {openOrigin} ({report.status}).</div>}
-          {report && report.status === 200 && !rep && <EmptyRow cols={1}>No report for this origin.</EmptyRow>}
+          {reportQ.isLoading && <Skeleton lines={4} />}
+          {reportErr?.forbidden && <LayerNote>hidden — requires <span className="mono">view:pipeline_coverage</span></LayerNote>}
+          {reportErr?.notImplemented && <NotAvailable />}
+          {reportErr && !reportErr.forbidden && !reportErr.notImplemented && <div className="banner danger">{I.alert({ size: 15 })} Couldn't load the report for {openOrigin} ({reportErr.status}).</div>}
+          {!reportQ.isLoading && !reportErr && !rep && <EmptyRow cols={1}>No report for this origin.</EmptyRow>}
           {rep && (
           <div data-testid="fr-report">
             <div className="row" style={{ gap: 26, flexWrap: 'wrap', marginBottom: 14 }}>
@@ -251,8 +276,9 @@ export function ForecastRuns({ role, ctx, toast }: Props) {
         {state === 'ready' && (!from || !to) && <div className="dim" style={{ marginTop: 12 }} data-testid="fr-diff-empty">Pick two origins to see how the forecast evolved.</div>}
 
         {from && to && dv === 'forbidden' && <div style={{ marginTop: 12 }}><LayerNote>hidden — requires <span className="mono">view:pipeline_coverage</span></LayerNote></div>}
-        {from && to && dv === 'error' && <div className="banner danger" style={{ marginTop: 12 }}>{I.alert({ size: 15 })} Couldn't compute the diff ({diff?.status}).</div>}
-        {from && to && diff === null && <div style={{ marginTop: 12 }}><Skeleton lines={3} /></div>}
+        {from && to && dv === 'notimpl' && <div style={{ marginTop: 12 }}><NotAvailable testid="fr-diff-notimpl" /></div>}
+        {from && to && dv === 'error' && <div className="banner danger" style={{ marginTop: 12 }}>{I.alert({ size: 15 })} Couldn't compute the diff ({diffErr?.status}).</div>}
+        {from && to && dv === 'idle' && diffQ.isLoading && <div style={{ marginTop: 12 }}><Skeleton lines={3} /></div>}
 
         {dv === 'ready' && diffData && (
           <div data-testid="fr-diff" style={{ marginTop: 14 }}>
@@ -286,7 +312,8 @@ export function ForecastRuns({ role, ctx, toast }: Props) {
                     <th className="num">On-shelf</th><th className="num">Shelf Δ</th><th className="num">Rate /mo</th><th className="num">Rate Δ</th><th className="num">Runway (d)</th><th></th>
                   </tr></thead>
                   <tbody>
-                    {accountRows.map((a: any, i: number) => (
+                    {accountsQ.isLoading && <><SkeletonRow cols={10} /><SkeletonRow cols={10} /></>}
+                    {!accountsQ.isLoading && accountRows.map((a: any, i: number) => (
                       <React.Fragment key={a.company_id ?? i}>
                         <tr data-testid="fr-account-row">
                           <td><b>{a.name}</b></td>
@@ -300,35 +327,37 @@ export function ForecastRuns({ role, ctx, toast }: Props) {
                           <td className="num">{grp(a.depletion_rate)}</td>
                           <td className="num"><Chip s={Number(a.rate_delta) >= 0 ? 'ok' : 'warn'}>{signed(a.rate_delta)}</Chip></td>
                           <td className="num">{a.runway_days == null ? '—' : Math.round(Number(a.runway_days))}</td>
-                          <td><button className="btn sm" data-testid="fr-account-drill" onClick={() => openDrill(a.company_id)}>{drill?.id === a.company_id ? 'Hide' : 'Why'}</button></td>
+                          <td><button className="btn sm" data-testid="fr-account-drill" onClick={() => openDrill(a.company_id)}>{drillId === a.company_id ? 'Hide' : 'Why'}</button></td>
                         </tr>
-                        {drill && drill.id === a.company_id && (
+                        {drillId === a.company_id && (
                           <tr data-testid="fr-drill"><td colSpan={10} style={{ background: 'var(--bg-2)' }}>
+                            {drillQ.isLoading ? <div style={{ padding: '10px 4px' }}><Skeleton lines={2} /></div> : drill ? (
                             <div className="grid" style={{ gridTemplateColumns: 'repeat(2, 1fr)', padding: '10px 4px' }}>
                               <div>
                                 {sectionLabel('Participating models (the bake-off)', { fontSize: 11.5, marginBottom: 6 })}
                                 <table className="tbl"><thead><tr><th>Model</th><th>Kind</th><th className="num">Mean err</th><th></th></tr></thead><tbody>
-                                  {asArray<any>(drill.data.participants).map((m: any, j: number) => (
+                                  {asArray<any>(drill.participants).map((m: any, j: number) => (
                                     <tr key={j}><td className="mono">{m.model_key}</td><td><Chip s={m.structural ? 'accent' : 'neutral'}>{m.structural ? 'structural' : 'statistical'}</Chip></td><td className="num">{m.mean_abs_error}</td><td>{m.is_champion && <Chip s="champion">champion</Chip>}</td></tr>
                                   ))}
-                                  {asArray<any>(drill.data.participants).length === 0 && <EmptyRow cols={4}>No models recorded.</EmptyRow>}
+                                  {asArray<any>(drill.participants).length === 0 && <EmptyRow cols={4}>No models recorded.</EmptyRow>}
                                 </tbody></table>
                               </div>
                               <div>
                                 {sectionLabel(`Depletion by SKU — snapshot ${from} → ${to}`, { fontSize: 11.5, marginBottom: 6 })}
                                 <table className="tbl"><thead><tr><th>SKU</th><th className="num">Shelf {from}</th><th className="num">Shelf {to}</th><th className="num">Rate {from}</th><th className="num">Rate {to}</th><th className="num">Rate Δ</th><th className="num">Runway (d)</th></tr></thead><tbody>
-                                  {asArray<any>(drill.data.depletion).map((d: any, j: number) => (
+                                  {asArray<any>(drill.depletion).map((d: any, j: number) => (
                                     <tr key={j}><td className="mono">{d.sku}</td><td className="num dim">{grp(d.from_shelf)}</td><td className="num">{grp(d.shelf_stock)}</td><td className="num dim">{grp(d.from_rate)}</td><td className="num">{grp(d.depletion_rate)}</td><td className="num"><Chip s={Number(d.rate_delta) >= 0 ? 'ok' : 'warn'}>{signed(d.rate_delta)}</Chip></td><td className="num">{d.runway_days == null ? '—' : Math.round(Number(d.runway_days))}</td></tr>
                                   ))}
-                                  {asArray<any>(drill.data.depletion).length === 0 && <EmptyRow cols={7}>No depletion snapshot.</EmptyRow>}
+                                  {asArray<any>(drill.depletion).length === 0 && <EmptyRow cols={7}>No depletion snapshot.</EmptyRow>}
                                 </tbody></table>
                               </div>
                             </div>
+                            ) : <div className="dim" style={{ padding: '10px 4px' }}>No drill-down for this account.</div>}
                           </td></tr>
                         )}
                       </React.Fragment>
                     ))}
-                    {accountRows.length === 0 && <EmptyRow cols={10}><span data-testid="fr-accounts-empty">No accounts on this filter.</span></EmptyRow>}
+                    {!accountsQ.isLoading && accountRows.length === 0 && <EmptyRow cols={10}><span data-testid="fr-accounts-empty">No accounts on this filter.</span></EmptyRow>}
                   </tbody>
                 </table>
               </div>

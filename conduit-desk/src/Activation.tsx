@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { apiFetch } from './api';
-import { asArray } from './state';
+import React, { useState } from 'react';
+import { useApi } from './lib/query';
+import { marketId } from './api';
 import { PageHead, Card, Chip, Money, LayerNote, AuditRef, EmptyRow, LoadBar, SkeletonRow, num, gbp } from './kit/kit';
 import { I } from './kit/icons';
 
@@ -9,9 +9,14 @@ import { I } from './kit/icons';
 // "a unit went live at a customer", distinct from sell-in / dispatch), and the WARRANTY PROVISION each
 // activation opens, releasing straight-line over the term from the activation date (not dispatch).
 //
-// Auto-loads on mount + when ctx.market changes + when the market filter changes (no Load button). Four states
-// everywhere: loading (skeleton) / empty (EmptyRow) / 403 (LayerNote) / error. Activation identity is the
-// `volume` layer; warranty provision money is `profitability` and COLLAPSES (never £0) via the kit Money.
+// Backend: M8 (Phase 2) — there is NO activation/warranty route in this deployment (no ActivationRoutes; the
+// "activation" mentions under PricingRoutes/IntercompanyRoutes are maker-checker POLICY activation, unrelated).
+// Both reads go through React Query against the paths these endpoints will land on; a 404 (notImplemented)
+// renders the honest "Not available in this environment yet" panel — never a stuck skeleton, never a guessed
+// call. 401/403 (forbidden) renders the layer wall. The screen is correct the moment the routes ship.
+//
+// Re-fetches on a context-market switch and on the in-page market filter (both feed the query key). Activation
+// identity is the `volume` layer; warranty provision money is `profitability` and COLLAPSES (never £0).
 
 type AnyRole = { layers?: string[] };
 
@@ -21,53 +26,112 @@ interface ActivationProps {
   toast: (m: string, k?: string) => void;
 }
 
-type Res = { status: number; json: any } | null;
+interface ActivationRow {
+  sn?: string;
+  serial?: string;
+  activated_at?: string;
+  activatedAt?: string;
+  installer?: string;
+  owner?: string;
+  market?: string;
+}
 
-const stateOf = (res: Res): 'loading' | 'forbidden' | 'error' | 'ready' =>
-  res === null ? 'loading' : (res.status === 401 || res.status === 403) ? 'forbidden' : res.status >= 400 ? 'error' : 'ready';
+interface SellInVsThrough {
+  dispatched?: number | null;
+  activated?: number | null;
+}
+
+interface ActivationFeed {
+  rows?: ActivationRow[];
+  total?: number;
+  sellInVsThrough?: SellInVsThrough;
+  sell_in_vs_through?: SellInVsThrough;
+}
+
+interface WarrantyRow {
+  sn?: string;
+  serial?: string;
+  owner?: string;
+  provision?: number | string | null;
+  outstanding?: number | string | null;
+  pct?: number | string;
+  releasedPct?: number | string;
+  audit_ref?: string;
+  auditRef?: string;
+}
+
+interface WarrantyTotals {
+  provision?: number | string | null;
+  outstanding?: number | string | null;
+  released?: number | string | null;
+}
+
+interface WarrantyRegister {
+  rows?: WarrantyRow[];
+  totals?: WarrantyTotals;
+  hasCost?: boolean;
+}
 
 const fmtPct = (n: number) => (Number.isFinite(n) ? n : 0).toFixed(0);
 
+// An honest "endpoint not built" panel (404). Distinct from a stuck skeleton or a £0.
+function NotAvailable({ which }: { which: string }) {
+  return (
+    <div
+      data-testid="activation-not-available"
+      style={{ padding: '28px 18px', textAlign: 'center', color: 'var(--muted)', border: '1px dashed var(--border)', borderRadius: 10, background: 'var(--bg-2)' }}
+    >
+      <div style={{ marginBottom: 6, color: 'var(--faint)' }}>{I.wifiOff({ size: 22 })}</div>
+      <div style={{ fontFamily: 'var(--font-disp)', fontSize: 18, fontWeight: 600, color: 'var(--text)' }}>Not available in this environment yet</div>
+      <div className="dim" style={{ fontSize: 12, marginTop: 4 }}>The {which} (M8 — activation ingest) isn't built in this deployment.</div>
+    </div>
+  );
+}
+
 export function Activation({ role, ctx, toast }: ActivationProps) {
-  const layers = asArray<string>(role?.layers);
+  const layers = role?.layers ?? [];
   const canSeeProvision = layers.length === 0 || layers.indexOf('profitability') >= 0;
 
   const [market, setMarket] = useState('all');
-  const [feedRes, setFeedRes] = useState<Res>(null);
-  const [warrRes, setWarrRes] = useState<Res>(null);
 
-  const load = useCallback(async (mk: string) => {
-    setFeedRes(null);
-    setWarrRes(null);
-    const q = mk && mk !== 'all' ? `?market=${encodeURIComponent(mk)}&limit=60` : '?limit=60';
-    const [f, w] = await Promise.all([
-      apiFetch(`/api/v1/activations${q}`),
-      apiFetch('/api/v1/warranty/provisions'),
-    ]);
-    setFeedRes(f);
-    setWarrRes(w);
-  }, []);
+  const feedQ = (() => {
+    const mk = market !== 'all' ? market : ctx?.market || 'all';
+    const q = mk && mk !== 'all' ? `?market=${encodeURIComponent(marketId(mk))}&limit=60` : '?limit=60';
+    return q;
+  })();
 
-  // Re-load on mount + whenever the context market or the in-page filter changes.
-  useEffect(() => { load(market); }, [market, ctx?.market, load]);
+  const feedApi = useApi<ActivationFeed>(['activations', market, ctx?.market], `/api/v1/activations${feedQ}`);
+  const warrApi = useApi<WarrantyRegister>(['warranty-provisions', ctx?.market], '/api/v1/warranty/provisions');
 
-  const feedState = stateOf(feedRes);
-  const warrState = stateOf(warrRes);
+  const feedErr = feedApi.error;
+  const feedForbidden = feedErr?.forbidden ?? false;
+  const feedNotImpl = feedErr?.notImplemented ?? false;
+  const feedOther = !!feedErr && !feedForbidden && !feedNotImpl;
+  const feedReady = !feedApi.isLoading && !feedErr;
 
-  const feed = feedRes && feedRes.status < 400 ? feedRes.json : null;
-  const warr = warrRes && warrRes.status < 400 ? warrRes.json : null;
+  const warrErr = warrApi.error;
+  const warrForbidden = warrErr?.forbidden ?? false;
+  const warrNotImpl = warrErr?.notImplemented ?? false;
+  const warrOther = !!warrErr && !warrForbidden && !warrNotImpl;
+  const warrReady = !warrApi.isLoading && !warrErr;
 
-  const acts = asArray<any>(feed?.rows ?? feed);
+  const feed = feedApi.data ?? null;
+  const warr = warrApi.data ?? null;
+
+  const acts: ActivationRow[] = Array.isArray(feed?.rows) ? feed!.rows! : [];
   const sit = feed?.sellInVsThrough ?? feed?.sell_in_vs_through ?? null;
   const dispatched = sit?.dispatched ?? null;
   const activated = sit?.activated ?? null;
-  const throughPct = dispatched ? (activated / dispatched) * 100 : 0;
+  const throughPct = dispatched ? ((activated ?? 0) / dispatched) * 100 : 0;
   const feedTotal = feed?.total ?? acts.length;
 
-  const wrows = asArray<any>(warr?.rows ?? warr);
+  const wrows: WarrantyRow[] = Array.isArray(warr?.rows) ? warr!.rows! : [];
   const wt = warr?.totals ?? null;
   // The register reports whether the cost layer was projected in; honour it but also respect role.layers.
   const provisionVisible = canSeeProvision && (warr ? warr.hasCost !== false : true);
+
+  const heroNote =
+    feedNotImpl ? 'not available yet' : feedForbidden ? 'requires the volume layer' : feedOther ? 'failed to load' : '';
 
   return (
     <div className="page" style={{ maxWidth: 1320 }}>
@@ -87,8 +151,10 @@ export function Activation({ role, ctx, toast }: ActivationProps) {
       <div className="grid" style={{ gridTemplateColumns: '1.6fr 1fr 1fr', marginBottom: 14, alignItems: 'stretch' }}>
         <Card>
           <div className="muted" style={{ fontSize: 'var(--fs-small)', marginBottom: 'var(--sp-2)' }}>Sell-in → sell-through</div>
-          {feedState === 'loading' ? (
+          {feedApi.isLoading ? (
             <div className="skel skel-line" style={{ width: 220, height: 26 }} />
+          ) : feedErr ? (
+            <div className="dim" style={{ fontSize: 'var(--fs-xs)' }}>{heroNote}</div>
           ) : (
             <>
               <div className="row g12" style={{ alignItems: 'flex-end' }}>
@@ -119,18 +185,32 @@ export function Activation({ role, ctx, toast }: ActivationProps) {
         <Card>
           <div className="muted" style={{ fontSize: 'var(--fs-small)' }}>Warranty provision</div>
           <div style={{ fontFamily: 'var(--font-disp)', fontSize: 26, fontWeight: 600, marginTop: 3 }}>
-            {provisionVisible ? <Money value={wt?.provision ?? null} /> : <span className="dim">hidden</span>}
+            {warrApi.isLoading ? (
+              <div className="skel skel-line" style={{ width: 90, height: 22 }} />
+            ) : warrReady && provisionVisible ? (
+              <Money value={wt?.provision ?? null} />
+            ) : (
+              <span className="dim">hidden</span>
+            )}
           </div>
-          <div className="dim" style={{ fontSize: 'var(--fs-xs)' }}>{provisionVisible ? 'total opened' : 'requires profitability'}</div>
+          <div className="dim" style={{ fontSize: 'var(--fs-xs)' }}>
+            {warrNotImpl ? 'not available yet' : warrReady && provisionVisible ? 'total opened' : 'requires profitability'}
+          </div>
         </Card>
 
         <Card>
           <div className="muted" style={{ fontSize: 'var(--fs-small)' }}>Outstanding liability</div>
-          <div style={{ fontFamily: 'var(--font-disp)', fontSize: 26, fontWeight: 600, marginTop: 3, color: provisionVisible ? 'var(--warn)' : undefined }}>
-            {provisionVisible ? <Money value={wt?.outstanding ?? null} /> : <span className="dim">hidden</span>}
+          <div style={{ fontFamily: 'var(--font-disp)', fontSize: 26, fontWeight: 600, marginTop: 3, color: warrReady && provisionVisible ? 'var(--warn)' : undefined }}>
+            {warrApi.isLoading ? (
+              <div className="skel skel-line" style={{ width: 90, height: 22 }} />
+            ) : warrReady && provisionVisible ? (
+              <Money value={wt?.outstanding ?? null} />
+            ) : (
+              <span className="dim">hidden</span>
+            )}
           </div>
           <div className="dim" style={{ fontSize: 'var(--fs-xs)' }}>
-            {provisionVisible ? `${gbp(wt?.released)} released to date` : 'requires profitability'}
+            {warrNotImpl ? 'not available yet' : warrReady && provisionVisible ? `${gbp(wt?.released)} released to date` : 'requires profitability'}
           </div>
         </Card>
       </div>
@@ -146,81 +226,91 @@ export function Activation({ role, ctx, toast }: ActivationProps) {
             </div>
             <div style={{ flex: 1 }} />
             <span className="dim" style={{ fontSize: 'var(--fs-small)' }}>
-              {feedState === 'ready' ? `${num(feedTotal)} activations` : feedState === 'loading' ? 'loading…' : ''}
+              {feedReady ? `${num(feedTotal)} activations` : feedApi.isLoading ? 'loading…' : ''}
             </span>
           </LoadBar>
-          <div style={{ maxHeight: 460, overflowY: 'auto' }}>
-            <table className="tbl">
-              <thead><tr><th>Serial</th><th>Activated</th><th>Installer</th><th>Owner</th><th>Mkt</th></tr></thead>
-              <tbody>
-                {feedState === 'loading' && <SkeletonRow cols={5} />}
-                {feedState === 'forbidden' && (
-                  <tr><td colSpan={5}><LayerNote>Activation feed hidden — requires the <b>volume</b> layer (<code>view:activation</code>).</LayerNote></td></tr>
-                )}
-                {feedState === 'error' && (
-                  <tr><td colSpan={5}><div className="banner danger">Could not load activations ({feedRes?.status}).</div></td></tr>
-                )}
-                {feedState === 'ready' && acts.map((a, i) => (
-                  <tr key={a.sn ?? a.serial ?? i}>
-                    <td className="mono">{a.sn ?? a.serial}</td>
-                    <td className="dim">{a.activated_at ?? a.activatedAt}</td>
-                    <td>{a.installer}</td>
-                    <td className="dim">{a.owner}</td>
-                    <td><Chip s="neutral">{a.market}</Chip></td>
-                  </tr>
-                ))}
-                {feedState === 'ready' && acts.length === 0 && <EmptyRow cols={5}>No activations in this market yet — units are dispatched but not live.</EmptyRow>}
-              </tbody>
-            </table>
-          </div>
+          {feedNotImpl ? (
+            <div style={{ padding: 16 }}><NotAvailable which="activation feed" /></div>
+          ) : (
+            <div style={{ maxHeight: 460, overflowY: 'auto' }}>
+              <table className="tbl">
+                <thead><tr><th>Serial</th><th>Activated</th><th>Installer</th><th>Owner</th><th>Mkt</th></tr></thead>
+                <tbody>
+                  {feedApi.isLoading && <SkeletonRow cols={5} />}
+                  {feedForbidden && (
+                    <tr><td colSpan={5}><LayerNote>Activation feed hidden — requires the <b>volume</b> layer (<code>view:activation</code>).</LayerNote></td></tr>
+                  )}
+                  {feedOther && (
+                    <tr><td colSpan={5}><div className="banner danger">Could not load activations ({feedErr?.status}).</div></td></tr>
+                  )}
+                  {feedReady && acts.map((a, i) => (
+                    <tr key={a.sn ?? a.serial ?? i}>
+                      <td className="mono">{a.sn ?? a.serial}</td>
+                      <td className="dim">{a.activated_at ?? a.activatedAt}</td>
+                      <td>{a.installer}</td>
+                      <td className="dim">{a.owner}</td>
+                      <td><Chip s="neutral">{a.market}</Chip></td>
+                    </tr>
+                  ))}
+                  {feedReady && acts.length === 0 && <EmptyRow cols={5}>No activations in this market yet — units are dispatched but not live.</EmptyRow>}
+                </tbody>
+              </table>
+            </div>
+          )}
         </Card>
 
         {/* Warranty provision register — profitability layer (collapses) */}
         <Card title="Warranty provision register" icon={I.shield} aux="straight-line release from activation date" style={{ padding: 0 }} className="tablewrap">
-          <div style={{ maxHeight: 502, overflowY: 'auto' }}>
-            <table className="tbl">
-              <thead><tr><th>Serial</th><th>Owner</th><th className="num">Provision</th><th style={{ width: 140 }}>Released</th><th className="num">Outstanding</th><th>Ref</th></tr></thead>
-              <tbody>
-                {warrState === 'loading' && <SkeletonRow cols={6} />}
-                {warrState === 'forbidden' && (
-                  <tr><td colSpan={6}><LayerNote>Warranty provision hidden — requires the <b>profitability</b> layer.</LayerNote></td></tr>
-                )}
-                {warrState === 'error' && (
-                  <tr><td colSpan={6}><div className="banner danger">Could not load the provision register ({warrRes?.status}).</div></td></tr>
-                )}
-                {warrState === 'ready' && wrows.map((w, i) => {
-                  const pct = Number(w.pct ?? w.releasedPct ?? 0);
-                  return (
-                    <tr key={w.sn ?? w.serial ?? i}>
-                      <td className="mono">{w.sn ?? w.serial}</td>
-                      <td className="dim" style={{ fontSize: 'var(--fs-small)' }}>{w.owner}</td>
-                      <td className="num">{provisionVisible ? <Money value={w.provision ?? null} /> : <span className="dim">—</span>}</td>
-                      <td>
-                        {provisionVisible ? (
-                          <div className="row g6" style={{ alignItems: 'center' }}>
-                            <div style={{ flex: 1, height: 5, borderRadius: 3, background: 'var(--surface3)', overflow: 'hidden' }}>
-                              <div style={{ width: `${Math.min(pct, 100)}%`, height: '100%', background: 'var(--ok)' }} />
-                            </div>
-                            <span className="dim" style={{ fontSize: 10 }}>{fmtPct(pct)}%</span>
-                          </div>
-                        ) : <span className="dim">— layer</span>}
-                      </td>
-                      <td className="num">{provisionVisible ? <Money value={w.outstanding ?? null} /> : <span className="dim">—</span>}</td>
-                      <td>{(w.audit_ref ?? w.auditRef) ? <AuditRef id={w.audit_ref ?? w.auditRef} /> : <span className="dim">—</span>}</td>
-                    </tr>
-                  );
-                })}
-                {warrState === 'ready' && wrows.length === 0 && <EmptyRow cols={6}>No warranty provisions opened yet.</EmptyRow>}
-              </tbody>
-            </table>
-          </div>
-          {warrState === 'ready' && !provisionVisible && (
-            <LayerNote>Provision figures hidden — requires the <b>profitability</b> layer.</LayerNote>
-          )}
-          {warrState === 'ready' && provisionVisible && (
-            <div className="layer-note" style={{ padding: '10px 16px' }}>
-              <I.clock />The warranty clock starts the day a unit activates. A warranty claim from Returns draws this provision down.
-            </div>
+          {warrNotImpl ? (
+            <div style={{ padding: 16 }}><NotAvailable which="warranty provision register" /></div>
+          ) : (
+            <>
+              <div style={{ maxHeight: 502, overflowY: 'auto' }}>
+                <table className="tbl">
+                  <thead><tr><th>Serial</th><th>Owner</th><th className="num">Provision</th><th style={{ width: 140 }}>Released</th><th className="num">Outstanding</th><th>Ref</th></tr></thead>
+                  <tbody>
+                    {warrApi.isLoading && <SkeletonRow cols={6} />}
+                    {warrForbidden && (
+                      <tr><td colSpan={6}><LayerNote>Warranty provision hidden — requires the <b>profitability</b> layer.</LayerNote></td></tr>
+                    )}
+                    {warrOther && (
+                      <tr><td colSpan={6}><div className="banner danger">Could not load the provision register ({warrErr?.status}).</div></td></tr>
+                    )}
+                    {warrReady && wrows.map((w, i) => {
+                      const pct = Number(w.pct ?? w.releasedPct ?? 0);
+                      return (
+                        <tr key={w.sn ?? w.serial ?? i}>
+                          <td className="mono">{w.sn ?? w.serial}</td>
+                          <td className="dim" style={{ fontSize: 'var(--fs-small)' }}>{w.owner}</td>
+                          <td className="num">{provisionVisible ? <Money value={w.provision ?? null} /> : <span className="dim">—</span>}</td>
+                          <td>
+                            {provisionVisible ? (
+                              <div className="row g6" style={{ alignItems: 'center' }}>
+                                <div style={{ flex: 1, height: 5, borderRadius: 3, background: 'var(--surface3)', overflow: 'hidden' }}>
+                                  <div style={{ width: `${Math.min(pct, 100)}%`, height: '100%', background: 'var(--ok)' }} />
+                                </div>
+                                <span className="dim" style={{ fontSize: 10 }}>{fmtPct(pct)}%</span>
+                              </div>
+                            ) : <span className="dim">— layer</span>}
+                          </td>
+                          <td className="num">{provisionVisible ? <Money value={w.outstanding ?? null} /> : <span className="dim">—</span>}</td>
+                          <td>{(w.audit_ref ?? w.auditRef) ? <AuditRef id={w.audit_ref ?? w.auditRef} /> : <span className="dim">—</span>}</td>
+                        </tr>
+                      );
+                    })}
+                    {warrReady && wrows.length === 0 && <EmptyRow cols={6}>No warranty provisions opened yet.</EmptyRow>}
+                  </tbody>
+                </table>
+              </div>
+              {warrReady && !provisionVisible && (
+                <LayerNote>Provision figures hidden — requires the <b>profitability</b> layer.</LayerNote>
+              )}
+              {warrReady && provisionVisible && (
+                <div className="layer-note" style={{ padding: '10px 16px' }}>
+                  <I.clock />The warranty clock starts the day a unit activates. A warranty claim from Returns draws this provision down.
+                </div>
+              )}
+            </>
           )}
         </Card>
       </div>

@@ -1,11 +1,12 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { apiFetch } from './api';
+import React, { useState } from 'react';
+import { useApi, request } from './lib/query';
+import { ApiError } from './lib/client';
+import { marketId } from './api';
 import {
   PageHead, Card, Chip, Drawer, Money, LayerNote, AuditRef,
-  SkeletonRow, Skeleton, EmptyRow, useToast, gbp, num,
+  SkeletonRow, Skeleton, EmptyRow, gbp, num,
 } from './kit/kit';
 import { I } from './kit/icons';
-import { asArray } from './state';
 
 // CRM (spec/ui/22-crm.md): the customer master + sales pipeline. The PARTY is the hub — the doc-02 unification
 // of company/customer — and everything (orders, credit, pipeline, sell-through) hangs off it. Three things are
@@ -17,16 +18,92 @@ import { asArray } from './state';
 //      £0.00), PII contacts show a respectful «hidden — requires pii» / «erased» tombstone, never raw or redacted.
 //   3. CREDIT BLOCK is loud (it blocks order placement) and raising a credit LIMIT is maker-checker (a request a
 //      different approver must clear — self-approval is disabled with a tooltip).
-// Auto-loads on mount + when ctx.market / ctx.entity change. No manual Load/Refresh buttons.
+//
+// Backing routes: the customer-master LIST and the sales PIPELINE board have no GET route in this environment yet
+// (CommerceRoutes ships create/credit-profile per-party POSTs and CreditRoutes the per-party credit-terms admin,
+// but no scope-filtered party worklist and no deal pipeline). So the data surfaces render the honest
+// "Not available in this environment yet" panel — a 404 from the canonical CRM paths drives that state, and the
+// screen lights up automatically the day the worklist/pipeline reads ship. The credit-limit maker-checker write
+// targets the per-party credit-terms route that DOES exist.
+//   GET  /api/v1/crm/parties?market=<id>&sector=<s>   — party worklist (unbacked → notImplemented panel)
+//   GET  /api/v1/crm/pipeline?market=<id>             — deal pipeline   (unbacked → notImplemented panel)
+//   PUT  /api/v1/parties/{id}/credit-terms            — credit-limit change (real; maker-checker, edit:credit_profile)
 
 type Ctx = { entity: string; market: string; period: string; scenario: string };
 type Role = { token?: string; name?: string; title?: string; layers?: string[] };
-type Res = { status: number; json: any } | null;
+
+interface PartyContact {
+  id?: string;
+  name?: string;
+  role?: string;
+  title?: string;
+  email?: string | null;
+  phone?: string | null;
+  collapsed?: boolean;
+  erased?: boolean;
+  status?: string;
+}
+interface PartyCredit {
+  block?: boolean;
+  limit?: number | string | null;
+  outstanding?: number | string | null;
+  terms?: string | null;
+  last_changed_by?: string | null;
+  requested_by?: string | null;
+}
+interface Party {
+  id?: string;
+  party_id?: string;
+  display_name?: string;
+  displayName?: string;
+  legal_name?: string;
+  legalName?: string;
+  party_type?: string;
+  type?: string;
+  market?: string;
+  market_name?: string;
+  channel?: string;
+  sector?: string;
+  status?: string;
+  currency?: string;
+  branches?: number;
+  account_manager?: string;
+  manager?: string;
+  payment_terms_days?: number;
+  credit_limit?: number | string | null;
+  credit_block?: boolean;
+  outstanding?: number | string | null;
+  roles?: string[];
+  contacts?: PartyContact[];
+  credit?: PartyCredit;
+}
+interface PartyList {
+  rows?: Party[];
+  sectors?: string[];
+}
+interface Deal {
+  id?: string;
+  party?: string;
+  party_name?: string;
+  sector?: string;
+  owner?: string;
+  age?: string;
+  stage?: string;
+  value?: number | string | null;
+  weight?: number | string | null;
+}
+interface Pipeline {
+  deals?: Deal[];
+  stages?: string[];
+}
 
 const STAGE_CHIP: Record<string, string> = {
   lead: 'neutral', qualified: 'warn', proposal: 'accent', won: 'ok', lost: 'danger',
 };
 const OPEN_STAGES = ['lead', 'qualified', 'proposal'];
+const DEFAULT_STAGES = ['lead', 'qualified', 'proposal', 'won', 'lost'];
+
+const asArray = <T,>(x: unknown): T[] => (Array.isArray(x) ? (x as T[]) : []);
 
 export function CRM({ role, ctx, toast }: { role: any; ctx: any; toast: (m: string, k?: string) => void }) {
   const r = (role || {}) as Role;
@@ -34,73 +111,71 @@ export function CRM({ role, ctx, toast }: { role: any; ctx: any; toast: (m: stri
   const layers = r.layers || [];
   const hasCommercial = layers.indexOf('commercial') >= 0;
   const hasPii = layers.indexOf('pii') >= 0;
-  const market = c.market || '';
-
-  const [toastNode, fire] = useToast();
-  const fireToast = useCallback((m: string, k?: string) => { fire(m, (k as any) || 'ok'); toast(m, k); }, [fire, toast]);
+  const market = c.market ? marketId(c.market) : '';
 
   const [tab, setTab] = useState<'parties' | 'pipeline'>('parties');
   const [sector, setSector] = useState('all');
-
-  const [partyRes, setPartyRes] = useState<Res>(null);
-  const [pipeRes, setPipeRes] = useState<Res>(null);
-  const [sel, setSel] = useState<any | null>(null);
+  const [sel, setSel] = useState<Party | null>(null);
 
   // ---- credit-limit maker-checker request ----
-  const [limitReq, setLimitReq] = useState<any | null>(null);
+  const [limitReq, setLimitReq] = useState<Party | null>(null);
   const [limitDraft, setLimitDraft] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
-  const loadParties = useCallback(() => {
-    setPartyRes(null);
-    const q = new URLSearchParams();
-    if (market) q.set('market', market);
-    if (sector !== 'all') q.set('sector', sector);
-    apiFetch(`/api/v1/crm/parties${q.toString() ? `?${q}` : ''}`).then(setPartyRes);
-  }, [market, sector]);
+  // AUTO-LOAD via the production data layer. Keyed on the ctx fields the scope-filtered reads depend on
+  // (entity/market) plus the sector filter, so a context switch refetches. No Load/Refresh buttons.
+  const partyQ = new URLSearchParams();
+  if (market) partyQ.set('market', market);
+  if (sector !== 'all') partyQ.set('sector', sector);
+  const parties = useApi<PartyList | Party[]>(
+    ['crm', 'parties', c.entity, market, sector],
+    `/api/v1/crm/parties${partyQ.toString() ? `?${partyQ}` : ''}`,
+  );
 
-  const loadPipeline = useCallback(() => {
-    setPipeRes(null);
-    const q = new URLSearchParams();
-    if (market) q.set('market', market);
-    apiFetch(`/api/v1/crm/pipeline${q.toString() ? `?${q}` : ''}`).then(setPipeRes);
-  }, [market]);
+  const pipeQ = new URLSearchParams();
+  if (market) pipeQ.set('market', market);
+  const pipeline = useApi<Pipeline | Deal[]>(
+    ['crm', 'pipeline', c.entity, market],
+    `/api/v1/crm/pipeline${pipeQ.toString() ? `?${pipeQ}` : ''}`,
+    { enabled: tab === 'pipeline' },
+  );
 
-  useEffect(loadParties, [loadParties]);
-  useEffect(loadPipeline, [loadPipeline]);
-
-  const submitLimit = (p: any) => {
+  const submitLimit = (p: Party) => {
     const id = p.party_id || p.id;
+    if (!id) return;
     const amt = parseFloat(limitDraft);
-    if (!Number.isFinite(amt) || amt < 0) { fireToast('Enter a valid credit limit', 'warn'); return; }
+    if (!Number.isFinite(amt) || amt < 0) { toast('Enter a valid credit limit', 'warn'); return; }
     setSubmitting(true);
-    apiFetch(`/api/v1/crm/parties/${encodeURIComponent(id)}/credit-limit`, {
-      method: 'POST',
-      body: JSON.stringify({ credit_limit: amt, currency: p.currency || 'GBP' }),
-    }).then((res) => {
-      setSubmitting(false);
-      setLimitReq(null);
-      if (res.status === 200 || res.status === 202) {
-        fireToast(`Credit-limit change to ${gbp(amt, p.currency)} submitted for approval — maker-checker`);
-        loadParties();
-      } else if (res.status === 403) {
-        fireToast('Forbidden — credit limits require the commercial layer', 'err');
-      } else if (res.status === 409) {
-        fireToast('You raised this limit — a different approver must clear it', 'err');
-      } else {
-        fireToast(`Submit failed (${res.status})`, 'err');
-      }
-    });
+    request(`/api/v1/parties/${encodeURIComponent(id)}/credit-terms`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        payment_terms_days: p.payment_terms_days ?? 30,
+        credit_limit: amt,
+        currency: p.currency || 'GBP',
+      }),
+    })
+      .then(() => {
+        toast(`Credit-limit change to ${gbp(amt, p.currency)} submitted for approval — maker-checker`, 'ok');
+        setLimitReq(null);
+        parties.refetch();
+      })
+      .catch((e) => {
+        const ae = e as ApiError;
+        if (ae?.status === 409) toast('You raised this limit — a different approver must clear it', 'err');
+        else if (ae?.forbidden) toast('Forbidden — credit limits require the commercial layer', 'err');
+        else if (ae?.notImplemented) toast('Credit-limit changes are not wired in this environment yet', 'warn');
+        else toast(`Submit failed (${ae?.status ?? '—'})${ae?.message ? `: ${ae.message}` : ''}`, 'err');
+      })
+      .finally(() => setSubmitting(false));
   };
 
   return (
     <div className="page" style={{ maxWidth: 1320 }}>
-      {toastNode}
       <PageHead
         crumb={'Customer master + pipeline (doc 11) · the single source of who we sell to'}
         title="CRM"
         sub="The canonical party — organisation or channel — with its contacts, billing & credit profile, and the deal pipeline that feeds the forecast. Scope tags (market · channel · sector) drive the access wall."
-        right={market ? <span className="stale"><span className="pulse" />market {market.slice(0, 8)}</span> : undefined}
+        right={c.market ? <span className="stale"><span className="pulse" />market {String(c.market).slice(0, 8)}</span> : undefined}
       />
 
       <div className="seg" style={{ marginBottom: 18 }}>
@@ -109,46 +184,71 @@ export function CRM({ role, ctx, toast }: { role: any; ctx: any; toast: (m: stri
       </div>
 
       {tab === 'parties' ? (
-        <PartyList
-          res={partyRes} role={r} hasCommercial={hasCommercial} hasPii={hasPii}
+        <PartyListView
+          q={parties} role={r} hasCommercial={hasCommercial} hasPii={hasPii}
           sector={sector} setSector={setSector} onSelect={setSel}
         />
       ) : (
-        <Pipeline res={pipeRes} role={r} hasCommercial={hasCommercial} />
+        <PipelineView q={pipeline} hasCommercial={hasCommercial} />
       )}
 
       <PartyDrawer
         party={sel} role={r} hasCommercial={hasCommercial} hasPii={hasPii} viewerName={r.name}
         onClose={() => setSel(null)}
-        onRaiseLimit={(p) => { setLimitReq(p); setLimitDraft(String(p.credit_limit ?? '')); }}
+        onRaiseLimit={(p) => { setLimitReq(p); setLimitDraft(String(p.credit?.limit ?? p.credit_limit ?? '')); }}
       />
 
       {limitReq && (
         <CreditLimitRequest
           party={limitReq} draft={limitDraft} setDraft={setLimitDraft} submitting={submitting}
-          viewerName={r.name} onCancel={() => setLimitReq(null)} onSubmit={() => submitLimit(limitReq)}
+          onCancel={() => setLimitReq(null)} onSubmit={() => submitLimit(limitReq)}
         />
       )}
     </div>
   );
 }
 
+// A clean, styled panel for a data surface whose GET route isn't built in this environment yet.
+function NotBacked({ title, line }: { title: string; line: string }) {
+  return (
+    <Card style={{ padding: '34px 28px', textAlign: 'center' }}>
+      <div style={{ display: 'grid', placeItems: 'center', gap: 10 }} data-testid="crm-unbacked">
+        <span style={{ width: 44, height: 44, borderRadius: 12, display: 'grid', placeItems: 'center', background: 'var(--panel-2)' }}>{I.user({ size: 22 })}</span>
+        <div style={{ fontFamily: 'var(--font-disp)', fontSize: 18, fontWeight: 600 }}>{title}</div>
+        <div className="dim" style={{ fontSize: 12.5, maxWidth: 480 }}>{line}</div>
+      </div>
+    </Card>
+  );
+}
+
 // ---------------- Party list ----------------
-function PartyList({ res, role, hasCommercial, hasPii, sector, setSector, onSelect }: {
-  res: Res; role: Role; hasCommercial: boolean; hasPii: boolean;
-  sector: string; setSector: (s: string) => void; onSelect: (p: any) => void;
+function PartyListView({ q, role, hasCommercial, hasPii, sector, setSector, onSelect }: {
+  q: ReturnType<typeof useApi<PartyList | Party[]>>;
+  role: Role; hasCommercial: boolean; hasPii: boolean;
+  sector: string; setSector: (s: string) => void; onSelect: (p: Party) => void;
 }) {
-  const loading = res === null;
-  const forbidden = !!res && (res.status === 401 || res.status === 403);
-  const error = !!res && res.status >= 400 && !forbidden;
-  const payload = res && res.status < 400 ? res.json : null;
-  const rows = asArray<any>(payload && payload.rows ? payload.rows : payload);
-  const sectors = asArray<string>(payload && payload.sectors);
+  const err = q.error as ApiError | null;
+  const forbidden = !!err?.forbidden;
+  const notImplemented = !!err?.notImplemented;
+  const otherError = !!err && !forbidden && !notImplemented;
+  const payload = q.data ?? null;
+  const rows = asArray<Party>(Array.isArray(payload) ? payload : (payload as PartyList | null)?.rows);
+  const sectors = asArray<string>(Array.isArray(payload) ? [] : (payload as PartyList | null)?.sectors);
+  const ready = !q.isLoading && !err;
+
+  if (notImplemented) {
+    return (
+      <NotBacked
+        title="Not available in this environment yet"
+        line="The customer master appears once the party worklist read is wired in this environment. Parties can be created and credit profiles set via the API today, but the scope-filtered list view is not yet served."
+      />
+    );
+  }
 
   if (forbidden) {
     return (
       <Card title="Parties" icon={I.user}>
-        <LayerNote>The customer master is hidden — requires view:party for this scope.</LayerNote>
+        <LayerNote>The customer master is hidden — requires <b>view:party</b> for this scope.</LayerNote>
       </Card>
     );
   }
@@ -163,7 +263,7 @@ function PartyList({ res, role, hasCommercial, hasPii, sector, setSector, onSele
         </select>
         <span className="sp" />
         {!hasPii && <span className="chip neutral" style={{ fontSize: 11 }}>{I.shield({ size: 11 })}PII collapsed for your role</span>}
-        <span className="dim" style={{ fontSize: 12 }}>{loading ? '…' : `${rows.length} parties`}</span>
+        <span className="dim" style={{ fontSize: 12 }}>{ready ? `${rows.length} parties` : '…'}</span>
       </div>
       <table className="tbl" data-testid="crm-parties">
         <thead>
@@ -173,12 +273,12 @@ function PartyList({ res, role, hasCommercial, hasPii, sector, setSector, onSele
           </tr>
         </thead>
         <tbody>
-          {loading && <><SkeletonRow cols={8} /><SkeletonRow cols={8} /><SkeletonRow cols={8} /></>}
-          {error && <EmptyRow cols={8}>Could not load the customer master — try again shortly.</EmptyRow>}
-          {!loading && !error && rows.length === 0 && <EmptyRow cols={8}>No parties in this scope.</EmptyRow>}
-          {!loading && rows.map((p) => {
+          {q.isLoading && <><SkeletonRow cols={8} /><SkeletonRow cols={8} /><SkeletonRow cols={8} /></>}
+          {otherError && <EmptyRow cols={8}>Couldn't load the customer master (HTTP {err?.status}){err?.message ? ` — ${err.message}` : ''}. It retries on the next context change.</EmptyRow>}
+          {ready && rows.length === 0 && <EmptyRow cols={8}>No parties in this scope.</EmptyRow>}
+          {ready && rows.map((p) => {
             const id = p.party_id || p.id;
-            const block = !!(p.credit && (p.credit.block ?? p.credit_block));
+            const block = !!(p.credit?.block ?? p.credit_block);
             return (
               <tr key={id} tabIndex={0} data-testid="crm-party-row" onClick={() => onSelect(p)}
                 onKeyDown={(e) => e.key === 'Enter' && onSelect(p)} style={{ cursor: 'pointer' }}>
@@ -203,9 +303,9 @@ function PartyList({ res, role, hasCommercial, hasPii, sector, setSector, onSele
 }
 
 // Credit limit collapses (never £0) when the viewer lacks commercial, and reads "prepaid" for a zero limit.
-function CreditLimitCell({ party, role, hasCommercial }: { party: any; role: Role; hasCommercial: boolean }) {
+function CreditLimitCell({ party, role, hasCommercial }: { party: Party; role: Role; hasCommercial: boolean }) {
   if (!hasCommercial) return <span className="dim" style={{ fontStyle: 'italic', fontSize: 11.5 }}>hidden</span>;
-  const limit = party.credit && party.credit.limit != null ? party.credit.limit : party.credit_limit;
+  const limit = party.credit?.limit != null ? party.credit.limit : party.credit_limit;
   if (limit == null) return <span className="dim">—</span>;
   if (Number(limit) === 0) return <span className="dim">prepaid</span>;
   return <Money value={limit} ccy={party.currency} role={{ layers: role.layers || [] }} layer="commercial" />;
@@ -213,8 +313,8 @@ function CreditLimitCell({ party, role, hasCommercial }: { party: any; role: Rol
 
 // ---------------- Party drawer (the hub) ----------------
 function PartyDrawer({ party, role, hasCommercial, hasPii, viewerName, onClose, onRaiseLimit }: {
-  party: any; role: Role; hasCommercial: boolean; hasPii: boolean; viewerName?: string;
-  onClose: () => void; onRaiseLimit: (p: any) => void;
+  party: Party | null; role: Role; hasCommercial: boolean; hasPii: boolean; viewerName?: string;
+  onClose: () => void; onRaiseLimit: (p: Party) => void;
 }) {
   const open = !!party;
   const p = party || {};
@@ -223,7 +323,7 @@ function PartyDrawer({ party, role, hasCommercial, hasPii, viewerName, onClose, 
   const limit = credit.limit != null ? credit.limit : p.credit_limit;
   const outstanding = credit.outstanding != null ? credit.outstanding : p.outstanding;
   const roles = asArray<string>(p.roles);
-  const contacts = asArray<any>(p.contacts);
+  const contacts = asArray<PartyContact>(p.contacts);
   // A viewer can only raise a limit they did not last change (maker-checker self-block, enforced server-side too).
   const lastMaker = credit.last_changed_by || credit.requested_by;
   const selfBlocked = !!lastMaker && !!viewerName && lastMaker === viewerName;
@@ -308,7 +408,7 @@ function PartyDrawer({ party, role, hasCommercial, hasPii, viewerName, onClose, 
 
 // PII-aware contact list: a withheld email/phone is absent — show a respectful tombstone, never raw or redacted.
 // An erased contact (DSAR crypto-shred) shows «erased», never a placeholder.
-function Contacts({ contacts, hasPii }: { contacts: any[]; hasPii: boolean }) {
+function Contacts({ contacts, hasPii }: { contacts: PartyContact[]; hasPii: boolean }) {
   if (contacts.length === 0) {
     return <div className="dim" style={{ fontSize: 12.5 }}>No named contacts (channel party).</div>;
   }
@@ -343,33 +443,42 @@ function Contacts({ contacts, hasPii }: { contacts: any[]; hasPii: boolean }) {
 }
 
 // ---------------- Pipeline ----------------
-function Pipeline({ res, role, hasCommercial }: { res: Res; role: Role; hasCommercial: boolean }) {
-  const loading = res === null;
-  const forbidden = !!res && (res.status === 401 || res.status === 403);
-  const error = !!res && res.status >= 400 && !forbidden;
-  const payload = res && res.status < 400 ? res.json : null;
-  const deals = asArray<any>(payload && payload.deals ? payload.deals : payload);
-  const stages = asArray<string>(payload && payload.stages).length
-    ? asArray<string>(payload && payload.stages)
-    : ['lead', 'qualified', 'proposal', 'won', 'lost'];
+function PipelineView({ q, hasCommercial }: { q: ReturnType<typeof useApi<Pipeline | Deal[]>>; hasCommercial: boolean }) {
+  const err = q.error as ApiError | null;
+  const forbidden = !!err?.forbidden;
+  const notImplemented = !!err?.notImplemented;
+  const otherError = !!err && !forbidden && !notImplemented;
+  const payload = q.data ?? null;
+  const deals = asArray<Deal>(Array.isArray(payload) ? payload : (payload as Pipeline | null)?.deals);
+  const stagesRaw = asArray<string>(Array.isArray(payload) ? [] : (payload as Pipeline | null)?.stages);
+  const stages = stagesRaw.length ? stagesRaw : DEFAULT_STAGES;
+  const ready = !q.isLoading && !err;
 
+  if (notImplemented) {
+    return (
+      <NotBacked
+        title="Not available in this environment yet"
+        line="The deal pipeline appears once the CRM pipeline read is wired in this environment. The forecast demand pipeline (H6Q) is served today, but the sales-deal board is not yet backed."
+      />
+    );
+  }
   if (forbidden) {
-    return <Card title="Pipeline" icon={I.trend}><LayerNote>The deal pipeline is hidden — requires view:deal for this scope.</LayerNote></Card>;
+    return <Card title="Pipeline" icon={I.trend}><LayerNote>The deal pipeline is hidden — requires <b>view:deal</b> for this scope.</LayerNote></Card>;
   }
-  if (error) {
-    return <Card title="Pipeline" icon={I.trend}><div className="dim" style={{ padding: '14px 2px' }}>Could not load the pipeline — try again shortly.</div></Card>;
+  if (otherError) {
+    return <Card title="Pipeline" icon={I.trend}><div className="dim" style={{ padding: '14px 2px' }}>Couldn't load the pipeline (HTTP {err?.status}){err?.message ? ` — ${err.message}` : ''}. It retries on the next context change.</div></Card>;
   }
-  if (loading) {
+  if (q.isLoading) {
     return <Card title="Pipeline" icon={I.trend}><Skeleton lines={5} /></Card>;
   }
-  if (deals.length === 0) {
+  if (ready && deals.length === 0) {
     return <Card title="Pipeline" icon={I.trend}><div className="dim" style={{ padding: '14px 2px' }}>No open deals in this scope.</div></Card>;
   }
 
-  const byStage: Record<string, any[]> = {};
+  const byStage: Record<string, Deal[]> = {};
   stages.forEach((s) => { byStage[s] = deals.filter((d) => d.stage === s); });
   const weighted = deals
-    .filter((d) => OPEN_STAGES.indexOf(d.stage) >= 0)
+    .filter((d) => OPEN_STAGES.indexOf(d.stage ?? '') >= 0)
     .reduce((a, d) => a + (Number(d.value) || 0) * (Number(d.weight) || 0), 0);
   const wonCount = (byStage['won'] || []).length;
   const openCount = deals.filter((d) => d.stage !== 'won' && d.stage !== 'lost').length;
@@ -431,11 +540,11 @@ function Pipeline({ res, role, hasCommercial }: { res: Res; role: Role; hasComme
 }
 
 // ---------------- Credit-limit change (maker-checker request) ----------------
-function CreditLimitRequest({ party, draft, setDraft, submitting, viewerName, onCancel, onSubmit }: {
-  party: any; draft: string; setDraft: (s: string) => void; submitting: boolean;
-  viewerName?: string; onCancel: () => void; onSubmit: () => void;
+function CreditLimitRequest({ party, draft, setDraft, submitting, onCancel, onSubmit }: {
+  party: Party; draft: string; setDraft: (s: string) => void; submitting: boolean;
+  onCancel: () => void; onSubmit: () => void;
 }) {
-  const current = party.credit && party.credit.limit != null ? party.credit.limit : party.credit_limit;
+  const current = party.credit?.limit != null ? party.credit.limit : party.credit_limit;
   return (
     <>
       <div className="scrim open" onClick={onCancel} />

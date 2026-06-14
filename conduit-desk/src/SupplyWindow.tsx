@@ -1,13 +1,6 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import {
-  authToken,
-  getContractManufacturers,
-  getSupplyCommitments,
-  getProposals,
-  getSupplyWarnings,
-  approvePo,
-} from './api';
-import { tableState, asArray, type ApiResult } from './state';
+import React, { useEffect, useState } from 'react';
+import { useApi, request } from './lib/query';
+import { ApiError } from './lib/client';
 import { PageHead, Card, ZoneTag, Money, EmptyRow, SkeletonRow, LayerNote, useToast } from './kit/kit';
 import { I } from './kit/icons';
 
@@ -15,8 +8,10 @@ import { I } from './kit/icons';
 // commitment ladder (firm/flex/indicative zones), auto-PO proposals behind a human approve gate, and loud
 // divergence warnings when frozen-window demand moves against a firm PO.
 //
-// Data-layer wall (doc 05): quantities/zones are `volume`; PO value is `commercial`; CM/entity context may be
-// `inter_entity` and COLLAPSES. Auto-load on mount + when ctx changes — no Load/Refresh buttons.
+// Backing routes (H6QRoutes): GET /api/v1/h6q/suppliers -> [{id,name}]; and three supplier-scoped reads
+// GET /api/v1/h6q/supply/{commitments,proposals,warnings}?supplier=<uuid>, each gated on view:pipeline_coverage
+// (403 -> collapse to a LayerNote). Approval is POST /api/v1/h6q/supply/approve {supplier,variant,target}.
+// Auto-load on mount + when ctx or the chosen contract manufacturer changes — no Load/Refresh buttons.
 
 interface Cm {
   id: string;
@@ -63,72 +58,71 @@ interface Warning {
 }
 
 const COMMIT_COLS = 6;
-const PROPOSAL_COLS = 9;
+const PROPOSAL_COLS = 10;
 
-function StateBody({ st, cols, children }: { st: string; cols: number; children: React.ReactNode }) {
+type Surface = 'loading' | 'forbidden' | 'notImplemented' | 'error' | 'empty' | 'ready';
+
+function surface(isLoading: boolean, err: ApiError | null, count: number): Surface {
+  if (isLoading) return 'loading';
+  if (err?.forbidden) return 'forbidden';
+  if (err?.notImplemented) return 'notImplemented';
+  if (err) return 'error';
+  return count === 0 ? 'empty' : 'ready';
+}
+
+function StateBody({ st, cols, children }: { st: Surface; cols: number; children: React.ReactNode }) {
   if (st === 'loading') return <SkeletonRow cols={cols} />;
   if (st === 'forbidden')
     return (
       <EmptyRow cols={cols}>
-        <LayerNote>hidden — requires the supply layer</LayerNote>
+        <LayerNote>hidden — requires view:pipeline_coverage</LayerNote>
       </EmptyRow>
     );
+  if (st === 'notImplemented')
+    return <EmptyRow cols={cols}>Not available in this environment yet.</EmptyRow>;
   if (st === 'error') return <EmptyRow cols={cols}>Couldn't load — try again shortly.</EmptyRow>;
   return <>{children}</>;
 }
 
 export function SupplyWindow({ role, ctx, toast }: { role: any; ctx: any; toast: (m: string, k?: string) => void }) {
-  const token = authToken();
   const [toastNode, fire] = useToast();
-  const tell = useCallback((m: string, k?: string) => { fire(m, (k as any) || 'ok'); toast(m, k); }, [fire, toast]);
-
-  const [cms, setCms] = useState<Cm[]>([]);
-  const [supplier, setSupplier] = useState<string>('');
-
-  const [commitRes, setCommitRes] = useState<ApiResult | null>(null);
-  const [proposalRes, setProposalRes] = useState<ApiResult | null>(null);
-  const [warningRes, setWarningRes] = useState<ApiResult | null>(null);
-  const [approving, setApproving] = useState<string>('');
-
-  const commitments = asArray<Commitment>(commitRes?.json);
-  const proposals = asArray<Proposal>(proposalRes?.json);
-  const warnings = asArray<Warning>(warningRes?.json);
-
-  const loadLanes = useCallback(
-    (sup: string) => {
-      setCommitRes(null);
-      setProposalRes(null);
-      setWarningRes(null);
-      Promise.all([getSupplyCommitments(token, sup), getProposals(token, sup), getSupplyWarnings(token, sup)]).then(
-        ([c, p, w]) => {
-          setCommitRes(c);
-          setProposalRes(p);
-          setWarningRes(w);
-        },
-      );
-    },
-    [token],
-  );
-
-  useEffect(() => {
-    let live = true;
-    getContractManufacturers(token).then((s) => {
-      if (!live) return;
-      const list = asArray<Cm>(s.json);
-      setCms(list);
-      const first = list.length ? list[0].id : '';
-      setSupplier(first);
-      if (first) loadLanes(first);
-    });
-    return () => {
-      live = false;
-    };
-  }, [token, loadLanes, ctx?.entity, ctx?.market, ctx?.scenario, ctx?.period]);
-
-  const onPickSupplier = (id: string) => {
-    setSupplier(id);
-    loadLanes(id);
+  const tell = (m: string, k?: string) => {
+    fire(m, (k as any) || 'ok');
+    toast(m, k);
   };
+
+  const ctxKey = [ctx?.entity, ctx?.market, ctx?.period, ctx?.scenario];
+
+  const cmsQ = useApi<Cm[]>(['supply-cms', ...ctxKey], '/api/v1/h6q/suppliers');
+  const cms: Cm[] = Array.isArray(cmsQ.data) ? cmsQ.data : [];
+
+  const [supplier, setSupplier] = useState<string>('');
+  useEffect(() => {
+    if (!supplier && cms.length) setSupplier(cms[0].id);
+  }, [cms, supplier]);
+
+  const lane = (path: string) =>
+    `/api/v1/h6q/supply/${path}?supplier=${encodeURIComponent(supplier)}`;
+  const on = !!supplier;
+
+  const commitQ = useApi<Commitment[]>(['supply-commit', supplier, ...ctxKey], lane('commitments'), { enabled: on });
+  const proposalQ = useApi<Proposal[]>(['supply-proposals', supplier, ...ctxKey], lane('proposals'), { enabled: on });
+  const warningQ = useApi<Warning[]>(['supply-warnings', supplier, ...ctxKey], lane('warnings'), { enabled: on });
+
+  const commitments: Commitment[] = Array.isArray(commitQ.data) ? commitQ.data : [];
+  const proposals: Proposal[] = Array.isArray(proposalQ.data) ? proposalQ.data : [];
+  const warnings: Warning[] = Array.isArray(warningQ.data) ? warningQ.data : [];
+
+  const cmsErr = cmsQ.error as ApiError | null;
+  const commitErr = commitQ.error as ApiError | null;
+  const proposalErr = proposalQ.error as ApiError | null;
+  const warningErr = warningQ.error as ApiError | null;
+
+  const commitState = surface(!on || commitQ.isLoading, commitErr, commitments.length);
+  const proposalState = surface(!on || proposalQ.isLoading, proposalErr, proposals.length);
+  const warningState = surface(!on || warningQ.isLoading, warningErr, warnings.length);
+
+  const [approving, setApproving] = useState<string>('');
 
   const approve = (p: Proposal) => {
     const variant = p.product_variant_id || p.sku || '';
@@ -136,24 +130,54 @@ export function SupplyWindow({ role, ctx, toast }: { role: any; ctx: any; toast:
     const selfMade = !!p.proposer && !!role?.name && p.proposer === role.name;
     if (selfMade) return;
     setApproving(variant + target);
-    approvePo(token, supplier, variant, target).then((res) => {
-      setApproving('');
-      if (res.status === 200) {
+    request('/api/v1/h6q/supply/approve', {
+      method: 'POST',
+      body: JSON.stringify({ supplier, variant, target }),
+    })
+      .then(() => {
         tell('Auto-PO approved — committed within flex headroom', 'ok');
-        loadLanes(supplier);
-      } else if (res.status === 403) {
-        tell("Forbidden — you can't approve this proposal", 'err');
-      } else {
-        tell(`Approve failed (${res.status})`, 'err');
-      }
-    });
+        proposalQ.refetch();
+        commitQ.refetch();
+        warningQ.refetch();
+      })
+      .catch((e: unknown) => {
+        if (e instanceof ApiError && e.forbidden) tell("Forbidden — you can't approve this proposal", 'err');
+        else if (e instanceof ApiError && e.status === 409) tell('Cannot commit — outside firm headroom', 'err');
+        else tell(`Approve failed (${e instanceof ApiError ? e.status : 'network'})`, 'err');
+      })
+      .finally(() => setApproving(''));
   };
 
   const cm = cms.find((c) => c.id === supplier);
-  const commitState = tableState(commitRes, commitments);
-  const proposalState = tableState(proposalRes, proposals);
-  const warningState = tableState(warningRes, warnings);
   const laneCcy = cm?.currency || 'GBP';
+
+  // The suppliers list itself can be forbidden / unbacked — surface that honestly at the page level.
+  if (cmsErr?.forbidden) {
+    return (
+      <div className="page">
+        {toastNode}
+        <PageHead crumb={'H6Q · Supply window'} title="Supply window" sub="Firm-commitment horizon, auto-PO proposals behind a human gate, and divergence warnings per contract manufacturer." />
+        <Card style={{ padding: '34px 28px' }}>
+          <LayerNote>hidden — requires view:pipeline_coverage</LayerNote>
+        </Card>
+      </div>
+    );
+  }
+  if (cmsErr?.notImplemented) {
+    return (
+      <div className="page">
+        {toastNode}
+        <PageHead crumb={'H6Q · Supply window'} title="Supply window" sub="Firm-commitment horizon, auto-PO proposals behind a human gate, and divergence warnings per contract manufacturer." />
+        <Card style={{ padding: '34px 28px', textAlign: 'center' }} data-testid="supply-unbacked">
+          <div style={{ display: 'grid', placeItems: 'center', gap: 10 }}>
+            <span style={{ width: 44, height: 44, borderRadius: 12, display: 'grid', placeItems: 'center', background: 'var(--panel-2)' }}>{I.cpu({ size: 22 })}</span>
+            <div style={{ fontFamily: 'var(--font-disp)', fontSize: 18, fontWeight: 600 }}>Not available in this environment yet</div>
+            <div className="dim" style={{ fontSize: 12.5, maxWidth: 460 }}>The supply window appears once contract manufacturers and a firm-commitment horizon have been registered.</div>
+          </div>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="page">
@@ -163,12 +187,14 @@ export function SupplyWindow({ role, ctx, toast }: { role: any; ctx: any; toast:
         title="Supply window"
         sub="Firm-commitment horizon (frozen · flex · indicative), auto-PO proposals behind a human gate, and divergence warnings per contract manufacturer."
         right={
-          cms.length > 0 ? (
+          cmsQ.isLoading ? (
+            <span className="dim" style={{ fontSize: 12 }}>Loading manufacturers…</span>
+          ) : cms.length > 0 ? (
             <select
               className="fld sel"
               data-testid="supply-cm"
               value={supplier}
-              onChange={(e) => onPickSupplier(e.target.value)}
+              onChange={(e) => setSupplier(e.target.value)}
             >
               {cms.map((c) => (
                 <option key={c.id} value={c.id}>
@@ -180,6 +206,19 @@ export function SupplyWindow({ role, ctx, toast }: { role: any; ctx: any; toast:
           ) : undefined
         }
       />
+
+      {cmsErr && !cmsErr.forbidden && !cmsErr.notImplemented && (
+        <div className="banner danger" style={{ marginBottom: 12 }} data-testid="supply-cm-error">
+          {I.alert()}
+          <div>Couldn't load contract manufacturers (HTTP {cmsErr.status}). Try again shortly.</div>
+        </div>
+      )}
+
+      {!cmsQ.isLoading && !cmsErr && cms.length === 0 && (
+        <Card style={{ padding: '26px 24px', marginBottom: 12 }}>
+          <div className="dim" data-testid="supply-no-cms">No contract manufacturers registered yet.</div>
+        </Card>
+      )}
 
       <Card
         title="Commitment ladder"
@@ -254,9 +293,9 @@ export function SupplyWindow({ role, ctx, toast }: { role: any; ctx: any; toast:
             </tr>
           </thead>
           <tbody>
-            <StateBody st={proposalState} cols={PROPOSAL_COLS + 1}>
+            <StateBody st={proposalState} cols={PROPOSAL_COLS}>
               {proposalState === 'empty' ? (
-                <EmptyRow cols={PROPOSAL_COLS + 1}>No proposals — demand sits within committed supply.</EmptyRow>
+                <EmptyRow cols={PROPOSAL_COLS}>No proposals — demand sits within committed supply.</EmptyRow>
               ) : (
                 proposals.map((p, i) => {
                   const variant = p.product_variant_id || p.sku || '';
@@ -320,7 +359,12 @@ export function SupplyWindow({ role, ctx, toast }: { role: any; ctx: any; toast:
         className="tablewrap"
       >
         {warningState === 'loading' && <div className="skel skel-line" style={{ margin: '8px 0' }} />}
-        {warningState === 'forbidden' && <LayerNote>hidden — requires the supply layer</LayerNote>}
+        {warningState === 'forbidden' && <LayerNote>hidden — requires view:pipeline_coverage</LayerNote>}
+        {warningState === 'notImplemented' && (
+          <div className="dim" style={{ padding: '12px 0' }} data-testid="supply-warnings">
+            Not available in this environment yet.
+          </div>
+        )}
         {warningState === 'error' && <div className="dim" style={{ padding: '12px 0' }}>Couldn't load warnings — try again shortly.</div>}
         {warningState === 'empty' && (
           <div className="dim" style={{ padding: '12px 0' }} data-testid="supply-warnings">

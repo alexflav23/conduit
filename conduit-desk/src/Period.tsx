@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { apiFetch } from './api';
+import React, { useState } from 'react';
+import { useApi, request, ApiError } from './lib/query';
 import { asArray } from './state';
-import { PageHead, Card, Chip, Drawer, Money, LayerNote, AuditRef, EmptyRow, Skeleton, SkeletonRow } from './kit/kit';
+import { PageHead, Card, Chip, Drawer, Money, LayerNote, AuditRef, EmptyRow, Skeleton } from './kit/kit';
 import { I } from './kit/icons';
 
 // 12 — Period governance + investigation (spec/ui/12-period.md). The auditor/finance front door to ONE
@@ -9,9 +9,13 @@ import { I } from './kit/icons';
 // until every operating entity's period is locked. The roll-up gate is the hero — "3 of 4 locked, HV-SG still
 // open" must be unmissable. Period assignment is a re-projection of the UTC instant, never a stored stamp.
 //
-// Auto-loads on mount + when the period key changes (no Load button). Four states everywhere: loading
-// (skeleton) / empty ("unknown group period") / 403 (LayerNote — requires view:accounting_period) / error.
-// Journal amounts are commercial/profitability-layered and COLLAPSE (never £0) for a volume-only viewer.
+// Real backend (api/.../routes/AuditRoutes.scala), all gated view:accounting_period:
+//   GET  /api/v1/finance/periods/{key}/investigation?entity=  -> the close roll-up + journals/events/controls
+//   POST /api/v1/finance/group-periods/{key}/lock             -> the roll-up gate (422 names laggards)
+//   GET  /api/v1/finance/lineage?invoice_no=                  -> the CM→PO journal walk
+// Four states everywhere: loading (skeleton) / empty ("unknown group period") / forbidden (LayerNote —
+// requires view:accounting_period) / notImplemented (env panel) / error. Journal amounts are commercial-
+// layered and COLLAPSE (never £0) for a volume-only viewer.
 
 type AnyRole = { layers?: string[] };
 
@@ -28,25 +32,31 @@ export function Period({ role, ctx, toast }: PeriodProps) {
   const seed = ctx?.period && GROUP_KEY.test(ctx.period) ? ctx.period : '2026-Q2';
 
   const [key, setKey] = useState(seed);
-  const [res, setRes] = useState<{ status: number; json: any } | null>(null);
   const [blocker, setBlocker] = useState<{ message: string; laggards: string[] } | null>(null);
   const [walk, setWalk] = useState<any | null>(null);
   const [locking, setLocking] = useState(false);
 
-  const load = useCallback(async (k: string) => {
-    setRes(null);
-    setBlocker(null);
-    setWalk(null);
-    const r = await apiFetch(`/api/v1/finance/periods/${encodeURIComponent(k)}/investigation`);
-    setRes(r);
-  }, []);
+  const entityQ = ctx?.entity ? `?entity=${encodeURIComponent(ctx.entity)}` : '';
+  const q = useApi<any>(
+    ['period', 'investigation', key, ctx?.entity ?? ''],
+    `/api/v1/finance/periods/${encodeURIComponent(key)}/investigation${entityQ}`,
+  );
 
-  useEffect(() => { load(key); }, [key, load]);
+  // The investigation endpoint answers 200 even for an unknown key, with an { error } body — treat that as empty.
+  const raw = q.data ?? null;
+  const unknown = !!raw && typeof raw === 'object' && 'error' in raw && !('period' in raw) && !('entities' in raw);
+  const data = unknown ? null : raw;
 
-  const data = res && res.status === 200 ? res.json : null;
+  const err = q.error;
+  const status: 'loading' | 'forbidden' | 'notImplemented' | 'error' | 'empty' | 'ready' =
+    q.isLoading ? 'loading'
+    : err instanceof ApiError && err.forbidden ? 'forbidden'
+    : err instanceof ApiError && err.notImplemented ? 'notImplemented'
+    : q.isError ? 'error'
+    : data ? 'ready'
+    : 'empty';
+
   const gp = data?.period ?? data;
-  const status = res === null ? 'loading' : (res.status === 401 || res.status === 403) ? 'forbidden' : res.status >= 400 ? 'error' : data ? 'ready' : 'empty';
-
   const entities = asArray<any>(gp?.entities);
   const lockedCount = data?.locked_count ?? entities.filter((e) => e.status === 'locked').length;
   const entityCount = data?.entity_count ?? entities.length;
@@ -66,22 +76,34 @@ export function Period({ role, ctx, toast }: PeriodProps) {
   const lock = async () => {
     if (groupStatus === 'locked') { toast(`group period ${key} is already locked — no-op`, 'warn'); return; }
     setLocking(true);
-    const r = await apiFetch(`/api/v1/finance/group-periods/${encodeURIComponent(key)}/lock`, { method: 'POST' });
-    setLocking(false);
-    if (r.status === 200) { setBlocker(null); toast(`group period ${key} locked`, 'ok'); load(key); return; }
-    if (r.status === 422 || r.status === 409) {
-      const lag = asArray<string>(r.json?.laggards).length ? asArray<string>(r.json.laggards) : laggards;
-      setBlocker({ message: r.json?.message || 'one or more operating entities are still open', laggards: lag });
-      toast('lock refused — entities still open', 'warn');
-      return;
+    try {
+      await request(`/api/v1/finance/group-periods/${encodeURIComponent(key)}/lock`, { method: 'POST' });
+      setBlocker(null);
+      toast(`group period ${key} locked`, 'ok');
+      q.refetch();
+    } catch (e) {
+      if (e instanceof ApiError && (e.status === 422 || e.status === 409)) {
+        const body: any = e.body;
+        const lag = asArray<string>(body?.laggards).length ? asArray<string>(body.laggards) : laggards;
+        setBlocker({ message: e.message || body?.message || 'one or more operating entities are still open', laggards: lag });
+        toast('lock refused — entities still open', 'warn');
+        return;
+      }
+      const s = e instanceof ApiError ? e.status : '';
+      toast(`lock failed: ${e instanceof ApiError ? e.message : String(e)}${s ? ` (${s})` : ''}`, 'err');
+    } finally {
+      setLocking(false);
     }
-    toast(`lock failed: ${r.json?.message ?? r.status}`, 'err');
   };
 
   const openWalk = async (invNo: string) => {
-    const r = await apiFetch(`/api/v1/finance/lineage?invoice_no=${encodeURIComponent(invNo)}`);
-    if (r.status === 200) setWalk(r.json);
-    else toast(`could not trace ${invNo} (${r.status})`, 'err');
+    try {
+      const j = await request<any>(`/api/v1/finance/lineage?invoice_no=${encodeURIComponent(invNo)}`);
+      setWalk(j);
+    } catch (e) {
+      const s = e instanceof ApiError ? e.status : '';
+      toast(`could not trace ${invNo}${s ? ` (${s})` : ''}`, 'err');
+    }
   };
 
   const lockDisabled = groupStatus === 'locked' || !allLocked || locking;
@@ -97,7 +119,7 @@ export function Period({ role, ctx, toast }: PeriodProps) {
         sub="One accounting period, end to end — its trial-balance shape, events, controls and evidence. A group period can't lock until every operating entity's period is locked."
         right={
           <div className="row g8">
-            <select className="fld sel" value={key} onChange={(e) => setKey(e.target.value)} style={{ minWidth: 130 }} data-testid="per-key">
+            <select className="fld sel" value={key} onChange={(e) => { setBlocker(null); setKey(e.target.value); }} style={{ minWidth: 130 }} data-testid="per-key">
               <option value="2026-Q2">2026-Q2</option>
               <option value="2026-Q1">2026-Q1</option>
               <option value="2025-Q4">2025-Q4</option>
@@ -119,9 +141,17 @@ export function Period({ role, ctx, toast }: PeriodProps) {
         </Card>
       )}
 
+      {status === 'notImplemented' && (
+        <Card title="Period governance" icon={I.clock} style={{ maxWidth: 620 }}>
+          <div className="dim" data-testid="per-unbacked" style={{ fontSize: 13.5, lineHeight: 1.55 }}>
+            Not available in this environment yet. The period investigation service isn't deployed here.
+          </div>
+        </Card>
+      )}
+
       {status === 'error' && (
         <Card title="Could not load the period" icon={I.alert} style={{ maxWidth: 620 }}>
-          <div className="banner danger" data-testid="per-error">{I.alert()}<div>The investigation request failed ({res?.status}). The period is unreachable right now — try again shortly.</div></div>
+          <div className="banner danger" data-testid="per-error">{I.alert()}<div>The investigation request failed ({err instanceof ApiError ? err.status : '—'}). The period is unreachable right now — try again shortly.</div></div>
         </Card>
       )}
 

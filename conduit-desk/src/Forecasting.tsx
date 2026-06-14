@@ -1,43 +1,76 @@
-import React, { useEffect, useState } from 'react';
-import { PageHead, Card, Money, Coverage, EmptyRow, LayerNote, SkeletonRow, num } from './kit/kit';
+import React from 'react';
+import { PageHead, Card, Coverage, EmptyRow, LayerNote, Skeleton, SkeletonRow, num } from './kit/kit';
 import { I } from './kit/icons';
-import { apiFetch } from './api';
-import { tableState, asArray, type TableState } from './state';
+import { useApi } from './lib/query';
+import { ApiError } from './lib/client';
 
-// Forecast Engine (spec/ui/15) — the self-improving forecast's glass box (doc 26). The rolling-origin backtest
-// picks a champion model per account by lowest error (argmin over model_accuracy, no hardcoding); its accuracy
-// ledger trends toward truth; and the live model rows it authored fill the H6Q spine. The hero is "the machine
-// EARNED this forecast": the champion is shown beating its rivals, and the error trend bending toward truth.
+// Forecast Engine (spec/ui/15) — the self-improving forecast's glass box (doc 26). Read-only, gated
+// view:pipeline_coverage (same gate as the H6Q board). The rolling-origin backtest scores every model per origin;
+// the champion is the lowest mean-abs-error model in the bake-off (model_accuracy). Origins are immutable,
+// idempotent records, so every figure is reproducible.
 //
-// Read-mostly (the engine runs in the backtest loop / LivePublish — no mutations here, so no maker-checker).
-// AUTO-LOADS on mount and whenever ctx changes; four states throughout. The revenue projection is `commercial`
-// (units → contract tier) — for a volume-only viewer the server withholds it and `Money` COLLAPSES (never £0.00).
+// Real endpoints (api ForecastRunRoutes):
+//   GET /api/v1/forecast/runs                      -> [{ origin, accounts, forecast_units, actual_units,
+//                                                       total_level_error_pct, last_selected_at, model_runs }]
+//   GET /api/v1/forecast/runs/{origin}/report      -> { origin, stats, policy_mix[], segments[],
+//                                                       model_runs[], model_accuracy[] }
+// Both require view:pipeline_coverage (403 -> LayerNote). 404 -> "not available yet". AUTO-LOADS on mount and
+// whenever ctx changes (the cache key carries the ctx scope so a context switch refetches).
 
-interface Runner { model: string; error: number }
-interface Champion {
-  account: string;
-  champion: string;
-  error: number;
-  runners: Runner[];
-  units: number;
-  revenue: number | string | null;
-  activations: number;
-  shelf?: number | null;
+interface OriginRow {
+  origin: string;
+  accounts: number;
+  forecast_units: number | string;
+  actual_units: number | string;
+  total_level_error_pct: number | string;
+  last_selected_at?: string;
+  model_runs?: number;
 }
-interface AccuracyPoint { q: string; forecast: number; actual: number; error: number; coverage?: number }
-interface SpineRow { account: string; sku: string; source: 'model' | 'human' | string; qty: number; deviation: number }
-interface EngineData {
-  sha?: string;
-  at?: string;
-  liveRows?: number;
-  hasRevenue?: boolean;
-  accuracy?: AccuracyPoint[];
-  champions?: Champion[];
-  spine?: SpineRow[];
+interface ModelAccuracy {
+  model_key: string;
+  scored: number;
+  mean_abs_error: number | string;
+  total_abs_error: number | string;
+  structural?: boolean;
+}
+interface SegmentRow {
+  segment: string;
+  accounts: number;
+  forecast_units: number | string;
+  actual_units: number | string;
+  total_level_error_pct: number | string;
+}
+interface ModelRun {
+  model_key: string;
+  model_version: number;
+  purpose: string;
+  data_sha?: string | null;
+  params_hash?: string | null;
+  created_at?: string;
+}
+interface ReportData {
+  origin?: string;
+  stats?: { accounts?: number; forecast_units?: number | string; actual_units?: number | string; total_level_error_pct?: number | string; structural_share?: number | string };
+  segments?: SegmentRow[];
+  model_runs?: ModelRun[];
+  model_accuracy?: ModelAccuracy[];
 }
 
+interface AccuracyPoint { q: string; forecast: number; actual: number; error: number }
+
+const N = (v: number | string | null | undefined): number => (v == null ? 0 : Number(v));
 const errColor = (e: number) => (e < 12 ? 'var(--ok)' : e < 18 ? 'var(--warn)' : 'var(--danger)');
-const devColor = (d: number) => (d < 8 ? 'var(--ok)' : d < 15 ? 'var(--warn)' : 'var(--danger)');
+
+const isForbidden = (e: ApiError | null | undefined) => !!e && e.forbidden;
+const isNotImplemented = (e: ApiError | null | undefined) => !!e && e.notImplemented;
+
+function NotAvailable({ testid }: { testid?: string }) {
+  return (
+    <div className="banner" data-testid={testid} style={{ padding: '14px 12px', color: 'var(--muted)' }}>
+      {I.alert({ size: 15 })} Not available in this environment yet.
+    </div>
+  );
+}
 
 function AccuracyChart({ series }: { series: AccuracyPoint[] }) {
   const W = 900;
@@ -73,37 +106,52 @@ function AccuracyChart({ series }: { series: AccuracyPoint[] }) {
   );
 }
 
-export function Forecasting({ role, ctx }: { role: any; ctx: any; toast: (m: string, k?: string) => void }) {
-  const [res, setRes] = useState<{ status: number; json: any } | null>(null);
+export function Forecasting({ ctx }: { role: any; ctx: any; toast: (m: string, k?: string) => void }) {
+  const scope = [ctx?.entity, ctx?.market, ctx?.scenario, ctx?.period];
 
-  useEffect(() => {
-    let live = true;
-    setRes(null);
-    const q = new URLSearchParams();
-    if (ctx?.market) q.set('market', ctx.market);
-    if (ctx?.scenario) q.set('scenario', ctx.scenario);
-    if (ctx?.entity) q.set('entity', ctx.entity);
-    const qs = q.toString();
-    apiFetch('/api/v1/forecast/engine' + (qs ? '?' + qs : '')).then((r) => {
-      if (live) setRes(r);
-    });
-    return () => {
-      live = false;
-    };
-  }, [ctx?.market, ctx?.scenario, ctx?.entity]);
+  const runsQ = useApi<OriginRow[]>(['forecast-runs', ...scope], '/api/v1/forecast/runs');
+  const runs = Array.isArray(runsQ.data) ? runsQ.data : [];
 
-  const data: EngineData = (res?.status === 200 && res.json) || {};
-  const champions = asArray<Champion>(data.champions);
-  const spine = asArray<SpineRow>(data.spine);
-  const accuracy = asArray<AccuracyPoint>(data.accuracy);
-  const hasRevenue = !!data.hasRevenue;
-  const champState: TableState = tableState(res, data.champions);
-  const spineState: TableState = tableState(res, data.spine);
+  const runsForbidden = isForbidden(runsQ.error as ApiError);
+  const runsNotImpl = isNotImplemented(runsQ.error as ApiError);
+  const runsOtherError = runsQ.error && !runsForbidden && !runsNotImpl ? (runsQ.error as ApiError) : null;
+
+  // The latest origin (the timeline is ordered DESC) anchors the champion bake-off + per-segment outturn report.
+  const latestOrigin = runs[0]?.origin ?? '';
+  const reportQ = useApi<ReportData>(
+    ['forecast-report', latestOrigin, ...scope],
+    `/api/v1/forecast/runs/${encodeURIComponent(latestOrigin)}/report`,
+    { enabled: !!latestOrigin },
+  );
+  const report = reportQ.data ?? null;
+  const accuracy = report?.model_accuracy ?? [];
+  const segments = report?.segments ?? [];
+  const modelRuns = report?.model_runs ?? [];
+  const championKey = accuracy[0]?.model_key; // lowest mean-abs-error — the model the bake-off picked
+
+  const reportForbidden = isForbidden(reportQ.error as ApiError);
+  const reportNotImpl = isNotImplemented(reportQ.error as ApiError);
+  const reportOtherError = reportQ.error && !reportForbidden && !reportNotImpl ? (reportQ.error as ApiError) : null;
+
+  // The accuracy-over-time series is the run timeline itself: each origin's forecast vs actual + scored error.
+  const series: AccuracyPoint[] = runs
+    .slice()
+    .reverse()
+    .map((r) => ({
+      q: r.origin,
+      forecast: N(r.forecast_units),
+      actual: N(r.actual_units),
+      error: N(r.total_level_error_pct),
+    }));
+
+  const dataSha = modelRuns.find((m) => m.data_sha)?.data_sha ?? undefined;
 
   const right =
-    res?.status === 200 && data.sha ? (
-      <span className="stale"><span className="pulse" />backtest {data.sha}{data.at ? ' · ' + data.at : ''}</span>
+    !runsQ.isLoading && latestOrigin ? (
+      <span className="stale"><span className="pulse" />backtest {latestOrigin}{runs[0]?.last_selected_at ? ' · ' + runs[0].last_selected_at.slice(0, 10) : ''}</span>
     ) : undefined;
+
+  const liveRows = runs.reduce((acc, r) => acc + N(r.model_runs), 0);
 
   return (
     <div className="page" style={{ maxWidth: 1320 }}>
@@ -112,21 +160,27 @@ export function Forecasting({ role, ctx }: { role: any; ctx: any; toast: (m: str
         title="Forecast Engine"
         sub={
           <span style={{ display: 'block', maxWidth: 820 }}>
-            The rolling-origin backtest selects a champion model per account by lowest error — no hardcoding. Its
-            accuracy ledger trends toward truth, and the {res?.status === 200 ? num(data.liveRows ?? 0) : '—'} model
-            rows it authored fill the H6Q spine.
+            The rolling-origin backtest scores every model per origin — the champion is the lowest mean-abs-error
+            model in the bake-off, no hardcoding. Its accuracy ledger trends toward truth across the{' '}
+            {runsQ.isLoading ? '—' : num(liveRows)} model runs it has authored.
           </span>
         }
         right={right}
       />
 
-      {res !== null && (res.status === 401 || res.status === 403) ? (
+      {runsForbidden ? (
         <Card title="Forecast Engine" icon={I.shield}>
-          <LayerNote>The Forecast Engine is withheld — requires the <b>view:forecast</b> permission.</LayerNote>
+          <LayerNote>The Forecast Engine is withheld — requires the <b>view:pipeline_coverage</b> permission.</LayerNote>
         </Card>
-      ) : res !== null && res.status >= 400 ? (
+      ) : runsNotImpl ? (
+        <Card title="Forecast Engine" icon={I.trend}>
+          <NotAvailable testid="forecast-notimpl" />
+        </Card>
+      ) : runsOtherError ? (
         <Card title="Accuracy over time" icon={I.trend}>
-          <div className="banner danger">Could not load the forecast engine ({res.status}). The backtest ledger is unavailable.</div>
+          <div className="banner danger" data-testid="forecast-error">
+            {I.alert({ size: 15 })} Could not load the forecast engine ({runsOtherError.status}). The backtest ledger is unavailable.
+          </div>
         </Card>
       ) : (
         <>
@@ -136,12 +190,12 @@ export function Forecasting({ role, ctx }: { role: any; ctx: any; toast: (m: str
             aux="train ≤ Q → predict Q+1 → score · the error trend is the credibility metric"
             style={{ marginBottom: 14 }}
           >
-            {res === null ? (
-              <SkeletonRow cols={1} />
-            ) : accuracy.length === 0 ? (
-              <div className="dim" style={{ padding: '8px 2px' }}>No backtest run yet.</div>
+            {runsQ.isLoading ? (
+              <Skeleton lines={4} />
+            ) : series.length === 0 ? (
+              <div className="dim" data-testid="forecast-accuracy-empty" style={{ padding: '8px 2px' }}>No backtest run yet.</div>
             ) : (
-              <AccuracyChart series={accuracy} />
+              <AccuracyChart series={series} />
             )}
           </Card>
 
@@ -155,105 +209,107 @@ export function Forecasting({ role, ctx }: { role: any; ctx: any; toast: (m: str
             <table className="tbl">
               <thead>
                 <tr>
-                  <th>Account</th>
-                  <th>Champion</th>
-                  <th className="num">Backtest error</th>
-                  <th>Beat</th>
-                  <th className="num">Forecast</th>
-                  <th className="num">Revenue proj.</th>
-                  <th className="num">Activations</th>
-                  <th className="num">Shelf</th>
+                  <th>Model</th>
+                  <th>Class</th>
+                  <th className="num">Scored</th>
+                  <th className="num">Mean abs error</th>
+                  <th className="num">Total abs error</th>
+                  <th>Verdict</th>
                 </tr>
               </thead>
               <tbody>
-                {champState === 'loading' ? (
-                  <SkeletonRow cols={8} />
-                ) : champState === 'empty' ? (
-                  <EmptyRow cols={8}>No backtest run yet — the champion board fills once an origin is scored.</EmptyRow>
+                {reportForbidden ? (
+                  <tr><td colSpan={6}><LayerNote>hidden — the bake-off requires the <b>view:pipeline_coverage</b> permission.</LayerNote></td></tr>
+                ) : reportNotImpl ? (
+                  <tr><td colSpan={6}><NotAvailable /></td></tr>
+                ) : reportOtherError ? (
+                  <tr><td colSpan={6}><div className="banner danger">{I.alert({ size: 15 })} Champion board failed ({reportOtherError.status}).</div></td></tr>
+                ) : !latestOrigin || reportQ.isLoading ? (
+                  <SkeletonRow cols={6} />
+                ) : accuracy.length === 0 ? (
+                  <EmptyRow cols={6}>No backtest run yet — the champion board fills once an origin is scored.</EmptyRow>
                 ) : (
-                  champions.map((c, i) => (
-                    <tr key={c.account + i}>
-                      <td><b>{c.account}</b></td>
-                      <td><span className="chip accent mono" style={{ fontFamily: 'var(--font-mono)' }}>{c.champion}</span></td>
-                      <td className="num"><b style={{ color: errColor(c.error) }}>{c.error.toFixed(1)}%</b></td>
+                  accuracy.map((m, i) => (
+                    <tr key={m.model_key + i}>
                       <td>
-                        <div className="row g6 wrap">
-                          {asArray<Runner>(c.runners).slice(0, 3).map((r, j) => (
-                            <span key={r.model + j} className="chip neutral" style={{ fontSize: 9.5, padding: '0 6px' }}>
-                              {r.model} {r.error.toFixed(0)}%
-                            </span>
-                          ))}
-                        </div>
+                        <span className="chip accent mono" style={{ fontFamily: 'var(--font-mono)' }}>{m.model_key}</span>
                       </td>
-                      <td className="num mono">{num(c.units)}</td>
-                      <td className="num">
-                        {hasRevenue ? (
-                          <Money value={c.revenue} role={role} layer="commercial" />
+                      <td>
+                        {m.structural ? (
+                          <span className="chip accent"><I.cpu size={11} />structural</span>
                         ) : (
-                          <span className="dim">hidden</span>
+                          <span className="chip neutral">statistical</span>
                         )}
                       </td>
-                      <td className="num mono">{num(c.activations)}</td>
-                      <td className="num mono">{c.shelf == null ? <span className="dim">—</span> : num(c.shelf)}</td>
+                      <td className="num mono">{num(m.scored)}</td>
+                      <td className="num"><b style={{ color: errColor(N(m.mean_abs_error)) }}>{N(m.mean_abs_error).toFixed(2)}</b></td>
+                      <td className="num mono">{N(m.total_abs_error).toFixed(2)}</td>
+                      <td>
+                        {m.model_key === championKey ? (
+                          <span className="chip plum"><I.check size={11} />champion</span>
+                        ) : (
+                          <span className="dim">beaten</span>
+                        )}
+                      </td>
                     </tr>
                   ))
                 )}
               </tbody>
             </table>
-            {!hasRevenue && champState === 'ready' ? (
-              <LayerNote>Revenue projection hidden — requires the <b>commercial</b> data layer. Units are <b>volume</b>.</LayerNote>
-            ) : null}
             <div className="layer-note" style={{ padding: '10px 16px' }}>
               <I.shield />
               Reproducible: same data + code ⇒ same champion.
-              {data.sha ? (
+              {dataSha ? (
                 <>
-                  {' '}The backtest SHA <span className="mono" style={{ fontFamily: 'var(--font-mono)' }}>{data.sha}</span> stamps which run picked these.
+                  {' '}The pinning data SHA <span className="mono" style={{ fontFamily: 'var(--font-mono)' }}>{String(dataSha).slice(0, 12)}</span> stamps which run scored these.
                 </>
               ) : null}
             </div>
           </Card>
 
           <Card
-            title="Model vs human spine"
+            title="Outturn by segment"
             icon={I.list}
-            aux="the H6Q rows the engine authored, vs human capture · the deviation each earned"
+            aux="the per-segment forecast vs actual the champion authored · the coverage each earned"
             style={{ padding: 0 }}
             className="tablewrap"
           >
             <table className="tbl">
               <thead>
                 <tr>
-                  <th>Account</th>
-                  <th>SKU</th>
-                  <th>Source</th>
-                  <th className="num">Qty</th>
+                  <th>Segment</th>
+                  <th className="num">Accounts</th>
+                  <th className="num">Forecast</th>
+                  <th className="num">Actual</th>
                   <th className="num">Coverage</th>
-                  <th className="num">Deviation</th>
+                  <th className="num">Error</th>
                 </tr>
               </thead>
               <tbody>
-                {spineState === 'loading' ? (
+                {reportForbidden ? (
+                  <tr><td colSpan={6}><LayerNote>hidden — segment outturn requires the <b>view:pipeline_coverage</b> permission.</LayerNote></td></tr>
+                ) : reportNotImpl ? (
+                  <tr><td colSpan={6}><NotAvailable /></td></tr>
+                ) : reportOtherError ? (
+                  <tr><td colSpan={6}><div className="banner danger">{I.alert({ size: 15 })} Outturn failed ({reportOtherError.status}).</div></td></tr>
+                ) : !latestOrigin || reportQ.isLoading ? (
                   <SkeletonRow cols={6} />
-                ) : spineState === 'empty' ? (
-                  <EmptyRow cols={6}>No spine rows yet — the engine has not authored model rows for this scope.</EmptyRow>
+                ) : segments.length === 0 ? (
+                  <EmptyRow cols={6}>No segment outturn yet — the engine has not scored this origin.</EmptyRow>
                 ) : (
-                  spine.map((r, i) => (
-                    <tr key={r.account + r.sku + i}>
-                      <td>{r.account}</td>
-                      <td className="dim mono">{r.sku}</td>
-                      <td>
-                        {r.source === 'model' ? (
-                          <span className="chip accent"><I.cpu size={11} />model</span>
-                        ) : (
-                          <span className="chip neutral"><I.user size={11} />human</span>
-                        )}
-                      </td>
-                      <td className="num mono">{num(r.qty)}</td>
-                      <td className="num" style={{ width: 120 }}><Coverage pct={Math.max(0, 100 - r.deviation)} /></td>
-                      <td className="num mono"><span style={{ color: devColor(r.deviation) }}>{r.deviation.toFixed(1)}%</span></td>
-                    </tr>
-                  ))
+                  segments.map((s, i) => {
+                    const err = N(s.total_level_error_pct);
+                    return (
+                      <tr key={s.segment + i}>
+                        <td><b>{s.segment}</b></td>
+                        <td className="num mono">{num(s.accounts)}</td>
+                        <td className="num mono">{num(s.forecast_units)}</td>
+                        <td className="num mono">{num(s.actual_units)}</td>
+                        <td className="num" style={{ width: 120 }}><Coverage pct={Math.max(0, 100 - err)} /></td>
+                        <td className="num mono"><span style={{ color: errColor(err) }}>{err.toFixed(1)}%</span></td>
+                      </tr>
+                    );
+                  })
                 )}
               </tbody>
             </table>

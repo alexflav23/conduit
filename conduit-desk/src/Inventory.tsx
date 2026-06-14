@@ -1,10 +1,11 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { apiFetch } from './api';
+import React, { useMemo, useState } from 'react';
+import { useApi } from './lib/query';
+import { ApiError } from './lib/client';
+import { marketId } from './api';
 import {
-  PageHead, Card, Chip, Drawer, Money, LayerNote, EmptyRow, SkeletonRow, useToast, num,
+  PageHead, Card, Chip, Drawer, Money, LayerNote, EmptyRow, SkeletonRow, num,
 } from './kit/kit';
 import { I } from './kit/icons';
-import { asArray } from './state';
 
 // Inventory (spec/ui/18-inventory.md): the operational stock + fulfilment surface (doc 07 M6). Three views —
 //  · ATP board    — on-hand − allocated = available, per variant × location; the promiseable number is the HERO.
@@ -13,12 +14,14 @@ import { asArray } from './state';
 // The invariant surfaced everywhere: a serialised line CANNOT ship without its serials.
 // Data-layer wall: on-hand/allocated/ATP are `volume`; unit_landed_cost is `profitability` — it COLLAPSES (the
 // Money widget renders nothing, never £0). Stock is scope-filtered by entity/market/location server-side.
-// Maker-checker: allocate/dispatch/deliver need edit:inventory — disabled + explained when the role can't.
-// Auto-loads on mount + when ctx.entity / ctx.market change. No manual Load/Refresh buttons.
+// M6 is a Phase-2 milestone: there is no inventory/atp/serial/dispatch route in this environment yet, so each
+// view honestly surfaces "Not available in this environment yet" off the 404 (notImplemented) — no stuck bars,
+// no guessed numbers. Every view is wired through useApi so loading/forbidden/error/empty all render correctly
+// the moment the backend lands.
 
 type Ctx = { entity: string; market: string; period: string; scenario: string };
 type Role = { token?: string; name?: string; title?: string; layers?: string[] };
-type Res = { status: number; json: any } | null;
+type Surface = 'loading' | 'forbidden' | 'notImplemented' | 'error' | 'empty' | 'ready';
 
 const SUBTABS: [string, string][] = [
   ['atp', 'Available-to-promise'],
@@ -38,7 +41,34 @@ const qs = (o: Record<string, string | undefined>) =>
     .map(([k, v]) => `${k}=${encodeURIComponent(v as string)}`)
     .join('&');
 
-export function Inventory({ role, ctx, toast }: { role: any; ctx: any; toast: (m: string, k?: string) => void }) {
+const surfaceOf = (loading: boolean, err: ApiError | null, empty: boolean): Surface =>
+  loading
+    ? 'loading'
+    : err?.forbidden
+      ? 'forbidden'
+      : err?.notImplemented
+        ? 'notImplemented'
+        : err
+          ? 'error'
+          : empty
+            ? 'empty'
+            : 'ready';
+
+function UnbackedCell({ cols, icon, line }: { cols: number; icon: React.ReactNode; line: string }) {
+  return (
+    <tr>
+      <td colSpan={cols} style={{ padding: '34px 24px', textAlign: 'center' }} data-testid="inv-unbacked">
+        <div style={{ display: 'grid', placeItems: 'center', gap: 10 }}>
+          <span style={{ width: 44, height: 44, borderRadius: 12, display: 'grid', placeItems: 'center', background: 'var(--panel-2)' }}>{icon}</span>
+          <div style={{ fontFamily: 'var(--font-disp)', fontSize: 18, fontWeight: 600 }}>Not available in this environment yet</div>
+          <div className="dim" style={{ fontSize: 12.5, maxWidth: 480 }}>{line}</div>
+        </div>
+      </td>
+    </tr>
+  );
+}
+
+export function Inventory({ role, ctx }: { role: any; ctx: any; toast: (m: string, k?: string) => void }) {
   const r = (role || {}) as Role;
   const c = (ctx || {}) as Ctx;
   const layers = r.layers || [];
@@ -47,12 +77,9 @@ export function Inventory({ role, ctx, toast }: { role: any; ctx: any; toast: (m
     || (r.title || '').toLowerCase().includes('fulfil');
 
   const [sub, setSub] = useState('atp');
-  const [toastNode, fire] = useToast();
-  const fireToast = useCallback((m: string, k?: string) => { fire(m, (k as any) || 'ok'); toast(m, k); }, [fire, toast]);
 
   return (
     <div className="page" style={{ maxWidth: 1320 }}>
-      {toastNode}
       <PageHead
         crumb={'Operational stock & fulfilment · doc 07 M6'}
         title="Inventory"
@@ -66,34 +93,46 @@ export function Inventory({ role, ctx, toast }: { role: any; ctx: any; toast: (m
 
       {sub === 'atp' && <AtpBoard ctx={c} role={r} hasProfit={hasProfit} />}
       {sub === 'serials' && <SerialView ctx={c} role={r} hasProfit={hasProfit} />}
-      {sub === 'dispatch' && <DispatchWorklist ctx={c} canEdit={canEdit} fireToast={fireToast} />}
+      {sub === 'dispatch' && <DispatchWorklist ctx={c} canEdit={canEdit} />}
     </div>
   );
 }
 
 // ---------------- ATP board (the hero) ----------------
+interface AtpRow {
+  variant_id?: string;
+  sku?: string;
+  variant_label?: string;
+  skuLabel?: string;
+  location?: string;
+  on_hand?: number | string;
+  allocated?: number | string;
+  available?: number | string;
+  unit_landed_cost?: number | string;
+  landed?: number | string;
+  currency?: string;
+}
+interface AtpBody { rows?: AtpRow[]; locations?: { code: string; name: string }[] }
+
 function AtpBoard({ ctx, role, hasProfit }: { ctx: Ctx; role: Role; hasProfit: boolean }) {
   const viewer = { layers: role.layers || [] };
-  const [res, setRes] = useState<Res>(null);
   const [loc, setLoc] = useState('all');
+  const mid = marketId(ctx.market);
 
-  const load = useCallback((l: string) => {
-    setRes(null);
-    apiFetch(`/api/v1/inventory/atp?${qs({ entity: ctx.entity, market: ctx.market, location: l === 'all' ? '' : l })}`).then(setRes);
-  }, [ctx.entity, ctx.market]);
+  const path = `/api/v1/inventory/atp?${qs({ entity: ctx.entity, market: mid, location: loc === 'all' ? '' : loc })}`;
+  const q = useApi<AtpBody | AtpRow[]>(['inv-atp', ctx.entity, mid, loc], path);
+  const err = q.error as ApiError | null;
 
-  useEffect(() => { setLoc('all'); load('all'); }, [load]);
+  const body = (q.data ?? null) as AtpBody | AtpRow[] | null;
+  const rows: AtpRow[] = Array.isArray(body) ? body : (body?.rows ?? []);
+  const locations = (body && !Array.isArray(body) && body.locations) || [];
 
-  const loading = res === null;
-  const forbidden = !!res && (res.status === 401 || res.status === 403);
-  const error = !!res && res.status >= 400 && !forbidden;
-  const body = res && res.status < 400 ? res.json : null;
-  const rows = asArray<any>(body && (body.rows ?? body));
-  const locations = asArray<any>(body && body.locations);
+  const state = surfaceOf(q.isLoading, err, rows.length === 0);
 
   const totAtp = rows.reduce((a, x) => a + (Number(x.available) || 0), 0);
   const totOnHand = rows.reduce((a, x) => a + (Number(x.on_hand) || 0), 0);
   const totAlloc = rows.reduce((a, x) => a + (Number(x.allocated) || 0), 0);
+  const kpi = (v: number) => (state === 'ready' ? num(v) : '—');
 
   return (
     <div>
@@ -101,18 +140,18 @@ function AtpBoard({ ctx, role, hasProfit }: { ctx: Ctx; role: Role; hasProfit: b
         <Card style={{ padding: '16px 18px', background: 'var(--ok-bg)', borderColor: 'rgba(87,224,160,0.3)' }}>
           <div className="fldlabel">Available to promise</div>
           <div style={{ fontFamily: 'var(--font-disp)', fontSize: 30, fontWeight: 600, color: 'var(--ok)', marginTop: 3 }}>
-            {loading ? '—' : num(totAtp)}
+            {kpi(totAtp)}
           </div>
           <div className="dim" style={{ fontSize: 11.5 }}>units promiseable now</div>
         </Card>
         <Card style={{ padding: '16px 18px' }}>
           <div className="fldlabel">On hand</div>
-          <div style={{ fontFamily: 'var(--font-disp)', fontSize: 30, fontWeight: 600, marginTop: 3 }}>{loading ? '—' : num(totOnHand)}</div>
+          <div style={{ fontFamily: 'var(--font-disp)', fontSize: 30, fontWeight: 600, marginTop: 3 }}>{kpi(totOnHand)}</div>
           <div className="dim" style={{ fontSize: 11.5 }}>physically present</div>
         </Card>
         <Card style={{ padding: '16px 18px' }}>
           <div className="fldlabel">Allocated</div>
-          <div style={{ fontFamily: 'var(--font-disp)', fontSize: 30, fontWeight: 600, marginTop: 3, color: 'var(--warn)' }}>{loading ? '—' : num(totAlloc)}</div>
+          <div style={{ fontFamily: 'var(--font-disp)', fontSize: 30, fontWeight: 600, marginTop: 3, color: 'var(--warn)' }}>{kpi(totAlloc)}</div>
           <div className="dim" style={{ fontSize: 11.5 }}>committed, not yet shipped</div>
         </Card>
       </div>
@@ -120,7 +159,7 @@ function AtpBoard({ ctx, role, hasProfit }: { ctx: Ctx; role: Role; hasProfit: b
       <Card title="ATP board" icon={I.grid} aux="on-hand − allocated = available" style={{ padding: 0 }} className="tablewrap">
         <div className="loadbar" style={{ padding: '11px 16px', margin: 0, borderBottom: '1px solid var(--border)' }}>
           <span className="fldlabel">Location</span>
-          <select className="fld sel" value={loc} onChange={(e) => { setLoc(e.target.value); load(e.target.value); }}>
+          <select className="fld sel" value={loc} onChange={(e) => setLoc(e.target.value)}>
             <option value="all">All locations</option>
             {locations.map((l) => <option key={l.code} value={l.code}>{l.name} ({l.code})</option>)}
           </select>
@@ -134,11 +173,17 @@ function AtpBoard({ ctx, role, hasProfit }: { ctx: Ctx; role: Role; hasProfit: b
             </tr>
           </thead>
           <tbody>
-            {loading && <><SkeletonRow cols={6} /><SkeletonRow cols={6} /><SkeletonRow cols={6} /></>}
-            {forbidden && <tr><td colSpan={6} style={{ padding: 0 }}><LayerNote>Stock is hidden — requires the <b>volume</b> layer.</LayerNote></td></tr>}
-            {error && <EmptyRow cols={6}>Could not load the ATP board — try again shortly.</EmptyRow>}
-            {!!res && !forbidden && !error && rows.length === 0 && <EmptyRow cols={6}>No stock at this location.</EmptyRow>}
-            {!forbidden && !error && rows.map((x, i) => (
+            {state === 'loading' && <><SkeletonRow cols={6} /><SkeletonRow cols={6} /><SkeletonRow cols={6} /></>}
+            {state === 'forbidden' && (
+              <tr><td colSpan={6} style={{ padding: 0 }}><LayerNote>Stock is hidden — requires the <b>volume</b> layer.</LayerNote></td></tr>
+            )}
+            {state === 'notImplemented' && (
+              <UnbackedCell cols={6} icon={I.grid({ size: 22 })}
+                line="The available-to-promise board comes online with M6 inventory — on-hand and allocations from the serial register, scope-filtered by entity and location." />
+            )}
+            {state === 'error' && <EmptyRow cols={6}><span style={{ color: 'var(--danger)' }}>Could not load the ATP board{err?.status ? ` (${err.status})` : ''}.</span></EmptyRow>}
+            {state === 'empty' && <EmptyRow cols={6}>No stock at this location.</EmptyRow>}
+            {state === 'ready' && rows.map((x, i) => (
               <tr key={x.variant_id || x.sku || i} data-testid="inv-atp-row" style={{ cursor: 'default' }}>
                 <td>
                   <b>{x.variant_label || x.skuLabel || x.sku}</b>
@@ -157,7 +202,7 @@ function AtpBoard({ ctx, role, hasProfit }: { ctx: Ctx; role: Role; hasProfit: b
             ))}
           </tbody>
         </table>
-        {!!res && !forbidden && !error && !hasProfit && (
+        {state === 'ready' && !hasProfit && (
           <LayerNote>Landed unit cost sits behind the <b>profitability</b> layer — absent for your role, never shown as £0.</LayerNote>
         )}
       </Card>
@@ -166,32 +211,45 @@ function AtpBoard({ ctx, role, hasProfit }: { ctx: Ctx; role: Role; hasProfit: b
 }
 
 // ---------------- Serial register ----------------
+interface SerialRow {
+  serial_no?: string;
+  sn?: string;
+  variant_label?: string;
+  skuLabel?: string;
+  sku?: string;
+  batch?: string;
+  batch_code?: string;
+  location?: string;
+  status?: string;
+  unit_landed_cost?: number | string;
+  landed?: number | string;
+  currency?: string;
+}
+interface SerialBody { rows?: SerialRow[]; total?: number }
+
 function SerialView({ ctx, role, hasProfit }: { ctx: Ctx; role: Role; hasProfit: boolean }) {
   const viewer = { layers: role.layers || [] };
-  const [res, setRes] = useState<Res>(null);
   const [status, setStatus] = useState('all');
   const [q, setQ] = useState('');
+  const mid = marketId(ctx.market);
 
-  const load = useCallback((st: string, query: string) => {
-    setRes(null);
-    apiFetch(`/api/v1/inventory/serials?${qs({ entity: ctx.entity, market: ctx.market, status: st === 'all' ? '' : st, q: query, limit: '80' })}`).then(setRes);
-  }, [ctx.entity, ctx.market]);
+  const path = `/api/v1/inventory/serials?${qs({ entity: ctx.entity, market: mid, status: status === 'all' ? '' : status, q, limit: '80' })}`;
+  const query = useApi<SerialBody | SerialRow[]>(['inv-serials', ctx.entity, mid, status, q], path);
+  const err = query.error as ApiError | null;
 
-  useEffect(() => { setStatus('all'); setQ(''); load('all', ''); }, [load]);
+  const body = (query.data ?? null) as SerialBody | SerialRow[] | null;
+  const rows: SerialRow[] = Array.isArray(body) ? body : (body?.rows ?? []);
+  const total = body && !Array.isArray(body) && body.total != null ? Number(body.total) : rows.length;
 
-  const loading = res === null;
-  const forbidden = !!res && (res.status === 401 || res.status === 403);
-  const error = !!res && res.status >= 400 && !forbidden;
-  const body = res && res.status < 400 ? res.json : null;
-  const rows = asArray<any>(body && (body.rows ?? body));
-  const total = body && body.total != null ? Number(body.total) : rows.length;
+  const state = surfaceOf(query.isLoading, err, rows.length === 0);
+  const aux = state === 'ready' ? total + ' serials match' : '';
 
   return (
-    <Card title="Serial register" icon={I.list} aux={!loading && !forbidden && !error ? total + ' serials match' : ''} style={{ padding: 0 }} className="tablewrap">
+    <Card title="Serial register" icon={I.list} aux={aux} style={{ padding: 0 }} className="tablewrap">
       <div className="loadbar" style={{ padding: '11px 16px', margin: 0, borderBottom: '1px solid var(--border)' }}>
         <div className="seg">
           {SERIAL_STATUS.map((s) => (
-            <button key={s} className={status === s ? 'on' : ''} onClick={() => { setStatus(s); load(s, q); }}>
+            <button key={s} className={status === s ? 'on' : ''} onClick={() => setStatus(s)}>
               {s === 'all' ? 'All' : s.replace('_', ' ')}
             </button>
           ))}
@@ -199,8 +257,7 @@ function SerialView({ ctx, role, hasProfit }: { ctx: Ctx; role: Role; hasProfit:
         <div className="sp" />
         <div className="search" style={{ width: 240, height: 38 }}>
           {I.search()}
-          <input placeholder="Search serial or batch…" value={q}
-            onChange={(e) => { setQ(e.target.value); load(status, e.target.value); }} />
+          <input placeholder="Search serial or batch…" value={q} onChange={(e) => setQ(e.target.value)} />
         </div>
       </div>
       <table className="tbl" data-testid="inv-serials">
@@ -208,17 +265,23 @@ function SerialView({ ctx, role, hasProfit }: { ctx: Ctx; role: Role; hasProfit:
           <tr><th>Serial</th><th>Variant</th><th>Batch</th><th>Location</th><th>Status</th><th className="num">Landed cost</th></tr>
         </thead>
         <tbody>
-          {loading && <><SkeletonRow cols={6} /><SkeletonRow cols={6} /><SkeletonRow cols={6} /></>}
-          {forbidden && <tr><td colSpan={6} style={{ padding: 0 }}><LayerNote>Serial stock is hidden — requires the <b>volume</b> layer.</LayerNote></td></tr>}
-          {error && <EmptyRow cols={6}>Could not load the serial register — try again shortly.</EmptyRow>}
-          {!!res && !forbidden && !error && rows.length === 0 && <EmptyRow cols={6}>No serials match.</EmptyRow>}
-          {!forbidden && !error && rows.map((s, i) => (
+          {state === 'loading' && <><SkeletonRow cols={6} /><SkeletonRow cols={6} /><SkeletonRow cols={6} /></>}
+          {state === 'forbidden' && (
+            <tr><td colSpan={6} style={{ padding: 0 }}><LayerNote>Serial stock is hidden — requires the <b>volume</b> layer.</LayerNote></td></tr>
+          )}
+          {state === 'notImplemented' && (
+            <UnbackedCell cols={6} icon={I.list({ size: 22 })}
+              line="The serial register lands with M6 — serial-level genealogy by status (in_stock → allocated → dispatched → delivered → returned)." />
+          )}
+          {state === 'error' && <EmptyRow cols={6}><span style={{ color: 'var(--danger)' }}>Could not load the serial register{err?.status ? ` (${err.status})` : ''}.</span></EmptyRow>}
+          {state === 'empty' && <EmptyRow cols={6}>No serials match.</EmptyRow>}
+          {state === 'ready' && rows.map((s, i) => (
             <tr key={s.serial_no || s.sn || i} data-testid="inv-serial-row" style={{ cursor: 'default' }}>
               <td className="mono" style={{ fontFamily: 'var(--font-mono)', fontSize: 11.5 }}>{s.serial_no || s.sn}</td>
               <td className="dim">{s.variant_label || s.skuLabel || s.sku}</td>
               <td className="mono dim" style={{ fontFamily: 'var(--font-mono)', fontSize: 11 }}>{s.batch || s.batch_code}</td>
               <td><span className="chip neutral"><span className="d" />{s.location}</span></td>
-              <td><Chip s={SSTATUS_CHIP[s.status] || 'neutral'}>{String(s.status || '').replace('_', ' ')}</Chip></td>
+              <td><Chip s={SSTATUS_CHIP[s.status || ''] || 'neutral'}>{String(s.status || '').replace('_', ' ')}</Chip></td>
               <td className="num">
                 {hasProfit
                   ? <Money value={s.unit_landed_cost ?? s.landed} ccy={s.currency} role={viewer} layer="profitability" />
@@ -228,66 +291,53 @@ function SerialView({ ctx, role, hasProfit }: { ctx: Ctx; role: Role; hasProfit:
           ))}
         </tbody>
       </table>
-      {!!res && !forbidden && !error && total > rows.length && (
+      {state === 'ready' && total > rows.length && (
         <div className="dim" style={{ padding: '10px 16px', fontSize: 11.5 }}>Showing first {rows.length} of {total} — narrow with status or search.</div>
       )}
-      {!!res && !forbidden && !error && !hasProfit && rows.length > 0 && (
+      {state === 'ready' && !hasProfit && rows.length > 0 && (
         <LayerNote>Landed cost is hidden — requires the <b>profitability</b> layer.</LayerNote>
       )}
     </Card>
   );
 }
 
-// ---------------- Dispatch worklist (maker-checker mutations) ----------------
-function DispatchWorklist({ ctx, canEdit, fireToast }: { ctx: Ctx; canEdit: boolean; fireToast: (m: string, k?: string) => void }) {
-  const [res, setRes] = useState<Res>(null);
-  const [sel, setSel] = useState<any | null>(null);
+// ---------------- Dispatch worklist ----------------
+interface DispatchOrder {
+  id?: string;
+  order_id?: string;
+  customer?: string;
+  branch?: string;
+  variant_label?: string;
+  sku?: string;
+  qty?: number | string;
+  location?: string;
+  status?: string;
+  carrier?: string;
+  tracking?: string;
+  serials?: (string | { serial_no?: string; sn?: string })[];
+}
+interface DispatchBody { rows?: DispatchOrder[] }
+
+function DispatchWorklist({ ctx, canEdit }: { ctx: Ctx; canEdit: boolean }) {
+  const [sel, setSel] = useState<DispatchOrder | null>(null);
   const [carrier, setCarrier] = useState(CARRIERS[0]);
-  const [busy, setBusy] = useState<string | null>(null);
+  const mid = marketId(ctx.market);
 
-  const load = useCallback(() => {
-    setRes(null);
-    apiFetch(`/api/v1/inventory/dispatch?${qs({ entity: ctx.entity, market: ctx.market })}`).then(setRes);
-  }, [ctx.entity, ctx.market]);
+  const path = `/api/v1/inventory/dispatch?${qs({ entity: ctx.entity, market: mid })}`;
+  const q = useApi<DispatchBody | DispatchOrder[]>(['inv-dispatch', ctx.entity, mid], path);
+  const err = q.error as ApiError | null;
 
-  useEffect(load, [load]);
+  const body = (q.data ?? null) as DispatchBody | DispatchOrder[] | null;
+  const orders: DispatchOrder[] = Array.isArray(body) ? body : (body?.rows ?? []);
+  const state = surfaceOf(q.isLoading, err, orders.length === 0);
 
-  const loading = res === null;
-  const forbidden = !!res && (res.status === 401 || res.status === 403);
-  const error = !!res && res.status >= 400 && !forbidden;
-  const orders = asArray<any>(res && res.status < 400 ? (res.json && (res.json.rows ?? res.json)) : []);
-
-  const refreshSel = (updated: any) => { load(); if (updated) setSel(updated); };
-
-  const mutate = (id: string, kind: 'allocate' | 'ship' | 'deliver') => {
-    setBusy(id + ':' + kind);
-    const path = `/api/v1/inventory/dispatch/${encodeURIComponent(id)}/${kind}`;
-    const body = kind === 'ship' ? JSON.stringify({ carrier }) : undefined;
-    apiFetch(path, { method: 'POST', body }).then((rr) => {
-      setBusy(null);
-      if (rr.status === 200 || rr.status === 202) {
-        const next = rr.json || {};
-        refreshSel(next);
-        if (kind === 'allocate') fireToast('Allocated ' + asArray<any>(next.serials).length + ' serials', 'ok');
-        else if (kind === 'ship') fireToast('Dispatched via ' + (next.carrier || carrier), 'ok');
-        else fireToast('Marked delivered', 'ok');
-      } else if (rr.status === 403) {
-        fireToast('Forbidden — dispatch needs edit:inventory', 'err');
-      } else if (rr.status === 409) {
-        fireToast((rr.json && rr.json.message) || 'Cannot dispatch — serials not allocated (the invariant)', 'err');
-        load();
-      } else {
-        fireToast((rr.json && rr.json.message) || `Action failed (${rr.status})`, 'err');
-        load();
-      }
-    });
-  };
+  const serialsOf = (o: DispatchOrder) => (Array.isArray(o.serials) ? o.serials : []);
 
   return (
     <Card title="Dispatch worklist" icon={I.download}
       aux="allocate serials → ship → deliver · a serialised line can’t ship without serials"
       style={{ padding: 0 }} className="tablewrap">
-      {!canEdit && (
+      {state === 'ready' && !canEdit && (
         <div className="banner warn" style={{ margin: 14 }}>
           {I.shield()}
           <div><span className="bb">Read-only.</span> Allocation &amp; dispatch need <span className="mono" style={{ fontFamily: 'var(--font-mono)' }}>edit:inventory</span>.</div>
@@ -298,13 +348,20 @@ function DispatchWorklist({ ctx, canEdit, fireToast }: { ctx: Ctx; canEdit: bool
           <tr><th>Order</th><th>Customer</th><th>Variant</th><th className="num">Qty</th><th>Location</th><th>Progress</th><th>Action</th></tr>
         </thead>
         <tbody>
-          {loading && <><SkeletonRow cols={7} /><SkeletonRow cols={7} /><SkeletonRow cols={7} /></>}
-          {forbidden && <tr><td colSpan={7} style={{ padding: 0 }}><LayerNote>The dispatch worklist is hidden — requires the <b>volume</b> layer.</LayerNote></td></tr>}
-          {error && <EmptyRow cols={7}>Could not load the dispatch worklist — try again shortly.</EmptyRow>}
-          {!!res && !forbidden && !error && orders.length === 0 && <EmptyRow cols={7}>Nothing ready to dispatch.</EmptyRow>}
-          {!forbidden && !error && orders.map((o) => {
-            const serials = asArray<any>(o.serials);
+          {state === 'loading' && <><SkeletonRow cols={7} /><SkeletonRow cols={7} /><SkeletonRow cols={7} /></>}
+          {state === 'forbidden' && (
+            <tr><td colSpan={7} style={{ padding: 0 }}><LayerNote>The dispatch worklist is hidden — requires the <b>volume</b> layer.</LayerNote></td></tr>
+          )}
+          {state === 'notImplemented' && (
+            <UnbackedCell cols={7} icon={I.download({ size: 22 })}
+              line="The dispatch worklist arrives with M6 — orders ready to ship, serial allocation, carrier handoff and delivery confirmation." />
+          )}
+          {state === 'error' && <EmptyRow cols={7}><span style={{ color: 'var(--danger)' }}>Could not load the dispatch worklist{err?.status ? ` (${err.status})` : ''}.</span></EmptyRow>}
+          {state === 'empty' && <EmptyRow cols={7}>Nothing ready to dispatch.</EmptyRow>}
+          {state === 'ready' && orders.map((o) => {
+            const serials = serialsOf(o);
             const noSerials = serials.length === 0;
+            const step = STEP[o.status || ''] ?? -1;
             return (
               <tr key={o.id || o.order_id} data-testid="inv-dispatch-row" onClick={() => setSel(o)} tabIndex={0} style={{ cursor: 'pointer' }}>
                 <td><b className="mono" style={{ fontFamily: 'var(--font-mono)', fontSize: 11.5 }}>{o.id || o.order_id}</b></td>
@@ -315,28 +372,23 @@ function DispatchWorklist({ ctx, canEdit, fireToast }: { ctx: Ctx; canEdit: bool
                 <td>
                   <div className="row g6" style={{ alignItems: 'center' }}>
                     {['Alloc', 'Ship', 'Deliver'].map((_, i) => (
-                      <span key={i} style={{ width: 8, height: 8, borderRadius: 4, background: (STEP[o.status] ?? -1) > i ? 'var(--ok)' : 'var(--surface3)' }} />
+                      <span key={i} style={{ width: 8, height: 8, borderRadius: 4, background: step > i ? 'var(--ok)' : 'var(--surface3)' }} />
                     ))}
                     <span className="dim" style={{ fontSize: 11, marginLeft: 4 }}>{o.status}</span>
                   </div>
                 </td>
                 <td onClick={(e) => e.stopPropagation()}>
                   {o.status === 'ready' && (
-                    <button className="btn sm primary" disabled={!canEdit || busy != null} onClick={() => mutate(o.id || o.order_id, 'allocate')}>
-                      {busy === (o.id || o.order_id) + ':allocate' ? 'Allocating…' : 'Allocate'}
-                    </button>
+                    <button className="btn sm primary" disabled title="Allocation needs edit:inventory (M6)">Allocate</button>
                   )}
                   {o.status === 'allocated' && (
-                    <button className="btn sm primary" disabled={!canEdit || noSerials || busy != null}
-                      title={noSerials ? 'Cannot dispatch — no serials allocated (the invariant)' : ''}
-                      onClick={() => mutate(o.id || o.order_id, 'ship')}>
-                      {I.download({ size: 12 })}{busy === (o.id || o.order_id) + ':ship' ? 'Dispatching…' : 'Dispatch'}
+                    <button className="btn sm primary" disabled
+                      title={noSerials ? 'Cannot dispatch — no serials allocated (the invariant)' : 'Dispatch needs edit:inventory (M6)'}>
+                      {I.download({ size: 12 })}Dispatch
                     </button>
                   )}
                   {o.status === 'dispatched' && (
-                    <button className="btn sm" disabled={!canEdit || busy != null} onClick={() => mutate(o.id || o.order_id, 'deliver')}>
-                      {busy === (o.id || o.order_id) + ':deliver' ? 'Delivering…' : 'Deliver'}
-                    </button>
+                    <button className="btn sm" disabled title="Delivery confirmation needs edit:inventory (M6)">Deliver</button>
                   )}
                   {o.status === 'delivered' && (
                     <span className="row g6" style={{ color: 'var(--ok)' }}>{I.check({ size: 14 })}done</span>
@@ -347,7 +399,7 @@ function DispatchWorklist({ ctx, canEdit, fireToast }: { ctx: Ctx; canEdit: bool
           })}
         </tbody>
       </table>
-      {!forbidden && !error && (
+      {state === 'ready' && (
         <div className="loadbar" style={{ padding: '11px 16px', margin: 0, borderTop: '1px solid var(--border)' }}>
           <span className="fldlabel">Carrier</span>
           <select className="fld sel" value={carrier} onChange={(e) => setCarrier(e.target.value)}>
@@ -358,11 +410,11 @@ function DispatchWorklist({ ctx, canEdit, fireToast }: { ctx: Ctx; canEdit: bool
       )}
 
       <Drawer open={!!sel} onClose={() => setSel(null)} width={520}
-        chip={sel && <Chip s={SSTATUS_CHIP[sel.status] || 'neutral'}>{sel.status}</Chip>}
-        title={sel ? (sel.id || sel.order_id) : ''}
+        chip={sel && <Chip s={SSTATUS_CHIP[sel.status || ''] || 'neutral'}>{sel.status}</Chip>}
+        title={sel ? (sel.id || sel.order_id || '') : ''}
         sub={sel ? [sel.customer, sel.branch].filter(Boolean).join(' · ') : ''}>
         {sel && (() => {
-          const serials = asArray<any>(sel.serials);
+          const serials = serialsOf(sel);
           return (
             <>
               <div className="kv" style={{ marginBottom: 16 }}>

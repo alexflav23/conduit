@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { getDocuments, documentPdfUrl, voidInvoice, authToken } from './api';
+import React, { useMemo, useState } from 'react';
+import { useApi, request } from './lib/query';
+import { ApiError, authToken } from './lib/client';
 import { PageHead, Card, Chip, Money, LayerNote, AuditRef, EmptyRow, SkeletonRow, useToast } from './kit/kit';
-import { tableState, asArray, type ApiResult } from './state';
 import { I } from './kit/icons';
 
 // Documents (spec/ui/08-documents.md, doc 17): the WORM (object-locked, immutable) fiscal-document surface.
@@ -9,6 +9,13 @@ import { I } from './kit/icons';
 // issue voids/credit-notes/refunds as PAIRED reversing documents — the original is never deleted, only
 // superseded by a linked reversal. The hero is WORM trust: sealed, final, corrections-as-new-documents.
 // Document totals are the `commercial` layer — Money collapses (renders nothing) when withheld.
+//
+// Backing routes:
+//   GET  /api/v1/documents?invoice_no=… | ?order_id=…   (DocumentRoutes) — list, gated view:document (403),
+//        money fields stripped by Projection for principals without the commercial layer.
+//   GET  /api/v1/documents/{id}/pdf                       (DocumentRoutes) — byte body from the WORM store.
+//   POST /api/v1/invoices/{invoice_no}/void              (InvoiceVoidRoutes) — records the reversal intent in
+//        the outbox; 202 { invoice_no, status: "void_requested", kind }. Refund needs approve:order (403).
 
 interface DocRow {
   id: string;
@@ -22,6 +29,7 @@ interface DocRow {
   voided_at?: string | null;
   reverses_document_id?: string | null;
   reversed_by_document_id?: string | null;
+  requested_by?: string;
 }
 
 const TYPE_LABEL: Record<string, string> = {
@@ -38,43 +46,54 @@ const VOID_KINDS = [
   { v: 'correction', label: 'Correction' },
 ];
 
+const documentPdfUrl = (id: string) => `/api/v1/documents/${id}/pdf`;
+
 export function Documents({ role, ctx, toast }: { role: any; ctx: any; toast: (m: string, k?: string) => void }) {
   const [toastNode, kitToast] = useToast();
-  const fire = useCallback((m: string, k?: string) => { toast(m, k); kitToast(m, (k as any) || 'ok'); }, [toast, kitToast]);
+  const fire = React.useCallback((m: string, k?: string) => { toast(m, k); kitToast(m, (k as any) || 'ok'); }, [toast, kitToast]);
 
   const [query, setQuery] = useState('INV-FLOW');
   const [search, setSearch] = useState('INV-FLOW');
-  const [res, setRes] = useState<ApiResult | null>(null);
-  const [docs, setDocs] = useState<DocRow[]>([]);
 
   const [kind, setKind] = useState('mistake');
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
 
-  // The viewer's own identity — refund approval is maker-checker; a finance user can request a refund but
-  // cannot self-approve one they raised. The server enforces it; the UI mirrors the block with a tooltip.
-  const selfRaised = role?.name && docs.some((d) => (d as any).requested_by === role.name && !d.voided_at);
+  // An order id search (ord… / order…) lists every document on that order; otherwise we look up a single invoice.
+  const term = search.trim();
+  const looksLikeOrder = /^(ord|order)/i.test(term);
+  const listPath = looksLikeOrder
+    ? `/api/v1/documents?order_id=${encodeURIComponent(term)}`
+    : `/api/v1/documents?invoice_no=${encodeURIComponent(term)}`;
 
-  const load = useCallback(() => {
-    const tok = role?.token || authToken();
-    const looksLikeOrder = /^(ord|order)/i.test(search.trim());
-    const params = looksLikeOrder ? { orderId: search.trim() } : { invoiceNo: search.trim() };
-    setRes(null);
-    getDocuments(tok, params).then((r) => {
-      setRes(r);
-      setDocs(asArray<DocRow>(r.json));
-    });
-  }, [role?.token, search]);
+  // Key on the search target + the entity/period context so a context switch (or a new search) refetches.
+  const q = useApi<DocRow[]>(
+    ['documents', term, looksLikeOrder, ctx?.entity, ctx?.period],
+    listPath,
+    { enabled: term.length > 0 },
+  );
 
-  // AUTO-LOAD: on mount + whenever the search target, entity or period context changes. No Load button.
-  useEffect(load, [load, ctx?.entity, ctx?.period]);
+  const err = q.error as ApiError | null;
+  const forbidden = !!err?.forbidden;
+  const notImplemented = !!err?.notImplemented;
+  const otherError = !!err && !forbidden && !notImplemented;
 
-  const st = tableState(res, docs);
+  const docs: DocRow[] = Array.isArray(q.data) ? q.data : [];
+  const ready = !q.isLoading && !err && term.length > 0;
+  const empty = ready && docs.length === 0;
+
   const locked = ctx?.period && /lock/i.test(String(ctx.period));
 
+  // The viewer's own identity — refund approval is maker-checker; a finance user can request a refund but
+  // cannot self-approve one they raised. The server enforces it; the UI mirrors the block with a tooltip.
+  const selfRaised = useMemo(
+    () => !!role?.name && docs.some((d) => d.requested_by === role.name && !d.voided_at),
+    [role?.name, docs],
+  );
+
+  // The PDF is binary (byte body), so it can't go through `request`'s JSON path — an authed fetch + blob open.
   const download = (d: DocRow) => {
-    const tok = role?.token || authToken();
-    fetch(documentPdfUrl(d.id), { headers: { Authorization: `Bearer ${tok}` } })
+    fetch(documentPdfUrl(d.id), { headers: { Authorization: `Bearer ${authToken()}` } })
       .then((r) => (r.ok ? r.blob() : Promise.reject(new Error(String(r.status)))))
       .then((blob) => { window.open(URL.createObjectURL(blob), '_blank'); fire(`Opening ${d.formatted_number ?? d.id} — sealed PDF`, 'ok'); })
       .catch((e) => fire(`Download failed (${e.message})`, 'err'));
@@ -84,17 +103,20 @@ export function Documents({ role, ctx, toast }: { role: any; ctx: any; toast: (m
     if (!reason.trim()) { fire('A reason is required to reverse a sealed document', 'warn'); return; }
     if (locked) { fire('Period is locked — cannot post a reversing document', 'warn'); return; }
     setBusy(true);
-    const tok = role?.token || authToken();
-    voidInvoice(tok, search.trim(), kind, reason).then((r) => {
-      setBusy(false);
-      if (r.status === 202 || r.status === 200) {
+    request(`/api/v1/invoices/${encodeURIComponent(term)}/void`, {
+      method: 'POST',
+      body: JSON.stringify({ kind, reason }),
+    })
+      .then(() => {
         fire(`${kind} processed — credit note minted, original kept (WORM)`, 'ok');
         setReason('');
-        load();
-      } else {
-        fire(r.json?.message ?? `Reversal failed (${r.status})`, 'err');
-      }
-    });
+        return q.refetch();
+      })
+      .catch((e) => {
+        const ae = e as ApiError;
+        fire(ae?.message ?? `Reversal failed (${ae?.status ?? '—'})`, 'err');
+      })
+      .finally(() => setBusy(false));
   };
 
   const refundChosen = kind === 'refund';
@@ -123,105 +145,117 @@ export function Documents({ role, ctx, toast }: { role: any; ctx: any; toast: (m
         }
       />
 
-      <Card
-        title="Documents"
-        icon={I.list}
-        aux={<span className="row g6 dim" style={{ fontSize: 12 }}>{I.shield({ size: 13 })} object-locked · final · sealed</span>}
-        className="tablewrap"
-      >
-        <table className="tbl" data-testid="doc-table">
-          <thead>
-            <tr>
-              <th>Number</th>
-              <th>Type</th>
-              <th>Entity</th>
-              <th className="num">Total</th>
-              <th>Status</th>
-              <th>PDF</th>
-            </tr>
-          </thead>
-          <tbody>
-            {st === 'loading' && <SkeletonRow cols={6} />}
+      {notImplemented ? (
+        <Card style={{ padding: '34px 28px', textAlign: 'center' }} data-testid="doc-unbacked">
+          <div style={{ display: 'grid', placeItems: 'center', gap: 10 }}>
+            <span style={{ width: 44, height: 44, borderRadius: 12, display: 'grid', placeItems: 'center', background: 'var(--panel-2)' }}>{I.list({ size: 22 })}</span>
+            <div style={{ fontFamily: 'var(--font-disp)', fontSize: 18, fontWeight: 600 }}>Not available in this environment yet</div>
+            <div className="dim" style={{ fontSize: 12.5, maxWidth: 460 }}>The WORM document store appears once invoices have been finalised and sealed to object storage.</div>
+          </div>
+        </Card>
+      ) : (
+        <>
+          <Card
+            title="Documents"
+            icon={I.list}
+            aux={<span className="row g6 dim" style={{ fontSize: 12 }}>{I.shield({ size: 13 })} object-locked · final · sealed</span>}
+            className="tablewrap"
+          >
+            <table className="tbl" data-testid="doc-table">
+              <thead>
+                <tr>
+                  <th>Number</th>
+                  <th>Type</th>
+                  <th>Entity</th>
+                  <th className="num">Total</th>
+                  <th>Status</th>
+                  <th>PDF</th>
+                </tr>
+              </thead>
+              <tbody>
+                {q.isLoading && <><SkeletonRow cols={6} /><SkeletonRow cols={6} /><SkeletonRow cols={6} /></>}
 
-            {st === 'forbidden' && (
-              <tr><td colSpan={6}><LayerNote>Document totals are the <b>commercial</b> layer — hidden for your view.</LayerNote></td></tr>
-            )}
+                {forbidden && (
+                  <tr><td colSpan={6}><LayerNote>Document totals are the <b>commercial</b> layer — hidden for your view.</LayerNote></td></tr>
+                )}
 
-            {st === 'error' && (
-              <EmptyRow cols={6}>Couldn't load documents{(res?.json as any)?.message ? ` — ${(res!.json as any).message}` : ` (${res?.status})`}.</EmptyRow>
-            )}
+                {otherError && (
+                  <EmptyRow cols={6}>Couldn't load documents{err?.message ? ` — ${err.message}` : ` (${err?.status})`}.</EmptyRow>
+                )}
 
-            {st === 'empty' && <EmptyRow cols={6}>No documents for this invoice or order yet.</EmptyRow>}
+                {empty && <EmptyRow cols={6}>No documents for this invoice or order yet.</EmptyRow>}
 
-            {st === 'ready' && docs.map((d, i) => (
-              <tr key={d.id ?? i} data-testid="doc-row">
-                <td>
-                  <span className="row g6">
-                    <b className="mono" style={{ fontSize: 11 }}>{d.formatted_number ?? d.id ?? '—'}</b>
-                    {d.reverses_document_id && <Chip s="accent">reversal</Chip>}
-                  </span>
-                  {d.reversed_by_document_id && <div className="dim" style={{ fontSize: 10.5, marginTop: 2 }}>superseded by reversal</div>}
-                </td>
-                <td>
-                  <span className="row g6">
-                    {TYPE_LABEL[d.document_type ?? ''] ?? d.document_type ?? '—'}
-                    {d.document_type === 'credit_note' && <Chip s="accent">credit</Chip>}
-                  </span>
-                </td>
-                <td className="dim" style={{ fontSize: 12 }}>{d.entity ?? '—'}</td>
-                <td className="num"><Money value={d.total_amount ?? null} ccy={d.currency} layer="commercial" role={role} /></td>
-                <td>
-                  {d.voided_at
-                    ? <Chip s="danger"><span data-testid="doc-voided">voided</span></Chip>
-                    : <span className="row g6"><Chip s={d.status ?? 'neutral'}>{d.status ?? 'sealed'}</Chip>{!d.reverses_document_id && I.shield({ size: 12 })}</span>}
-                </td>
-                <td>
-                  <button className="btn sm ghost" data-testid="doc-download" onClick={() => download(d)}>{I.download({ size: 12 })} Download</button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </Card>
+                {ready && docs.map((d, i) => (
+                  <tr key={d.id ?? i} data-testid="doc-row">
+                    <td>
+                      <span className="row g6">
+                        <b className="mono" style={{ fontSize: 11 }}>{d.formatted_number ?? d.id ?? '—'}</b>
+                        {d.reverses_document_id && <Chip s="accent">reversal</Chip>}
+                      </span>
+                      {d.reversed_by_document_id && <div className="dim" style={{ fontSize: 10.5, marginTop: 2 }}>superseded by reversal</div>}
+                    </td>
+                    <td>
+                      <span className="row g6">
+                        {TYPE_LABEL[d.document_type ?? ''] ?? d.document_type ?? '—'}
+                        {d.document_type === 'credit_note' && <Chip s="accent">credit</Chip>}
+                      </span>
+                    </td>
+                    <td className="dim" style={{ fontSize: 12 }}>{d.entity ?? '—'}</td>
+                    <td className="num"><Money value={d.total_amount ?? null} ccy={d.currency} layer="commercial" role={role} /></td>
+                    <td>
+                      {d.voided_at
+                        ? <Chip s="danger"><span data-testid="doc-voided">voided</span></Chip>
+                        : <span className="row g6"><Chip s={d.status ?? 'neutral'}>{d.status ?? 'sealed'}</Chip>{!d.reverses_document_id && I.shield({ size: 12 })}</span>}
+                    </td>
+                    <td>
+                      <button className="btn sm ghost" data-testid="doc-download" onClick={() => download(d)}>{I.download({ size: 12 })} Download</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </Card>
 
-      <Card
-        title="Invalidate this document"
-        icon={I.alert}
-        aux={<span className="dim" style={{ fontSize: 12 }}>issues a paired reversing document — the original stays</span>}
-      >
-        {locked && <div className="banner warn" style={{ marginBottom: 12 }}>{I.clock({ size: 14 })} This period is locked — no reversing documents can be posted.</div>}
-        <div className="loadbar">
-          <span className="fldlabel">Kind</span>
-          <select className="fld sel" data-testid="void-kind" value={kind} onChange={(e) => setKind(e.target.value)}>
-            {VOID_KINDS.map((k) => <option key={k.v} value={k.v}>{k.label}</option>)}
-          </select>
-          <input
-            className="fld"
-            style={{ flex: 1, minWidth: 240 }}
-            data-testid="void-reason"
-            value={reason}
-            placeholder="reason (recorded on the reversing document)"
-            onChange={(e) => setReason(e.target.value)}
-          />
-          <span title={refundBlocked ? 'Maker-checker: you raised this — a refund needs a different approver' : undefined}>
-            <button
-              className="btn danger"
-              data-testid="void-submit"
-              disabled={busy || st !== 'ready' || refundBlocked || !!locked}
-              onClick={submitVoid}
-            >
-              {I.x({ size: 13 })} {refundChosen ? 'Issue refund' : 'Void invoice'}
-            </button>
-          </span>
-        </div>
-        <div className="dim" style={{ fontSize: 11.5, lineHeight: 1.5, marginTop: 4 }}>
-          The original PDF is kept (WORM) and badged; a credit note supersedes it as a linked pair. A refund returns the cash and needs finance approval.
-          {refundBlocked && <span className="row g6" style={{ marginTop: 6 }}>{I.shield({ size: 12 })} You raised this document — self-approval of a refund is blocked.</span>}
-        </div>
-        <div className="dim" style={{ fontSize: 11, marginTop: 10 }}>
-          <span className="row g6">Every reversal drills to its ledger: <AuditRef id={search.trim() || 'invoice'} /></span>
-        </div>
-      </Card>
+          <Card
+            title="Invalidate this document"
+            icon={I.alert}
+            aux={<span className="dim" style={{ fontSize: 12 }}>issues a paired reversing document — the original stays</span>}
+          >
+            {locked && <div className="banner warn" style={{ marginBottom: 12 }}>{I.clock({ size: 14 })} This period is locked — no reversing documents can be posted.</div>}
+            <div className="loadbar">
+              <span className="fldlabel">Kind</span>
+              <select className="fld sel" data-testid="void-kind" value={kind} onChange={(e) => setKind(e.target.value)}>
+                {VOID_KINDS.map((k) => <option key={k.v} value={k.v}>{k.label}</option>)}
+              </select>
+              <input
+                className="fld"
+                style={{ flex: 1, minWidth: 240 }}
+                data-testid="void-reason"
+                value={reason}
+                placeholder="reason (recorded on the reversing document)"
+                onChange={(e) => setReason(e.target.value)}
+              />
+              <span title={refundBlocked ? 'Maker-checker: you raised this — a refund needs a different approver' : undefined}>
+                <button
+                  className="btn danger"
+                  data-testid="void-submit"
+                  disabled={busy || !ready || refundBlocked || !!locked}
+                  onClick={submitVoid}
+                >
+                  {I.x({ size: 13 })} {refundChosen ? 'Issue refund' : 'Void invoice'}
+                </button>
+              </span>
+            </div>
+            <div className="dim" style={{ fontSize: 11.5, lineHeight: 1.5, marginTop: 4 }}>
+              The original PDF is kept (WORM) and badged; a credit note supersedes it as a linked pair. A refund returns the cash and needs finance approval.
+              {refundBlocked && <span className="row g6" style={{ marginTop: 6 }}>{I.shield({ size: 12 })} You raised this document — self-approval of a refund is blocked.</span>}
+            </div>
+            <div className="dim" style={{ fontSize: 11, marginTop: 10 }}>
+              <span className="row g6">Every reversal drills to its ledger: <AuditRef id={term || 'invoice'} /></span>
+            </div>
+          </Card>
+        </>
+      )}
     </div>
   );
 }

@@ -1,27 +1,66 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import {
-  getMyForecasts, getScenarios, getVariants, submitForecast,
-  getCoverage, getCoverageMatrix, getReconcile, H6Q_MARKET, ForecastLine,
-} from './api';
+import React, { useMemo, useState } from 'react';
+import { useApi, request } from './lib/query';
+import { ApiError } from './lib/client';
+import { marketId, H6Q_MARKET, ForecastLine } from './api';
 import {
   PageHead, Card, Chip, Coverage, EmptyRow, LayerNote, SkeletonRow, Skeleton, num,
 } from './kit/kit';
 import { I } from './kit/icons';
-import { tableState, asArray } from './state';
+import { asArray } from './state';
 
 // H6Q — the deepest demand board (doc 20 D7/D8). Two personas, one domain: the weekly bottom-up CAPTURE
 // (agents submit their portion, SKU-mix-aware) and the dense COVERAGE BOARD (market × period × scenario ×
 // group-by) where human capture meets the 12k model rows. Units are the `volume` layer; any revenue
 // projection is `commercial` and COLLAPSES when withheld. Model rows are honestly marked vs human capture.
+//
+// Backing routes (H6QRoutes): GET /api/v1/h6q/scenarios, /variants, /my-forecasts,
+// /coverage/matrix?market&scenario, /coverage?market&period&scenario&group_by, /coverage/reconcile,
+// POST /my-forecasts/{company_id}/submit. The board is gated on view:pipeline_coverage (403 -> LayerNote);
+// capture is own-scope create:forecast. Scenario labels (P20/P50/P80) resolve to UUIDs via /scenarios.
 
 const SCENARIOS = ['P20', 'P50', 'P80'] as const;
 type Scenario = typeof SCENARIOS[number];
 const fmt = (n: number) => num(n);
 
+interface ScenarioRow { id: string; type?: string; toggle_basis?: unknown }
+
+// One render state from a React Query result, layer-aware: loading / forbidden / notImplemented / error /
+// empty / ready. Mirrors the shared table-state machine but over the typed ApiError the production client throws.
+type Phase = 'loading' | 'forbidden' | 'notImplemented' | 'error' | 'empty' | 'ready';
+function phaseOf(isLoading: boolean, err: ApiError | null, rows: unknown[]): Phase {
+  if (err?.forbidden) return 'forbidden';
+  if (err?.notImplemented) return 'notImplemented';
+  if (err) return 'error';
+  if (isLoading) return 'loading';
+  return rows.length === 0 ? 'empty' : 'ready';
+}
+
+// The shared "this endpoint isn't built in this environment" panel — never a stuck skeleton.
+function NotBacked({ testid, message }: { testid: string; message: string }) {
+  return (
+    <Card style={{ padding: '34px 28px', textAlign: 'center' }} data-testid={testid}>
+      <div style={{ display: 'grid', placeItems: 'center', gap: 10 }}>
+        <span style={{ width: 44, height: 44, borderRadius: 12, display: 'grid', placeItems: 'center', background: 'var(--panel-2)' }}>{I.trend({ size: 22 })}</span>
+        <div style={{ fontFamily: 'var(--font-disp)', fontSize: 18, fontWeight: 600 }}>Not available in this environment yet</div>
+        <div className="dim" style={{ fontSize: 12.5, maxWidth: 460 }}>{message}</div>
+      </div>
+    </Card>
+  );
+}
+
 export function H6Q({ role, ctx, toast }: { role: any; ctx: any; toast: (m: string, k?: string) => void }) {
   const [view, setView] = useState<'board' | 'capture'>('board');
   const market = (ctx && ctx.market) || H6Q_MARKET;
   const period = (ctx && ctx.period) || '2026-09';
+
+  // Resolve scenario labels -> UUIDs once. Keyed only on the endpoint; it's reference data, not ctx-scoped.
+  const scenariosQ = useApi<ScenarioRow[]>(['h6q-scenarios'], '/api/v1/h6q/scenarios');
+  const scenarioIds = useMemo(() => {
+    const map: Record<string, string> = {};
+    asArray<ScenarioRow>(scenariosQ.data).forEach((s) => { if (!s.toggle_basis && s.type) map[s.type] = s.id; });
+    return map;
+  }, [scenariosQ.data]);
+
   return (
     <div className="page">
       <PageHead
@@ -36,8 +75,8 @@ export function H6Q({ role, ctx, toast }: { role: any; ctx: any; toast: (m: stri
         }
       />
       {view === 'board'
-        ? <Board role={role} market={market} period={period} />
-        : <Capture role={role} toast={toast} ctx={ctx} />}
+        ? <Board role={role} market={market} period={period} scenarioIds={scenarioIds} />
+        : <Capture role={role} toast={toast} ctx={ctx} scenarioIds={scenarioIds} />}
     </div>
   );
 }
@@ -45,53 +84,14 @@ export function H6Q({ role, ctx, toast }: { role: any; ctx: any; toast: (m: stri
 // ---------------------------------------------------------------------------
 // Coverage board: grand total + the full SKU × month matrix; scenario toggle; reconcile (branch/agent).
 // ---------------------------------------------------------------------------
-function Board({ role, market, period }: { role: any; market: string; period: string }) {
+function Board({ role, market, period, scenarioIds }: { role: any; market: string; period: string; scenarioIds: Record<string, string> }) {
   const [mode, setMode] = useState<'matrix' | 'reconcile'>('matrix');
   const [scenario, setScenario] = useState<Scenario>('P50');
   const [groupBy, setGroupBy] = useState<'branch' | 'agent'>('branch');
 
-  const [scenarioIds, setScenarioIds] = useState<Record<string, string>>({});
-  const [matrixRes, setMatrixRes] = useState<{ status: number; json: any } | null>(null);
-  const [recRes, setRecRes] = useState<{ status: number; json: any } | null>(null);
-  const [ties, setTies] = useState<boolean | null>(null);
-
   const hasCommercial = Array.isArray(role?.layers) && role.layers.indexOf('commercial') >= 0;
-  const token = role?.token || '';
-
-  const resolveScenarioId = useCallback(async (sc: Scenario, cache: Record<string, string>): Promise<{ id: string | null; cache: Record<string, string> }> => {
-    if (cache[sc]) return { id: cache[sc], cache };
-    const s = await getScenarios(token);
-    const next: Record<string, string> = { ...cache };
-    asArray<any>(s.json).forEach((x) => { if (!x.toggle_basis && x.type) next[x.type] = x.id; });
-    return { id: next[sc] ?? null, cache: next };
-  }, [token]);
-
-  const loadMatrix = useCallback(async (sc: Scenario) => {
-    setMatrixRes(null);
-    const r = await resolveScenarioId(sc, scenarioIds);
-    setScenarioIds(r.cache);
-    if (!r.id) { setMatrixRes({ status: 200, json: [] }); return; }
-    setMatrixRes(await getCoverageMatrix(token, market, r.id));
-  }, [token, market, scenarioIds, resolveScenarioId]);
-
-  const loadReconcile = useCallback(async (sc: Scenario, group: 'branch' | 'agent') => {
-    setRecRes(null); setTies(null);
-    const r = await resolveScenarioId(sc, scenarioIds);
-    setScenarioIds(r.cache);
-    if (!r.id) { setRecRes({ status: 200, json: [] }); return; }
-    const cov = await getCoverage(token, market, period, r.id, group);
-    setRecRes(cov);
-    const rec = await getReconcile(token, market, period, r.id);
-    setTies(rec.json?.ties ?? null);
-  }, [token, market, period, scenarioIds, resolveScenarioId]);
-
-  // Auto-load on mount and whenever ctx (market/period), the scenario band, the mode, or group-by changes.
-  // No manual Load/Refresh button — re-running this effect is the refresh.
-  useEffect(() => {
-    if (mode === 'matrix') loadMatrix(scenario);
-    else loadReconcile(scenario, groupBy);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, scenario, groupBy, market, period]);
+  const mkt = marketId(market);
+  const sid = scenarioIds[scenario];
 
   return (
     <>
@@ -110,15 +110,22 @@ function Board({ role, market, period }: { role: any; market: string; period: st
       </div>
 
       {mode === 'matrix'
-        ? <MatrixCard res={matrixRes} scenario={scenario} hasCommercial={hasCommercial} />
-        : <ReconcileCard res={recRes} ties={ties} groupBy={groupBy} setGroupBy={setGroupBy} period={period} scenario={scenario} />}
+        ? <MatrixCard market={mkt} scenario={scenario} sid={sid} hasCommercial={hasCommercial} />
+        : <ReconcileCard market={mkt} period={period} scenario={scenario} sid={sid} groupBy={groupBy} setGroupBy={setGroupBy} />}
     </>
   );
 }
 
-function MatrixCard({ res, scenario, hasCommercial }: { res: { status: number; json: any } | null; scenario: Scenario; hasCommercial: boolean }) {
-  const rows = asArray<any>(res?.json);
-  const state = tableState(res, rows);
+function MatrixCard({ market, scenario, sid, hasCommercial }: { market: string; scenario: Scenario; sid?: string; hasCommercial: boolean }) {
+  const q = useApi<any[]>(
+    ['h6q-matrix', market, sid],
+    `/api/v1/h6q/coverage/matrix?market=${encodeURIComponent(market)}&scenario=${encodeURIComponent(sid ?? '')}`,
+    { enabled: !!sid },
+  );
+  const err = q.error as ApiError | null;
+  const rows = asArray<any>(q.data);
+  const loading = !sid || q.isLoading;
+  const state = phaseOf(loading, err, rows);
 
   const months = Array.from(new Set(rows.map((r) => r.month))).sort();
   const skus = Array.from(new Set(rows.map((r) => r.sku))).sort();
@@ -135,12 +142,16 @@ function MatrixCard({ res, scenario, hasCommercial }: { res: { status: number; j
   const grand = months.reduce((a, m) => a + colTotal(m), 0);
   const cols = (state === 'ready' ? months.length : 6) + 2;
 
+  if (state === 'notImplemented') {
+    return <NotBacked testid="h6q-matrix-unbacked" message="The demand matrix appears once the forecasting service is wired and a cycle has been published." />;
+  }
+
   return (
     <Card title="Demand matrix" icon={I.trend}
       aux={<span className="dim" style={{ fontSize: 12 }}>Forecast units · all SKUs × all months · {scenario} · <b style={{ color: 'var(--text)' }} data-testid="h6q-grand-total">{state === 'ready' ? `${fmt(grand)} units` : '—'}</b></span>}
       style={{ padding: 0 }} className="tablewrap">
       {state === 'forbidden' && <LayerNote>Demand is hidden — requires the <code>volume</code> layer.</LayerNote>}
-      {state === 'error' && <div className="banner danger" data-testid="h6q-board-error" style={{ margin: 14 }}>Couldn't load the demand matrix ({res?.status}).</div>}
+      {state === 'error' && <div className="banner danger" data-testid="h6q-board-error" style={{ margin: 14 }}>Couldn't load the demand matrix (HTTP {err?.status}).</div>}
       {(state !== 'forbidden' && state !== 'error') && (
         <table className="tbl">
           <thead><tr>
@@ -185,13 +196,32 @@ function SourceBadge({ source }: { source?: string }) {
   return <span className={model ? 'src-model' : 'src-human'} style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase' }}>{model ? 'model' : 'human'}</span>;
 }
 
-function ReconcileCard({ res, ties, groupBy, setGroupBy, period, scenario }: {
-  res: { status: number; json: any } | null; ties: boolean | null;
-  groupBy: 'branch' | 'agent'; setGroupBy: (g: 'branch' | 'agent') => void; period: string; scenario: Scenario;
+function ReconcileCard({ market, period, scenario, sid, groupBy, setGroupBy }: {
+  market: string; period: string; scenario: Scenario; sid?: string;
+  groupBy: 'branch' | 'agent'; setGroupBy: (g: 'branch' | 'agent') => void;
 }) {
-  const rows = asArray<any>(res?.json);
-  const state = tableState(res, rows);
+  const enabled = !!sid;
+  const covQ = useApi<any[]>(
+    ['h6q-coverage', market, period, sid, groupBy],
+    `/api/v1/h6q/coverage?market=${encodeURIComponent(market)}&period=${encodeURIComponent(period)}&scenario=${encodeURIComponent(sid ?? '')}&group_by=${groupBy}`,
+    { enabled },
+  );
+  const recQ = useApi<{ ties?: boolean }>(
+    ['h6q-reconcile', market, period, sid],
+    `/api/v1/h6q/coverage/reconcile?market=${encodeURIComponent(market)}&period=${encodeURIComponent(period)}&scenario=${encodeURIComponent(sid ?? '')}`,
+    { enabled },
+  );
+
+  const err = covQ.error as ApiError | null;
+  const rows = asArray<any>(covQ.data);
+  const loading = !enabled || covQ.isLoading;
+  const state = phaseOf(loading, err, rows);
+  const ties = recQ.data && typeof recQ.data === 'object' ? (recQ.data.ties ?? null) : null;
   const label = groupBy === 'agent' ? 'Agent' : 'Branch · billing entity';
+
+  if (state === 'notImplemented') {
+    return <NotBacked testid="h6q-reconcile-unbacked" message="The reconciliation view appears once bottom-up agent submissions exist for this cycle." />;
+  }
 
   return (
     <Card style={{ padding: 0 }} className="tablewrap">
@@ -205,7 +235,7 @@ function ReconcileCard({ res, ties, groupBy, setGroupBy, period, scenario }: {
         <span className="dim" style={{ fontSize: 12 }}>{period} · {scenario} · forecast vs shipped vs activated</span>
       </div>
       {state === 'forbidden' && <LayerNote>Reconciliation is hidden — requires the <code>volume</code> layer.</LayerNote>}
-      {state === 'error' && <div className="banner danger" data-testid="h6q-board-error" style={{ margin: 14 }}>Couldn't load reconciliation ({res?.status}).</div>}
+      {state === 'error' && <div className="banner danger" data-testid="h6q-board-error" style={{ margin: 14 }}>Couldn't load reconciliation (HTTP {err?.status}).</div>}
       {(state !== 'forbidden' && state !== 'error') && (
         <table className="tbl">
           <thead><tr>
@@ -241,66 +271,56 @@ function ReconcileCard({ res, ties, groupBy, setGroupBy, period, scenario }: {
 // Capture: my accounts + open cycle → submit. SKU-mix-aware (per-SKU × demand-band split, shown not hidden).
 // Optimised for the weekly repeat ceremony.
 // ---------------------------------------------------------------------------
-function Capture({ role, toast, ctx }: { role: any; toast: (m: string, k?: string) => void; ctx: any }) {
-  const token = role?.token || '';
+function Capture({ toast, ctx, scenarioIds }: { role: any; toast: (m: string, k?: string) => void; ctx: any; scenarioIds: Record<string, string> }) {
   const period = (ctx && ctx.period) || '2026-09';
 
-  const [mineRes, setMineRes] = useState<{ status: number; json: any } | null>(null);
-  const [variantsRes, setVariantsRes] = useState<{ status: number; json: any } | null>(null);
-  const [scenarioIds, setScenarioIds] = useState<Record<string, string>>({});
+  const mineQ = useApi<{ cycle: string | null; accounts: any[] }>(['h6q-my-forecasts'], '/api/v1/h6q/my-forecasts');
+  const variantsQ = useApi<any[]>(['h6q-variants'], '/api/v1/h6q/variants');
+
   const [account, setAccount] = useState<string | null>(null);
   const [grid, setGrid] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
 
-  useEffect(() => {
-    let live = true;
-    setMineRes(null); setVariantsRes(null);
-    (async () => {
-      const mine = await getMyForecasts(token);
-      if (!live) return;
-      setMineRes(mine);
-      const accts = asArray<any>(mine.json?.accounts);
-      if (accts.length) setAccount(accts[0].company_id);
-      const v = await getVariants(token);
-      if (!live) return;
-      setVariantsRes(v);
-      const sc = await getScenarios(token);
-      if (!live) return;
-      const map: Record<string, string> = {};
-      asArray<any>(sc.json).forEach((s) => { if (!s.toggle_basis && s.type) map[s.type] = s.id; });
-      setScenarioIds(map);
-    })();
-    return () => { live = false; };
-  }, [token, period]);
+  const err = mineQ.error as ApiError | null;
+  const cycle = mineQ.data?.cycle ?? null;
+  const accounts = asArray<any>(mineQ.data?.accounts);
+  const variants = asArray<any>(variantsQ.data);
+  const state = phaseOf(mineQ.isLoading, err, accounts);
 
-  const cycle = mineRes?.json?.cycle ?? null;
-  const accounts = asArray<any>(mineRes?.json?.accounts);
-  const variants = asArray<any>(variantsRes?.json);
-  const state = tableState(mineRes, accounts);
+  // Default the selected account to the first one the principal owns this cycle, without a load effect.
+  const selected = account ?? (accounts.length ? accounts[0].company_id : null);
 
   const setCell = (variant: string, band: Scenario, value: string) =>
     setGrid((g) => ({ ...g, [`${variant}|${band}`]: value }));
 
-  const submit = async () => {
-    if (!account || !cycle) return;
+  const submit = () => {
+    if (!selected || !cycle) return;
     setSubmitting(true);
     const lines: ForecastLine[] = [];
     variants.forEach((v) => SCENARIOS.forEach((b) => {
       const raw = grid[`${v.id}|${b}`];
       if (raw && raw.trim() !== '' && scenarioIds[b]) lines.push({ variant: v.id, period, scenario: scenarioIds[b], qty: parseInt(raw, 10) || 0 });
     }));
-    const res = await submitForecast(token, account, cycle, lines);
-    setSubmitting(false);
-    if (res.status === 200) toast(`Submitted — ${res.json?.versioned ?? lines.length} cells versioned into cycle ${cycle}`, 'ok');
-    else if (res.status === 401 || res.status === 403) toast('Not permitted to submit this forecast', 'err');
-    else toast(`Submit failed (${res.status})`, 'err');
+    request<{ versioned?: number }>(`/api/v1/h6q/my-forecasts/${selected}/submit`, {
+      method: 'POST',
+      body: JSON.stringify({ cycle, lines }),
+    })
+      .then((r) => { toast(`Submitted — ${r?.versioned ?? lines.length} cells versioned into cycle ${cycle}`, 'ok'); })
+      .catch((e: unknown) => {
+        if (e instanceof ApiError && e.forbidden) toast('Not permitted to submit this forecast', 'err');
+        else toast(`Submit failed (${e instanceof ApiError ? e.status : 'error'})`, 'err');
+      })
+      .finally(() => setSubmitting(false));
   };
 
   if (state === 'forbidden') {
     return <Card title="My forecast" icon={I.layers}><LayerNote>Capture is hidden — requires the <code>volume</code> layer.</LayerNote></Card>;
   }
+  if (state === 'notImplemented') {
+    return <NotBacked testid="h6q-capture-unbacked" message="Forecast capture appears once the forecasting service is wired and a cycle is open." />;
+  }
   if (state === 'error') {
-    return <Card title="My forecast" icon={I.layers}><div className="banner danger" data-testid="h6q-error">Couldn't load your accounts ({mineRes?.status}).</div></Card>;
+    return <Card title="My forecast" icon={I.layers}><div className="banner danger" data-testid="h6q-error">Couldn't load your accounts (HTTP {err?.status}).</div></Card>;
   }
 
   return (
@@ -310,13 +330,13 @@ function Capture({ role, toast, ctx }: { role: any; toast: (m: string, k?: strin
         {state === 'loading'
           ? <Skeleton w={260} h={30} />
           : (
-            <select className="fld sel" style={{ minWidth: 280 }} data-testid="h6q-account" value={account ?? ''} onChange={(e) => setAccount(e.target.value)}>
+            <select className="fld sel" style={{ minWidth: 280 }} data-testid="h6q-account" value={selected ?? ''} onChange={(e) => setAccount(e.target.value)}>
               {accounts.map((a) => <option key={a.company_id} value={a.company_id}>{a.name}{a.status ? ` — ${a.status}` : ''}</option>)}
             </select>
           )}
         {cycle && <Chip s="neutral"><span data-testid="h6q-cycle">cycle {cycle} open</span></Chip>}
         <div className="sp" />
-        <button className="btn primary" data-testid="h6q-submit" disabled={!account || !cycle || submitting} onClick={submit}>
+        <button className="btn primary" data-testid="h6q-submit" disabled={!selected || !cycle || submitting} onClick={submit}>
           {I.check({ size: 14 })} Submit my forecast
         </button>
       </div>
@@ -327,27 +347,29 @@ function Capture({ role, toast, ctx }: { role: any; toast: (m: string, k?: strin
         </Card>
       )}
 
-      {state === 'ready' && account && (
+      {state === 'ready' && selected && (
         <Card style={{ padding: 0 }} className="tablewrap"
           title={`Your portion — units by SKU × demand band (${period})`} icon={I.charger}>
           <table className="tbl">
             <thead><tr><th>SKU</th>{SCENARIOS.map((b) => <th key={b} className="num" style={{ fontFamily: 'var(--font-mono)' }}>{b}</th>)}</tr></thead>
             <tbody>
-              {variants.length === 0
-                ? <EmptyRow cols={SCENARIOS.length + 1}>No SKUs in the catalogue yet.</EmptyRow>
-                : variants.map((v) => (
-                  <tr key={v.id}>
-                    <td>
-                      <b className="mono" style={{ fontFamily: 'var(--font-mono)', fontSize: 11.5 }}>{v.sku}</b>
-                      <div className="dim" style={{ fontSize: 10.5 }}>{v.family}</div>
-                    </td>
-                    {SCENARIOS.map((b) => (
-                      <td key={b} className="num">
-                        <input className="cellinput" data-testid={`h6q-qty-${v.sku}-${b}`} value={grid[`${v.id}|${b}`] ?? ''} onChange={(e) => setCell(v.id, b, e.target.value)} placeholder="0" inputMode="numeric" />
+              {variantsQ.isLoading
+                ? <SkeletonRow cols={SCENARIOS.length + 1} />
+                : variants.length === 0
+                  ? <EmptyRow cols={SCENARIOS.length + 1}>No SKUs in the catalogue yet.</EmptyRow>
+                  : variants.map((v) => (
+                    <tr key={v.id}>
+                      <td>
+                        <b className="mono" style={{ fontFamily: 'var(--font-mono)', fontSize: 11.5 }}>{v.sku}</b>
+                        <div className="dim" style={{ fontSize: 10.5 }}>{v.family}</div>
                       </td>
-                    ))}
-                  </tr>
-                ))}
+                      {SCENARIOS.map((b) => (
+                        <td key={b} className="num">
+                          <input className="cellinput" data-testid={`h6q-qty-${v.sku}-${b}`} value={grid[`${v.id}|${b}`] ?? ''} onChange={(e) => setCell(v.id, b, e.target.value)} placeholder="0" inputMode="numeric" />
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
             </tbody>
           </table>
           <div className="layer-note" style={{ padding: '9px 14px' }}>{I.layers()}Bottom-up capture — the rollup sums every agent's portion each cycle. This is the part that must reconcile to the branch total. Keep the per-SKU split visible; never collapse the mix to one number.</div>

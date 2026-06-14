@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { authToken, listExceptions, getException, submitNarrative, decide } from './api';
-import { PageHead, Card, Chip, Drawer, EmptyRow, LayerNote, AuditRef, SkeletonRow, Money } from './kit/kit';
-import { tableState, asArray } from './state';
+import React, { useState } from 'react';
+import { useApi, request } from './lib/query';
+import { ApiError } from './lib/client';
+import { PageHead, Card, Chip, Drawer, EmptyRow, LayerNote, AuditRef, SkeletonRow, Skeleton, Money } from './kit/kit';
 import { I } from './kit/icons';
 
 // 02 — Deal Desk (ADLP exceptions). spec/ui/02-deal-desk.md.
@@ -13,6 +13,13 @@ import { I } from './kit/icons';
 // deviation-vs-band HERO metric → structured narrative (maker) → decision (checker, maker ≠ checker).
 // Prices/deviation are the `commercial` layer; margin context is `profitability`. Auto-load on mount +
 // when ctx changes — no Load/Refresh buttons. Four states everywhere.
+//
+// Backing routes (DealDeskRoutes):
+//   GET  /api/v1/adlp/exceptions?status=<s>           — the worklist (view:adlp_exception)
+//   GET  /api/v1/adlp/exceptions/{id}                 — one exception, projected to the viewer's layers
+//   POST /api/v1/adlp/exceptions/{id}/submit          — maker narrative (edit:adlp_exception)
+//   POST /api/v1/adlp/exceptions/{id}/decision        — CEO approve/reject (approve:adlp_exception)
+// Status filter maps: open -> pending_ceo, approved -> approved, rejected -> rejected, all -> (omitted).
 
 interface Exception {
   id: string;
@@ -29,8 +36,6 @@ interface Exception {
   narrative?: unknown;
   decision?: { by?: string; memo?: string; validTo?: string; volumeMin?: number; auditRef?: string };
 }
-
-type Res = { status: number; json: any } | null;
 
 const num = (v: unknown): number | null => {
   if (v == null || v === '') return null;
@@ -52,16 +57,16 @@ function ageDays(e: Exception): number {
   return Number.isFinite(t) ? (Date.now() - t) / 86400000 : 0;
 }
 
+type Filter = 'open' | 'approved' | 'rejected' | 'all';
+const STATUS_PARAM: Record<Filter, string> = { open: 'pending_ceo', approved: 'approved', rejected: 'rejected', all: '' };
+
 export function DealDesk({ role, ctx, toast }: { role: any; ctx: any; toast: (m: string, k?: string) => void }) {
-  const token = authToken();
   const layers: string[] = role?.layers ?? [];
   const canSeeCommercial = layers.indexOf('commercial') >= 0;
   const viewerName: string = role?.name ?? '';
   const canDecide = (role?.title ?? '').toLowerCase().includes('ceo') || layers.indexOf('inter_entity') >= 0;
 
-  const [res, setRes] = useState<Res>(null);
-  const [items, setItems] = useState<Exception[]>([]);
-  const [filter, setFilter] = useState<'open' | 'approved' | 'rejected' | 'all'>('open');
+  const [filter, setFilter] = useState<Filter>('open');
   const [selId, setSelId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -75,20 +80,22 @@ export function DealDesk({ role, ctx, toast }: { role: any; ctx: any; toast: (m:
   const [validTo, setValidTo] = useState('2026-12-31T00:00:00Z');
   const [volMin, setVolMin] = useState('400');
 
-  const load = useCallback(async () => {
-    setRes(null);
-    const statusParam = filter === 'open' ? 'pending_ceo' : filter === 'all' ? '' : filter;
-    const r = await listExceptions(token, statusParam);
-    setRes(r);
-    setItems(asArray<Exception>(r.json));
-  }, [token, filter]);
+  const statusParam = STATUS_PARAM[filter];
+  const listPath = `/api/v1/adlp/exceptions${statusParam ? `?status=${statusParam}` : ''}`;
+  // Key on the ctx fields the worklist is scoped by so a context switch refetches.
+  const list = useApi<Exception[]>(
+    ['adlp-exceptions', filter, ctx?.entity, ctx?.market, ctx?.period],
+    listPath,
+  );
 
-  // Auto-load on mount, when the queue filter changes, and when the entity/market/period context shifts.
-  useEffect(() => {
-    void load();
-  }, [load, ctx?.entity, ctx?.market, ctx?.period]);
+  const listErr = list.error as ApiError | null;
+  const forbidden = !!listErr?.forbidden;
+  const notImplemented = !!listErr?.notImplemented;
+  const otherError = !!listErr && !forbidden && !notImplemented;
 
-  const st = tableState(res, items);
+  const items: Exception[] = Array.isArray(list.data) ? list.data : [];
+  const ready = !list.isLoading && !listErr;
+  const empty = ready && items.length === 0;
 
   // Sort the worklist by age (oldest first) then deviation magnitude (largest first) — the spec's order.
   const sorted = [...items].sort((a, b) => {
@@ -97,64 +104,74 @@ export function DealDesk({ role, ctx, toast }: { role: any; ctx: any; toast: (m:
     return (deviation(b).overshootPct ?? 0) - (deviation(a).overshootPct ?? 0);
   });
 
-  const sel = sorted.find((e) => e.id === selId) || null;
-
-  const refreshOne = async (id: string) => {
-    const r = await getException(token, id);
-    if (r.status === 200 && r.json) {
-      setItems((prev) => prev.map((e) => (e.id === id ? { ...e, ...r.json } : e)));
-    }
-    await load();
-  };
+  // Fetch the selected exception's full detail (narrative + decision) when the drawer opens.
+  const detail = useApi<Exception>(
+    ['adlp-exception', selId],
+    selId ? `/api/v1/adlp/exceptions/${selId}` : '',
+    { enabled: !!selId },
+  );
+  const sel: Exception | null = selId ? ({ ...(sorted.find((e) => e.id === selId) || {}), ...(detail.data || {}) } as Exception) : null;
+  const detailErr = detail.error as ApiError | null;
 
   const onSubmitNarrative = async () => {
-    if (!sel) return;
+    if (!sel || !selId) return;
     if (!just.trim()) {
       toast('Narrative is required before submitting to the CEO', 'warn');
       return;
     }
     setBusy(true);
-    const r = await submitNarrative(token, sel.id, {
-      justification: just,
-      volumeExpectation: parseInt(vol, 10),
-      volumeDenomination: denom,
-      strategicImportance: strategic,
-    });
-    setBusy(false);
-    if (r.status === 200) {
+    try {
+      await request(`/api/v1/adlp/exceptions/${selId}/submit`, {
+        method: 'POST',
+        body: JSON.stringify({
+          justification: just,
+          volumeExpectation: parseInt(vol, 10),
+          volumeDenomination: denom,
+          strategicImportance: strategic || null,
+          notes: null,
+        }),
+      });
       toast('Proposal submitted to the CEO');
-      await refreshOne(sel.id);
-    } else {
-      toast(`Submit failed (${r.status})${r.json?.message ? ': ' + r.json.message : ''}`, 'err');
+      await Promise.all([detail.refetch(), list.refetch()]);
+    } catch (e) {
+      const ae = e as ApiError;
+      toast(`Submit failed (${ae?.status ?? '—'})${ae?.message ? ': ' + ae.message : ''}`, 'err');
+    } finally {
+      setBusy(false);
     }
   };
 
   const onDecide = async (decisionKind: 'approve' | 'reject') => {
-    if (!sel) return;
+    if (!sel || !selId) return;
     if (!memo.trim()) {
       toast('A decision memo is recorded immutably — it is required', 'warn');
       return;
     }
     setBusy(true);
-    const r = await decide(token, sel.id, {
-      decision: decisionKind,
-      memo,
-      validFrom: '2026-06-01T00:00:00Z',
-      validTo,
-      volumeMin: parseInt(volMin, 10),
-    });
-    setBusy(false);
-    if (r.status === 200) {
-      const ref = r.json?.decision?.auditRef ? ' · ' + r.json.decision.auditRef : '';
+    try {
+      const res = await request<{ decision?: { auditRef?: string } }>(`/api/v1/adlp/exceptions/${selId}/decision`, {
+        method: 'POST',
+        body: JSON.stringify({
+          decision: decisionKind,
+          memo,
+          validFrom: '2026-06-01T00:00:00Z',
+          validTo,
+          volumeMin: parseInt(volMin, 10),
+        }),
+      });
+      const ref = res?.decision?.auditRef ? ' · ' + res.decision.auditRef : '';
       toast(
         decisionKind === 'approve'
           ? 'Approved — tier minted, held orders released + re-quoted' + ref
           : 'Rejected — held orders cancelled' + ref,
         decisionKind === 'approve' ? 'ok' : 'warn',
       );
-      await refreshOne(sel.id);
-    } else {
-      toast(`Decision failed (${r.status})${r.json?.message ? ': ' + r.json.message : ''}`, 'err');
+      await Promise.all([detail.refetch(), list.refetch()]);
+    } catch (e) {
+      const ae = e as ApiError;
+      toast(`Decision failed (${ae?.status ?? '—'})${ae?.message ? ': ' + ae.message : ''}`, 'err');
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -164,7 +181,7 @@ export function DealDesk({ role, ctx, toast }: { role: any; ctx: any; toast: (m:
     rejected: items.filter((e) => e.status === 'rejected').length,
     all: items.length,
   };
-  const FILTS: [typeof filter, string, number][] = [
+  const FILTS: [Filter, string, number][] = [
     ['open', 'Pending CEO', counts.open],
     ['approved', 'Approved', counts.approved],
     ['rejected', 'Rejected', counts.rejected],
@@ -191,81 +208,99 @@ export function DealDesk({ role, ctx, toast }: { role: any; ctx: any; toast: (m:
         ))}
       </div>
 
-      <Card className="tablewrap" style={{ padding: 0 }}>
-        <div className="ct" style={{ padding: '14px 16px', margin: 0, borderBottom: '1px solid var(--border)' }}>
-          <div className="t">{I.flag()}Exception queue</div>
-          <div className="aux">{st === 'ready' ? `${sorted.length} shown` : ''}</div>
-        </div>
+      {notImplemented ? (
+        <Card style={{ padding: '34px 28px', textAlign: 'center' }} data-testid="dd-unbacked">
+          <div style={{ display: 'grid', placeItems: 'center', gap: 10 }}>
+            <span style={{ width: 44, height: 44, borderRadius: 12, display: 'grid', placeItems: 'center', background: 'var(--panel-2)' }}>{I.flag({ size: 22 })}</span>
+            <div style={{ fontFamily: 'var(--font-disp)', fontSize: 18, fontWeight: 600 }}>Not available in this environment yet</div>
+            <div className="dim" style={{ fontSize: 12.5, maxWidth: 460 }}>The Deal Desk queue appears once the ADLP price-exception workflow is wired in this environment.</div>
+          </div>
+        </Card>
+      ) : (
+        <Card className="tablewrap" style={{ padding: 0 }}>
+          <div className="ct" style={{ padding: '14px 16px', margin: 0, borderBottom: '1px solid var(--border)' }}>
+            <div className="t">{I.flag()}Exception queue</div>
+            <div className="aux">{ready ? `${sorted.length} shown` : ''}</div>
+          </div>
 
-        {st === 'forbidden' ? (
-          <div style={{ padding: 16 }}>
-            <LayerNote>hidden — requires the commercial data layer</LayerNote>
-          </div>
-        ) : st === 'error' ? (
-          <div style={{ padding: 16 }} className="banner danger" data-testid="dd-error">
-            {I.alert()} Could not load the exception queue ({res?.status}). It will retry on the next context change.
-          </div>
-        ) : (
-          <table className="tbl">
-            <thead>
-              <tr>
-                <th>Exception</th>
-                <th>Party</th>
-                <th className="num">Requested</th>
-                <th className="num">Dev. vs band</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {st === 'loading' && (
-                <>
-                  <SkeletonRow cols={5} />
-                  <SkeletonRow cols={5} />
-                  <SkeletonRow cols={5} />
-                </>
-              )}
-              {st === 'empty' && <EmptyRow cols={5}>No pending exceptions.</EmptyRow>}
-              {st === 'ready' &&
-                sorted.map((e) => {
-                  const { overshootPct } = deviation(e);
-                  return (
-                    <tr
-                      key={e.id}
-                      className={selId === e.id ? 'sel' : ''}
-                      tabIndex={0}
-                      data-testid={`exc-row-${e.id}`}
-                      onClick={() => setSelId(e.id)}
-                      onKeyDown={(ev) => ev.key === 'Enter' && setSelId(e.id)}
-                    >
-                      <td>
-                        <b className="mono" style={{ fontSize: 11 }}>{e.order_no || e.id}</b>
-                        <div className="dim" style={{ fontSize: 10 }}>{e.sku}</div>
-                      </td>
-                      <td><b>{e.party || '—'}</b></td>
-                      <td className="num">
-                        {canSeeCommercial ? <Money value={e.requested_price ?? null} ccy={ctx?.currency || 'GBP'} /> : <span className="dim">—</span>}
-                      </td>
-                      <td className="num" style={{ color: overshootPct != null && overshootPct > 0 ? 'var(--danger)' : undefined }}>
-                        {canSeeCommercial && overshootPct != null ? `+${overshootPct.toFixed(1)}%` : <span className="dim">—</span>}
-                      </td>
-                      <td><Chip s={e.status} /></td>
-                    </tr>
-                  );
-                })}
-            </tbody>
-          </table>
-        )}
-      </Card>
+          {forbidden ? (
+            <div style={{ padding: 16 }}>
+              <LayerNote>hidden — requires the commercial data layer</LayerNote>
+            </div>
+          ) : otherError ? (
+            <div style={{ padding: 16 }} className="banner danger" data-testid="dd-error">
+              {I.alert()} Could not load the exception queue (HTTP {listErr?.status}). It will retry on the next context change.
+            </div>
+          ) : (
+            <table className="tbl">
+              <thead>
+                <tr>
+                  <th>Exception</th>
+                  <th>Party</th>
+                  <th className="num">Requested</th>
+                  <th className="num">Dev. vs band</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {list.isLoading && (
+                  <>
+                    <SkeletonRow cols={5} />
+                    <SkeletonRow cols={5} />
+                    <SkeletonRow cols={5} />
+                  </>
+                )}
+                {empty && <EmptyRow cols={5}>No exceptions in this queue.</EmptyRow>}
+                {ready &&
+                  sorted.map((e) => {
+                    const { overshootPct } = deviation(e);
+                    return (
+                      <tr
+                        key={e.id}
+                        className={selId === e.id ? 'sel' : ''}
+                        tabIndex={0}
+                        data-testid={`exc-row-${e.id}`}
+                        onClick={() => setSelId(e.id)}
+                        onKeyDown={(ev) => ev.key === 'Enter' && setSelId(e.id)}
+                      >
+                        <td>
+                          <b className="mono" style={{ fontSize: 11 }}>{e.order_no || e.id}</b>
+                          <div className="dim" style={{ fontSize: 10 }}>{e.sku}</div>
+                        </td>
+                        <td><b>{e.party || '—'}</b></td>
+                        <td className="num">
+                          {canSeeCommercial ? <Money value={e.requested_price ?? null} ccy={ctx?.currency || 'GBP'} /> : <span className="dim">—</span>}
+                        </td>
+                        <td className="num" style={{ color: overshootPct != null && overshootPct > 0 ? 'var(--danger)' : undefined }}>
+                          {canSeeCommercial && overshootPct != null ? `+${overshootPct.toFixed(1)}%` : <span className="dim">—</span>}
+                        </td>
+                        <td><Chip s={e.status} /></td>
+                      </tr>
+                    );
+                  })}
+              </tbody>
+            </table>
+          )}
+        </Card>
+      )}
 
       <Drawer
-        open={!!sel}
+        open={!!selId}
         onClose={() => setSelId(null)}
-        title={sel?.order_no || sel?.id}
+        title={sel?.order_no || sel?.id || selId || ''}
         sub={sel ? `${sel.party || ''}${sel.sku ? ' · ' + sel.sku : ''}` : undefined}
-        chip={sel ? <Chip s={sel.status} /> : undefined}
+        chip={sel?.status ? <Chip s={sel.status} /> : undefined}
         width={520}
       >
-        {sel && (
+        {detail.isLoading ? (
+          <div data-testid="exception-loading"><Skeleton lines={6} /></div>
+        ) : detailErr?.forbidden ? (
+          <LayerNote>hidden — requires the commercial data layer</LayerNote>
+        ) : detailErr?.notImplemented ? (
+          <div className="dim" style={{ fontSize: 12.5 }}>This exception is not available in this environment.</div>
+        ) : detailErr ? (
+          <div className="banner danger" data-testid="exception-error">{I.alert()} Could not load this exception (HTTP {detailErr.status}).</div>
+        ) : sel ? (
           <div data-testid="exception">
             {!canSeeCommercial ? (
               <LayerNote>hidden — requires the commercial data layer</LayerNote>
@@ -387,7 +422,7 @@ export function DealDesk({ role, ctx, toast }: { role: any; ctx: any; toast: (m:
               </>
             )}
           </div>
-        )}
+        ) : null}
       </Drawer>
     </>
   );

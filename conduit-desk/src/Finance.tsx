@@ -1,96 +1,67 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { apiFetch } from './api';
+import React from 'react';
+import { useApi } from './lib/query';
+import { ApiError } from './lib/client';
+import { marketId } from './api';
 import {
-  PageHead, Card, LayerNote, Coverage, Money, SkeletonRow, Skeleton, EmptyRow, AuditRef, useToast,
+  PageHead, Card, LayerNote, Money, SkeletonRow, Skeleton, EmptyRow,
 } from './kit/kit';
 import { I } from './kit/icons';
-import { asArray } from './state';
 
-// Finance (spec/ui/07-finance.md): the CFO read-models — P&L by market/period, the cash waterfall, and the
-// per-party credit-terms editor. The hero teaching moment is the LAYER COLLAPSE: revenue is `commercial`,
-// margin/COGS is `profitability` — a viewer without profitability sees revenue but the margin is honestly
-// ABSENT (a LayerNote), never £0. Credit-terms edits are real money mutations (confirm + audit affordance).
-// Auto-loads on mount + when ctx.market / ctx.period change — no manual Load/Refresh buttons.
+// Finance (spec/ui/07-finance.md): the CFO read-models — P&L by market/period and the cash waterfall. The hero
+// teaching moment is the LAYER COLLAPSE: revenue is `commercial`, margin/COGS is `profitability` — a viewer
+// without profitability sees revenue but the margin is honestly ABSENT (a LayerNote), never £0.
+//
+// Backing routes (CreditRoutes.scala):
+//   GET /api/v1/finance/pnl?market={uuid}&period={YYYY-MM}  -> { revenue_ex_vat, vat, cogs, gross_margin } (strings)
+//   GET /api/v1/finance/cash-waterfall?currency=GBP          -> [{ due_month, currency, expected_cash, invoices }]
+// Both gate server-side on view:credit_profile (403 -> forbidden) and key on ctx.market / ctx.period so a
+// context switch refetches. There is NO list-credit-customers endpoint (only per-party GET/PUT credit-terms),
+// so the credit-control editor renders the honest "not available yet" panel rather than a guessed call.
 
 type Ctx = { entity: string; market: string; period: string; scenario: string };
 type Role = { token?: string; name?: string; title?: string; layers?: string[] };
 
-const FINANCE_MARKET = '22222222-2222-2222-2222-222222222222';
+interface Pnl {
+  revenue_ex_vat: string;
+  vat: string;
+  cogs: string;
+  gross_margin: string;
+}
+interface WaterfallRow {
+  due_month: string;
+  currency: string;
+  expected_cash: string | number;
+  invoices: number;
+}
 
-const gbpn = (v: any) =>
+const gbpn = (v: number | string | null | undefined): string | null =>
   v == null ? null : `£${Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-export function Finance({ role, ctx, toast }: { role: any; ctx: any; toast: (m: string, k?: string) => void }) {
+export function Finance({ role, ctx }: { role: any; ctx: any; toast: (m: string, k?: string) => void }) {
   const r = (role || {}) as Role;
   const c = (ctx || {}) as Ctx;
   const layers = r.layers || [];
   const hasCommercial = layers.indexOf('commercial') >= 0;
   const hasProfit = layers.indexOf('profitability') >= 0;
-  const market = c.market || FINANCE_MARKET;
+  const market = marketId(c.market || 'UK');
   const period = c.period || '2026-09';
 
-  const [toastNode, fire] = useToast();
-  const fireToast = useCallback((m: string, k?: string) => { fire(m, (k as any) || 'ok'); toast(m, k); }, [fire, toast]);
+  const pnlQ = useApi<Pnl>(
+    ['finance-pnl', market, period],
+    `/api/v1/finance/pnl?market=${encodeURIComponent(market)}&period=${encodeURIComponent(period)}`,
+    { enabled: hasCommercial && !!market },
+  );
 
-  // ---- P&L ----
-  const [pnlRes, setPnlRes] = useState<{ status: number; json: any } | null>(null);
-  // ---- cash waterfall ----
-  const [wfRes, setWfRes] = useState<{ status: number; json: any } | null>(null);
-  // ---- credit terms ----
-  const [termsRes, setTermsRes] = useState<{ status: number; json: any } | null>(null);
-  const [drafts, setDrafts] = useState<Record<string, string>>({});
-  const [confirming, setConfirming] = useState<any | null>(null);
-  const [saving, setSaving] = useState(false);
-
-  useEffect(() => {
-    setPnlRes(null);
-    apiFetch(`/api/v1/finance/pnl?market=${encodeURIComponent(market)}&period=${encodeURIComponent(period)}`).then(setPnlRes);
-  }, [market, period]);
-
-  useEffect(() => {
-    setWfRes(null);
-    apiFetch(`/api/v1/finance/cash-waterfall?currency=GBP`).then(setWfRes);
-  }, [market, period]);
-
-  const loadTerms = useCallback(() => {
-    setTermsRes(null);
-    apiFetch(`/api/v1/finance/credit-terms?market=${encodeURIComponent(market)}`).then((res) => {
-      setTermsRes(res);
-      const seed: Record<string, string> = {};
-      asArray<any>(res.json).forEach((p) => { seed[p.party_id || p.id] = String(p.payment_terms_days ?? ''); });
-      setDrafts(seed);
-    });
-  }, [market]);
-
-  useEffect(loadTerms, [loadTerms]);
-
-  const saveTerms = (p: any) => {
-    const id = p.party_id || p.id;
-    const days = parseInt(drafts[id], 10);
-    if (!Number.isFinite(days)) { fireToast('Enter a valid number of days', 'warn'); return; }
-    setSaving(true);
-    apiFetch(`/api/v1/parties/${encodeURIComponent(id)}/credit-terms`, {
-      method: 'PUT',
-      body: JSON.stringify({ payment_terms_days: days, credit_limit: p.credit_limit }),
-    }).then((res) => {
-      setSaving(false);
-      setConfirming(null);
-      if (res.status === 200 || res.status === 202) {
-        fireToast(`${days}-day terms saved for ${p.name || id} — audited, re-dates open invoices`);
-        loadTerms();
-      } else if (res.status === 403) {
-        fireToast('Forbidden — credit terms require the commercial layer', 'err');
-      } else {
-        fireToast(`Save failed (${res.status})`, 'err');
-      }
-    });
-  };
+  const wfQ = useApi<WaterfallRow[]>(
+    ['finance-cash-waterfall', 'GBP'],
+    '/api/v1/finance/cash-waterfall?currency=GBP',
+    { enabled: hasCommercial },
+  );
 
   // The whole screen sits behind the commercial layer (revenue is commercial). No commercial -> collapse.
   if (!hasCommercial) {
     return (
       <div className="page" style={{ maxWidth: 1180 }}>
-        {toastNode}
         <PageHead crumb={'Finance · ' + period} title="Finance"
           sub="P&L, cash and credit — read-models recognised on dispatch and proved on the ledger." />
         <Card title="Financial projections" icon={I.shield}>
@@ -110,49 +81,42 @@ export function Finance({ role, ctx, toast }: { role: any; ctx: any; toast: (m: 
 
   return (
     <div className="page" style={{ maxWidth: 1280 }}>
-      {toastNode}
       <PageHead crumb={'Finance · ' + period + ' · ASC-606'} title="Finance"
         sub="Recognised on dispatch, proved on the immutable ledger. Every figure ties to the penny."
         right={<span className="stale"><span className="pulse" />market {market.slice(0, 8)}</span>} />
 
       <div className="grid" style={{ gridTemplateColumns: '1.6fr 1fr', alignItems: 'start' }}>
-        <PnlCard res={pnlRes} period={period} hasProfit={hasProfit} role={r} />
-        <MarginCard res={pnlRes} hasProfit={hasProfit} role={r} />
+        <PnlCard q={pnlQ} period={period} hasProfit={hasProfit} role={r} />
+        <MarginCard q={pnlQ} hasProfit={hasProfit} role={r} />
       </div>
 
-      <CashWaterfall res={wfRes} />
+      <CashWaterfall q={wfQ} />
 
-      <CreditTerms
-        res={termsRes} drafts={drafts} setDrafts={setDrafts}
-        onSave={(p) => setConfirming(p)} role={r}
-      />
-
-      {confirming && (
-        <ConfirmTerms
-          party={confirming} days={drafts[confirming.party_id || confirming.id]}
-          saving={saving} onCancel={() => setConfirming(null)} onConfirm={() => saveTerms(confirming)}
-        />
-      )}
+      <CreditTerms />
     </div>
   );
 }
 
 // ---------------- P&L ----------------
-function PnlCard({ res, period, hasProfit, role }: { res: any; period: string; hasProfit: boolean; role: any }) {
-  const loading = res === null;
-  const forbidden = res && (res.status === 401 || res.status === 403);
-  const error = res && res.status >= 400 && !forbidden;
-  const pnl = res && res.status < 400 ? res.json : null;
-  const empty = res && res.status < 400 && !pnl;
+function PnlCard({ q, period, hasProfit, role }: {
+  q: ReturnType<typeof useApi<Pnl>>; period: string; hasProfit: boolean; role: any;
+}) {
+  const err = q.error as ApiError | null;
+  const forbidden = !!err?.forbidden;
+  const notImplemented = !!err?.notImplemented;
+  const otherError = !!err && !forbidden && !notImplemented;
+  const pnl = q.data ?? null;
+  const empty = !q.isLoading && !err && !pnl;
 
   return (
     <Card title={'Profit & loss · ' + period} icon={I.sessions} className="tablewrap" style={{ padding: 0 }}>
       <table className="tbl">
         <thead><tr><th>Line</th><th className="num">Layer</th><th className="num">{period}</th></tr></thead>
         <tbody>
-          {loading && <><SkeletonRow cols={3} /><SkeletonRow cols={3} /><SkeletonRow cols={3} /></>}
-          {forbidden && <tr><td colSpan={3} style={{ padding: 0 }}><LayerNote>P&L hidden — requires the commercial layer.</LayerNote></td></tr>}
-          {error && <EmptyRow cols={3}>Could not load the P&L — try again shortly.</EmptyRow>}
+          {q.isLoading && <><SkeletonRow cols={3} /><SkeletonRow cols={3} /><SkeletonRow cols={3} /></>}
+          {forbidden && <tr><td colSpan={3} style={{ padding: 0 }}><LayerNote>P&L hidden — requires view:credit_profile.</LayerNote></td></tr>}
+          {notImplemented && <tr><td colSpan={3} style={{ padding: 0 }}><LayerNote>P&L is not available in this environment yet.</LayerNote></td></tr>}
+          {otherError && <EmptyRow cols={3}>Could not load the P&L (HTTP {err?.status}) — try again shortly.</EmptyRow>}
           {empty && <EmptyRow cols={3}>No recognised revenue in {period} yet.</EmptyRow>}
           {pnl && (
             <>
@@ -177,7 +141,7 @@ function PnlCard({ res, period, hasProfit, role }: { res: any; period: string; h
                     <td><b>Gross margin</b></td>
                     <td className="num"><span className="chip accent"><span className="d" />profitability</span></td>
                     <td className="num"><b style={{ color: 'var(--accent-bright)' }}>
-                      <Money value={pnl.gross_margin ?? (pnl.revenue_ex_vat - pnl.cogs)} role={role} layer="profitability" />
+                      <Money value={pnl.gross_margin ?? (Number(pnl.revenue_ex_vat) - Number(pnl.cogs))} role={role} layer="profitability" />
                     </b></td>
                   </tr>
                 </>
@@ -198,8 +162,10 @@ function PnlCard({ res, period, hasProfit, role }: { res: any; period: string; h
 }
 
 // ---------------- Margin composition ----------------
-function MarginCard({ res, hasProfit, role }: { res: any; hasProfit: boolean; role: any }) {
-  const pnl = res && res.status < 400 ? res.json : null;
+function MarginCard({ q, hasProfit, role }: {
+  q: ReturnType<typeof useApi<Pnl>>; hasProfit: boolean; role: any;
+}) {
+  const pnl = q.data ?? null;
 
   if (!hasProfit) {
     return (
@@ -213,7 +179,7 @@ function MarginCard({ res, hasProfit, role }: { res: any; hasProfit: boolean; ro
     );
   }
 
-  if (res === null) {
+  if (q.isLoading) {
     return <Card title="Margin composition" icon={I.trend}><Skeleton lines={4} /></Card>;
   }
   if (!pnl) {
@@ -250,11 +216,13 @@ function MarginCard({ res, hasProfit, role }: { res: any; hasProfit: boolean; ro
 }
 
 // ---------------- Cash waterfall ----------------
-function CashWaterfall({ res }: { res: any }) {
-  const loading = res === null;
-  const forbidden = res && (res.status === 401 || res.status === 403);
-  const error = res && res.status >= 400 && !forbidden;
-  const rows = asArray<any>(res && res.status < 400 ? res.json : []);
+function CashWaterfall({ q }: { q: ReturnType<typeof useApi<WaterfallRow[]>> }) {
+  const err = q.error as ApiError | null;
+  const forbidden = !!err?.forbidden;
+  const notImplemented = !!err?.notImplemented;
+  const otherError = !!err && !forbidden && !notImplemented;
+  const rows: WaterfallRow[] = Array.isArray(q.data) ? q.data : [];
+  const ready = !q.isLoading && !err;
   const total = rows.reduce((a, x) => a + (Number(x.expected_cash) || 0), 0);
   const invoices = rows.reduce((a, x) => a + (Number(x.invoices) || 0), 0);
   const max = Math.max(1, ...rows.map((x) => Number(x.expected_cash) || 0));
@@ -265,11 +233,12 @@ function CashWaterfall({ res }: { res: any }) {
       <table className="tbl">
         <thead><tr><th>Due month</th><th>Currency</th><th style={{ width: '38%' }}>Expected cash</th><th className="num">Amount</th><th className="num">Invoices</th></tr></thead>
         <tbody>
-          {loading && <><SkeletonRow cols={5} /><SkeletonRow cols={5} /><SkeletonRow cols={5} /></>}
-          {forbidden && <tr><td colSpan={5} style={{ padding: 0 }}><LayerNote>Cash waterfall hidden — requires the commercial layer.</LayerNote></td></tr>}
-          {error && <EmptyRow cols={5}>Could not load the cash waterfall — try again shortly.</EmptyRow>}
-          {res && !forbidden && !error && rows.length === 0 && <EmptyRow cols={5}>No open invoices — nothing scheduled to collect.</EmptyRow>}
-          {rows.map((x, i) => (
+          {q.isLoading && <><SkeletonRow cols={5} /><SkeletonRow cols={5} /><SkeletonRow cols={5} /></>}
+          {forbidden && <tr><td colSpan={5} style={{ padding: 0 }}><LayerNote>Cash waterfall hidden — requires view:credit_profile.</LayerNote></td></tr>}
+          {notImplemented && <tr><td colSpan={5} style={{ padding: 0 }}><LayerNote>The cash waterfall is not available in this environment yet.</LayerNote></td></tr>}
+          {otherError && <EmptyRow cols={5}>Could not load the cash waterfall (HTTP {err?.status}) — try again shortly.</EmptyRow>}
+          {ready && rows.length === 0 && <EmptyRow cols={5}>No open invoices — nothing scheduled to collect.</EmptyRow>}
+          {ready && rows.map((x, i) => (
             <tr key={i} data-testid="fin-wf-row" style={{ cursor: 'default' }}>
               <td><b>{x.due_month}</b></td>
               <td className="dim">{x.currency}</td>
@@ -279,7 +248,7 @@ function CashWaterfall({ res }: { res: any }) {
             </tr>
           ))}
         </tbody>
-        {rows.length > 0 && (
+        {ready && rows.length > 0 && (
           <tfoot><tr><td><b>Total</b></td><td /><td /><td className="num"><b>{gbpn(total)}</b></td><td className="num"><b>{invoices}</b></td></tr></tfoot>
         )}
       </table>
@@ -287,89 +256,22 @@ function CashWaterfall({ res }: { res: any }) {
   );
 }
 
-// ---------------- Credit terms editor (maker mutation) ----------------
-function CreditTerms({ res, drafts, setDrafts, onSave, role }: {
-  res: any; drafts: Record<string, string>; setDrafts: (d: Record<string, string>) => void;
-  onSave: (p: any) => void; role: any;
-}) {
-  const loading = res === null;
-  const forbidden = res && (res.status === 401 || res.status === 403);
-  const error = res && res.status >= 400 && !forbidden;
-  const rows = asArray<any>(res && res.status < 400 ? res.json : []);
-
+// ---------------- Credit terms editor ----------------
+// No list-credit-customers route exists in this environment — the backend exposes only per-party
+// GET/PUT /api/v1/parties/{id}/credit-terms, not a market roll-up. Render the honest "not available" panel
+// rather than a guessed call; the editor lights up once a credit-customer roster endpoint is wired.
+function CreditTerms() {
   return (
-    <Card title="Credit control" icon={I.user} className="tablewrap" style={{ padding: 0, marginTop: 14 }}
+    <Card title="Credit control" icon={I.user} style={{ marginTop: 14 }}
       aux={<span className="dim" style={{ fontSize: 11.5 }}>terms &amp; limits per trade customer — drives due dates and the waterfall</span>}>
-      <table className="tbl" data-testid="fin-terms">
-        <thead><tr><th>Customer</th><th>Type</th><th className="num">Terms (days)</th><th className="num">Credit limit</th><th className="num">Outstanding</th><th style={{ width: 150 }}>Utilisation</th><th /></tr></thead>
-        <tbody>
-          {loading && <><SkeletonRow cols={7} /><SkeletonRow cols={7} /></>}
-          {forbidden && <tr><td colSpan={7} style={{ padding: 0 }}><LayerNote>Credit terms hidden — requires the commercial layer.</LayerNote></td></tr>}
-          {error && <EmptyRow cols={7}>Could not load credit terms — try again shortly.</EmptyRow>}
-          {res && !forbidden && !error && rows.length === 0 && <EmptyRow cols={7}>No credit customers in this market.</EmptyRow>}
-          {rows.map((p) => {
-            const id = p.party_id || p.id;
-            const limit = Number(p.credit_limit) || 0;
-            const outstanding = Number(p.outstanding) || 0;
-            const util = limit ? (outstanding / limit) * 100 : 0;
-            return (
-              <tr key={id} data-testid="fin-terms-row" style={{ cursor: 'default' }}>
-                <td><b>{p.name || id}</b></td>
-                <td className="dim">{p.party_type || p.type || '—'}</td>
-                <td className="num">
-                  <input className="cellinput" style={{ width: 64 }} data-testid="fin-terms-days" value={drafts[id] ?? ''}
-                    onChange={(e) => setDrafts({ ...drafts, [id]: e.target.value })} />
-                </td>
-                <td className="num"><Money value={p.credit_limit} role={role} layer="commercial" /></td>
-                <td className="num"><Money value={p.outstanding} role={role} layer="commercial" /></td>
-                <td><Coverage pct={util} /></td>
-                <td><button className="btn sm" data-testid="fin-save-terms" onClick={() => onSave(p)}>{I.check({ size: 12 })}Save</button></td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-      {rows.length > 0 && <div className="layer-note" style={{ padding: '10px 16px' }}>{I.shield()}Changing terms is a money mutation — audited, and re-dates open invoices in the next reconciliation run.</div>}
-    </Card>
-  );
-}
-
-// ---------------- Confirm dialog (real money mutation) ----------------
-function ConfirmTerms({ party, days, saving, onCancel, onConfirm }: {
-  party: any; days: string; saving: boolean; onCancel: () => void; onConfirm: () => void;
-}) {
-  return (
-    <>
-      <div className="scrim open" onClick={onCancel} />
-      <div className="drawer open" style={{ width: 440 }}>
-        <div className="dh">
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <span className="chip warn"><span className="d" />confirm</span>
-            <div style={{ fontFamily: 'var(--font-disp)', fontSize: 19, fontWeight: 600, marginTop: 7 }}>Change credit terms</div>
-            <div className="dim" style={{ fontSize: 12.5, marginTop: 3 }}>{party.name || party.party_id || party.id}</div>
-          </div>
-          <div className="ibtn" onClick={onCancel}>{I.x()}</div>
-        </div>
-        <div className="db">
-          <div className="kv" style={{ marginBottom: 14 }}>
-            <span className="k">New payment terms</span><span className="v num">{days} days</span>
-            <span className="k">Credit limit</span><span className="v num">{gbpn(party.credit_limit) || '—'}</span>
-          </div>
-          <div className="banner info" style={{ marginBottom: 4 }}>
-            {I.shield()}This is an audited money mutation. Open invoices for this customer are re-dated in the next reconciliation run.
-          </div>
-          <div className="row g8" style={{ marginTop: 10 }}>
-            <span className="dim" style={{ fontSize: 11.5 }}>posts to the audit log as</span>
-            <AuditRef id={`credit_terms_changed`} />
-          </div>
-        </div>
-        <div className="df">
-          <button className="btn ghost" onClick={onCancel}>Cancel</button>
-          <button className="btn primary" data-testid="fin-terms-confirm" disabled={saving} onClick={onConfirm}>
-            {I.check({ size: 13 })}{saving ? 'Saving…' : 'Confirm change'}
-          </button>
+      <div style={{ display: 'grid', placeItems: 'center', gap: 10, padding: '34px 28px', textAlign: 'center' }} data-testid="fin-terms-unbacked">
+        <span style={{ width: 44, height: 44, borderRadius: 12, display: 'grid', placeItems: 'center', background: 'var(--panel-2)' }}>{I.user({ size: 22 })}</span>
+        <div style={{ fontFamily: 'var(--font-disp)', fontSize: 18, fontWeight: 600 }}>Not available in this environment yet</div>
+        <div className="dim" style={{ fontSize: 12.5, maxWidth: 480, lineHeight: 1.5 }}>
+          Per-customer credit terms are editable on each party's profile, but the market-wide credit-control roster
+          (terms, limits and outstanding by customer) is not yet exposed as a finance read-model here.
         </div>
       </div>
-    </>
+    </Card>
   );
 }

@@ -1,41 +1,74 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { apiFetch } from './api';
+import React, { useState } from 'react';
+import { useApi } from './lib/query';
+import { ApiError } from './lib/client';
+import { marketId } from './api';
 import {
-  PageHead, Card, Chip, Money, LayerNote, AuditRef, EmptyRow, SkeletonRow, Skeleton, useToast,
+  PageHead, Card, Chip, Money, LayerNote, AuditRef, EmptyRow, SkeletonRow, Skeleton, gbp,
 } from './kit/kit';
 import { I } from './kit/icons';
-import { asArray } from './state';
 
 // Batch / landed-cost / serial genealogy (spec/ui/20-batch.md): the traceability spine (doc 07 M7).
 // The hero is BIDIRECTIONAL traceability — type a serial, see its whole life and its EXACT landed cost
 // (specific-identification, never a weighted average); type a batch, see every unit it became (the recall list).
 // Serial/batch identity + status are the `volume` layer; landed_unit_cost + the cost breakdown are
-// `profitability` and COLLAPSE for a viewer without it (never £0.00). Auto-loads on mount + when ctx changes —
-// no manual Load/Refresh buttons.
+// `profitability` and COLLAPSE for a viewer without it (never £0.00).
+// M7 is a Phase-2 milestone: there is no inventory/serial/batch/genealogy route in this environment yet, so
+// every surface is wired through useApi and honestly renders "Not available in this environment yet" off the
+// 404 (notImplemented) — no stuck skeletons, no guessed numbers. The four-state shell (loading/forbidden/
+// notImplemented/error) is in place so the moment the backend lands the page just lights up.
 
 type Ctx = { entity: string; market: string; period: string; scenario: string };
 type Role = { token?: string; name?: string; title?: string; layers?: string[] };
+type Surface = 'loading' | 'forbidden' | 'notImplemented' | 'error' | 'empty' | 'ready';
 
 const SSTAT: Record<string, string> = {
   in_stock: 'ok', allocated: 'warn', dispatched: 'accent', delivered: 'neutral', activated: 'ok', returned: 'danger',
 };
-
-const gbpn = (v: any) =>
-  v == null ? '—' : `£${Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const human = (s: string) => (s || '').replace(/_/g, ' ');
 
-export function BatchGenealogy({ role, ctx, toast }: { role: any; ctx: any; toast: (m: string, k?: string) => void }) {
+const qs = (o: Record<string, string | undefined>) =>
+  Object.entries(o)
+    .filter(([, v]) => v != null && v !== '')
+    .map(([k, v]) => `${k}=${encodeURIComponent(v as string)}`)
+    .join('&');
+
+const surfaceOf = (loading: boolean, err: ApiError | null, empty: boolean): Surface =>
+  loading
+    ? 'loading'
+    : err?.forbidden
+      ? 'forbidden'
+      : err?.notImplemented
+        ? 'notImplemented'
+        : err
+          ? 'error'
+          : empty
+            ? 'empty'
+            : 'ready';
+
+// the styled "endpoint isn't built yet" panel — a clean card body, never a stuck skeleton
+function UnbackedPanel({ icon, line }: { icon: React.ReactNode; line: string }) {
+  return (
+    <div data-testid="batch-unbacked" style={{ display: 'grid', placeItems: 'center', gap: 10, padding: '40px 24px', textAlign: 'center' }}>
+      <span style={{ width: 44, height: 44, borderRadius: 12, display: 'grid', placeItems: 'center', background: 'var(--panel-2)' }}>{icon}</span>
+      <div style={{ fontFamily: 'var(--font-disp)', fontSize: 18, fontWeight: 600 }}>Not available in this environment yet</div>
+      <div className="dim" style={{ fontSize: 12.5, maxWidth: 480 }}>{line}</div>
+    </div>
+  );
+}
+
+// a card-body empty/error notice (EmptyRow is <tr>-only, so this is the non-table sibling)
+function EmptyRowless({ children }: { children: React.ReactNode }) {
+  return <div className="dim" style={{ padding: '22px 8px', textAlign: 'center', fontSize: 12.5 }}>{children}</div>;
+}
+
+export function BatchGenealogy({ role, ctx }: { role: any; ctx: any; toast: (m: string, k?: string) => void }) {
   const r = (role || {}) as Role;
   const c = (ctx || {}) as Ctx;
   const hasProfit = (r.layers || []).indexOf('profitability') >= 0;
   const [mode, setMode] = useState<'serial' | 'batch'>('serial');
 
-  const [toastNode, fire] = useToast();
-  const fireToast = useCallback((m: string, k?: string) => { fire(m, (k as any) || 'ok'); toast(m, k); }, [fire, toast]);
-
   return (
     <div className="page" style={{ maxWidth: 1320 }}>
-      {toastNode}
       <PageHead
         crumb={'Traceability spine · doc 07 M7 · specific-identification'}
         title="Batch & genealogy"
@@ -54,8 +87,8 @@ export function BatchGenealogy({ role, ctx, toast }: { role: any; ctx: any; toas
       </div>
 
       {mode === 'serial'
-        ? <SerialGenealogy ctxKey={c.entity} role={r} hasProfit={hasProfit} toast={fireToast} />
-        : <BatchRoster ctxKey={c.entity} role={r} hasProfit={hasProfit} />}
+        ? <SerialGenealogy ctx={c} role={r} hasProfit={hasProfit} />
+        : <BatchRoster ctx={c} role={r} hasProfit={hasProfit} />}
     </div>
   );
 }
@@ -83,44 +116,28 @@ function ChainNode({ label, title, sub, money, tone, last }: {
 }
 
 // ============================================================ SERIAL → GENEALOGY
-function SerialGenealogy({ ctxKey, role, hasProfit, toast }: {
-  ctxKey?: string; role: any; hasProfit: boolean; toast: (m: string, k?: string) => void;
-}) {
+interface SerialNode { sn?: string; serial?: string; sku_label?: string; skuLabel?: string; location?: string; status?: string; order?: string; customer?: string; dispatched_at?: string; dispatchedAt?: string }
+interface BatchNode { id?: string; received?: string; cm?: string; po?: string; location_name?: string; locationName?: string; landed_unit_cost?: number | string; unit_cost?: number | string; freight_per_unit?: number | string; duty_per_unit?: number | string; currency?: string }
+interface Activation { activated_at?: string; installer?: string }
+interface TimelineEvent { at?: string; event?: string; origin?: string }
+interface Genealogy { serial?: SerialNode; batch?: BatchNode; activation?: Activation | null; timeline?: TimelineEvent[] }
+
+function SerialGenealogy({ ctx, role, hasProfit }: { ctx: Ctx; role: Role; hasProfit: boolean }) {
+  const viewer = { layers: role.layers || [] };
   const [q, setQ] = useState('');
-  const [res, setRes] = useState<{ status: number; json: any } | null>(null);
+  const [serial, setSerial] = useState('');
+  const mid = marketId(ctx.market);
 
-  const lookup = useCallback((serial: string) => {
-    if (!serial.trim()) return;
-    setRes(null);
-    apiFetch(`/api/v1/inventory/genealogy?serial=${encodeURIComponent(serial.trim())}`).then((r) => {
-      setRes(r);
-      if (r.status === 404) toast('No serial matches that number', 'warn');
-      else if (r.status >= 400 && r.status !== 401 && r.status !== 403) toast(`Lookup failed (${r.status})`, 'err');
-    });
-  }, [toast]);
+  const path = `/api/v1/inventory/genealogy?${qs({ entity: ctx.entity, market: mid, serial })}`;
+  const query = useApi<Genealogy>(['batch-genealogy', ctx.entity, mid, serial], path, { enabled: serial.trim().length > 0 });
+  const err = query.error as ApiError | null;
+  const d = (query.data ?? null) as Genealogy | null;
 
-  // Auto-load on mount + when the entity context changes: seed with the first known serial so the page is
-  // never an empty form. No manual load button — Enter / Trace re-runs the lookup for a typed serial.
-  useEffect(() => {
-    setRes(null);
-    setQ('');
-    apiFetch(`/api/v1/inventory/serials?limit=1`).then((list) => {
-      const first = asArray<any>(list.json && list.json.rows ? list.json.rows : list.json)[0];
-      if (first && (first.sn || first.serial)) {
-        const sn = first.sn || first.serial;
-        setQ(sn);
-        lookup(sn);
-      } else {
-        // nothing seeded — show the four-state shell against the seed result so empty/forbidden surface
-        setRes(list.status >= 400 ? list : { status: 200, json: null });
-      }
-    });
-  }, [ctxKey, lookup]);
+  // Before a serial is typed the panel is idle (not loading); once a lookup runs it's wired through React Query.
+  const idle = serial.trim().length === 0;
+  const state: Surface = idle ? 'empty' : surfaceOf(query.isLoading, err, !d);
 
-  const loading = res === null;
-  const forbidden = !!res && (res.status === 401 || res.status === 403);
-  const error = !!res && res.status >= 400 && !forbidden && res.status !== 404;
-  const d = res && res.status === 200 ? res.json : null;
+  const run = () => setSerial(q.trim());
 
   return (
     <div>
@@ -128,51 +145,58 @@ function SerialGenealogy({ ctxKey, role, hasProfit, toast }: {
         <span className="fldlabel">Serial</span>
         <input
           className="cellinput" style={{ width: 280, textAlign: 'left' }} value={q} data-testid="batch-serial-input"
-          onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && lookup(q)}
+          onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && run()}
           placeholder="Scan or type a serial number…"
         />
-        <button className="btn primary" data-testid="batch-trace" onClick={() => lookup(q)}>{I.search({ size: 13 })}Trace</button>
+        <button className="btn primary" data-testid="batch-trace" onClick={run}>{I.search({ size: 13 })}Trace</button>
       </div>
 
-      {loading && (
+      {state === 'loading' && (
         <div className="grid" style={{ gridTemplateColumns: '1.1fr 1fr', alignItems: 'start' }}>
           <Card title="Genealogy" icon={I.map}><Skeleton lines={6} /></Card>
           <Card title="Unit lifecycle" icon={I.clock}><Skeleton lines={5} /></Card>
         </div>
       )}
 
-      {forbidden && (
+      {state === 'forbidden' && (
         <Card title="Genealogy" icon={I.map}>
-          <LayerNote>Serial genealogy is withheld — requires the volume layer.</LayerNote>
+          <LayerNote>Serial genealogy is withheld — requires the <b>volume</b> layer.</LayerNote>
         </Card>
       )}
 
-      {error && (
+      {state === 'notImplemented' && (
         <Card title="Genealogy" icon={I.map}>
-          <EmptyRowless>Could not trace this serial — try again shortly.</EmptyRowless>
+          <UnbackedPanel icon={I.map({ size: 22 })}
+            line="Serial genealogy lands with M7 traceability — type a serial and walk it to its lot, contract-manufacturing PO, sales order, customer and activation, with the exact specific-identification landed cost." />
         </Card>
       )}
 
-      {res && !loading && !forbidden && !error && !d && (
+      {state === 'error' && (
         <Card title="Genealogy" icon={I.map}>
-          <EmptyRowless>No serial found. Scan or type a serial number to trace it.</EmptyRowless>
+          <EmptyRowless><span style={{ color: 'var(--danger)' }}>Could not trace this serial{err?.status ? ` (${err.status})` : ''} — try again shortly.</span></EmptyRowless>
         </Card>
       )}
 
-      {d && (
+      {state === 'empty' && (
+        <Card title="Genealogy" icon={I.map}>
+          <EmptyRowless>{idle ? 'Scan or type a serial number to trace it.' : 'No serial matches that number.'}</EmptyRowless>
+        </Card>
+      )}
+
+      {state === 'ready' && d && (
         <div className="grid" style={{ gridTemplateColumns: '1.1fr 1fr', alignItems: 'start' }}>
-          <Card title={'Genealogy · ' + (d.serial?.sn || q)} icon={I.map}
+          <Card title={'Genealogy · ' + (d.serial?.sn || serial)} icon={I.map}
             aux={<span className="dim" style={{ fontSize: 11.5 }}>serial → batch → PO → order → customer → activation</span>}>
             <ChainNode
               label="Serial" tone="var(--accent-bright)"
-              title={<span className="mono">{d.serial?.sn}</span>}
+              title={<span className="mono">{d.serial?.sn || d.serial?.serial}</span>}
               sub={<>{[d.serial?.sku_label || d.serial?.skuLabel, d.serial?.location].filter(Boolean).join(' · ')} {d.serial?.status && <Chip s={SSTAT[d.serial.status] || 'neutral'}>{human(d.serial.status)}</Chip>}</>}
             />
             <ChainNode
               label="Batch / lot" tone="var(--plum)"
               title={<span className="mono"><AuditRef id={d.batch?.id} /></span>}
               sub={['received ' + (d.batch?.received || '—'), d.batch?.cm].filter(Boolean).join(' · ')}
-              money={d.batch && <Money value={d.batch.landed_unit_cost} role={role} layer="profitability" />}
+              money={d.batch && <Money value={d.batch.landed_unit_cost} ccy={d.batch.currency} role={viewer} layer="profitability" />}
             />
             <ChainNode
               label="Contract-mfg PO" tone="var(--warn)"
@@ -208,16 +232,16 @@ function SerialGenealogy({ ctxKey, role, hasProfit, toast }: {
                     <div className="row between" style={{ alignItems: 'flex-end', marginBottom: 12 }}>
                       <div>
                         <div className="fldlabel">This exact unit cost</div>
-                        <div style={{ fontFamily: 'var(--font-disp)', fontSize: 30, fontWeight: 600 }} className="num">{gbpn(d.batch.landed_unit_cost)}</div>
+                        <div style={{ fontFamily: 'var(--font-disp)', fontSize: 30, fontWeight: 600 }} className="num">{gbp(d.batch.landed_unit_cost, d.batch.currency)}</div>
                       </div>
                       <div className="dim" style={{ fontSize: 11.5, textAlign: 'right' }}>from lot {d.batch.id}<br />not a weighted average</div>
                     </div>
                     <div className="kv" style={{ fontSize: 12 }}>
-                      <span className="k">Factory unit</span><span className="v num">{gbpn(d.batch.unit_cost)}</span>
-                      <span className="k">+ Freight / unit</span><span className="v num">{gbpn(d.batch.freight_per_unit)}</span>
-                      <span className="k">+ Duty / unit</span><span className="v num">{gbpn(d.batch.duty_per_unit)}</span>
+                      <span className="k">Factory unit</span><span className="v num">{gbp(d.batch.unit_cost, d.batch.currency)}</span>
+                      <span className="k">+ Freight / unit</span><span className="v num">{gbp(d.batch.freight_per_unit, d.batch.currency)}</span>
+                      <span className="k">+ Duty / unit</span><span className="v num">{gbp(d.batch.duty_per_unit, d.batch.currency)}</span>
                       <span className="k" style={{ fontWeight: 600, color: 'var(--text)' }}>= Landed</span>
-                      <span className="v num" style={{ fontWeight: 600 }}>{gbpn(d.batch.landed_unit_cost)}</span>
+                      <span className="v num" style={{ fontWeight: 600 }}>{gbp(d.batch.landed_unit_cost, d.batch.currency)}</span>
                     </div>
                   </>
                 ) : (
@@ -226,18 +250,18 @@ function SerialGenealogy({ ctxKey, role, hasProfit, toast }: {
               </Card>
             ) : (
               <Card title="Specific-identification cost" icon={I.layers} style={{ marginBottom: 14 }}>
-                <LayerNote>Landed unit cost is hidden — requires the profitability layer. The figure is absent from your projection, never shown as £0.</LayerNote>
+                <LayerNote>Landed unit cost is hidden — requires the <b>profitability</b> layer. The figure is absent from your projection, never shown as £0.</LayerNote>
               </Card>
             )}
 
             <Card title="Unit lifecycle" icon={I.clock}
               aux={<span className="dim" style={{ fontSize: 11.5 }}>received → … → current state</span>}>
               <div className="tl">
-                {asArray<any>(d.timeline).length === 0 && <div className="dim" style={{ padding: '6px 2px', fontSize: 12.5 }}>No lifecycle events recorded.</div>}
-                {asArray<any>(d.timeline).map((e, i) => (
+                {(d.timeline ?? []).length === 0 && <div className="dim" style={{ padding: '6px 2px', fontSize: 12.5 }}>No lifecycle events recorded.</div>}
+                {(d.timeline ?? []).map((e, i) => (
                   <div className="ev" key={i}>
                     <span className="when" style={{ minWidth: 96 }}>{e.at}</span>
-                    <span className="etype">{human(e.event)}</span>
+                    <span className="etype">{human(e.event || '')}</span>
                     {e.origin && <span className="org">{e.origin}</span>}
                   </div>
                 ))}
@@ -250,43 +274,34 @@ function SerialGenealogy({ ctxKey, role, hasProfit, toast }: {
   );
 }
 
-// a card-body empty/error notice (EmptyRow is <tr>-only, so this is the non-table sibling)
-function EmptyRowless({ children }: { children: React.ReactNode }) {
-  return <div className="dim" style={{ padding: '22px 8px', textAlign: 'center', fontSize: 12.5 }}>{children}</div>;
-}
-
 // ============================================================ BATCH → ROSTER
-function BatchRoster({ ctxKey, role, hasProfit }: { ctxKey?: string; role: any; hasProfit: boolean }) {
-  const [listRes, setListRes] = useState<{ status: number; json: any } | null>(null);
+interface BatchRow { id?: string; sku_label?: string; skuLabel?: string; cm?: string; qty?: number | string }
+interface BatchListBody { rows?: BatchRow[] }
+interface RosterSerial { sn?: string; serial?: string; status?: string; order?: string; customer?: string; dispatched_at?: string; dispatchedAt?: string }
+interface RosterBatch extends BatchNode { sku_label?: string; skuLabel?: string; qty?: number | string; landed_value?: number | string }
+interface RosterBody { batch?: RosterBatch; serials?: RosterSerial[]; rows?: RosterSerial[]; by_status?: Record<string, number>; byStatus?: Record<string, number> }
+
+function BatchRoster({ ctx, role, hasProfit }: { ctx: Ctx; role: Role; hasProfit: boolean }) {
+  const viewer = { layers: role.layers || [] };
   const [sel, setSel] = useState<string | null>(null);
-  const [rosterRes, setRosterRes] = useState<{ status: number; json: any } | null>(null);
+  const mid = marketId(ctx.market);
 
-  const openBatch = useCallback((id: string) => {
-    setSel(id);
-    setRosterRes(null);
-    apiFetch(`/api/v1/inventory/batches/${encodeURIComponent(id)}/roster`).then(setRosterRes);
-  }, []);
+  const listPath = `/api/v1/inventory/batches?${qs({ entity: ctx.entity, market: mid })}`;
+  const listQuery = useApi<BatchListBody | BatchRow[]>(['batch-list', ctx.entity, mid], listPath);
+  const listErr = listQuery.error as ApiError | null;
+  const listData = (listQuery.data ?? null) as BatchListBody | BatchRow[] | null;
+  const batches: BatchRow[] = Array.isArray(listData) ? listData : (listData?.rows ?? []);
+  const listState = surfaceOf(listQuery.isLoading, listErr, batches.length === 0);
 
-  useEffect(() => {
-    setListRes(null);
-    setSel(null);
-    setRosterRes(null);
-    apiFetch(`/api/v1/inventory/batches`).then((r) => {
-      setListRes(r);
-      const first = asArray<any>(r.json && r.json.rows ? r.json.rows : r.json)[0];
-      if (first && first.id) openBatch(first.id);
-    });
-  }, [ctxKey, openBatch]);
+  const activeId = sel ?? batches[0]?.id ?? null;
 
-  const listLoading = listRes === null;
-  const listForbidden = !!listRes && (listRes.status === 401 || listRes.status === 403);
-  const listError = !!listRes && listRes.status >= 400 && !listForbidden;
-  const batches = asArray<any>(listRes && listRes.status < 400 ? (listRes.json && listRes.json.rows ? listRes.json.rows : listRes.json) : []);
-
-  const rLoading = sel !== null && rosterRes === null;
-  const d = rosterRes && rosterRes.status === 200 ? rosterRes.json : null;
-  const serials = asArray<any>(d && (d.serials || d.rows));
-  const byStatus = (d && d.by_status) || (d && d.byStatus) || {};
+  const rosterPath = `/api/v1/inventory/batches/${encodeURIComponent(activeId || '')}/roster?${qs({ entity: ctx.entity, market: mid })}`;
+  const rosterQuery = useApi<RosterBody>(['batch-roster', ctx.entity, mid, activeId ?? ''], rosterPath, { enabled: !!activeId });
+  const rosterErr = rosterQuery.error as ApiError | null;
+  const d = (rosterQuery.data ?? null) as RosterBody | null;
+  const serials: RosterSerial[] = d ? (d.serials ?? d.rows ?? []) : [];
+  const byStatus = (d && (d.by_status || d.byStatus)) || {};
+  const rosterState: Surface = !activeId ? 'empty' : surfaceOf(rosterQuery.isLoading, rosterErr, !d);
 
   return (
     <div className="grid" style={{ gridTemplateColumns: '300px 1fr', alignItems: 'start' }}>
@@ -294,12 +309,17 @@ function BatchRoster({ ctxKey, role, hasProfit }: { ctxKey?: string; role: any; 
         <div style={{ maxHeight: 560, overflowY: 'auto' }}>
           <table className="tbl">
             <tbody>
-              {listLoading && <><SkeletonRow cols={2} /><SkeletonRow cols={2} /><SkeletonRow cols={2} /></>}
-              {listForbidden && <tr><td colSpan={2} style={{ padding: 0 }}><LayerNote>Batches are withheld — requires the volume layer.</LayerNote></td></tr>}
-              {listError && <EmptyRow cols={2}>Could not load batches — try again shortly.</EmptyRow>}
-              {listRes && !listLoading && !listForbidden && !listError && batches.length === 0 && <EmptyRow cols={2}>No lots received yet.</EmptyRow>}
-              {batches.map((b) => (
-                <tr key={b.id} data-testid="batch-list-row" className={sel === b.id ? 'sel' : ''} onClick={() => openBatch(b.id)}>
+              {listState === 'loading' && <><SkeletonRow cols={2} /><SkeletonRow cols={2} /><SkeletonRow cols={2} /></>}
+              {listState === 'forbidden' && <tr><td colSpan={2} style={{ padding: 0 }}><LayerNote>Batches are withheld — requires the <b>volume</b> layer.</LayerNote></td></tr>}
+              {listState === 'notImplemented' && (
+                <tr><td colSpan={2} style={{ padding: 0 }}>
+                  <UnbackedPanel icon={I.layers({ size: 22 })} line="The batch register lands with M7 — every lot received, the recall unit for traceability." />
+                </td></tr>
+              )}
+              {listState === 'error' && <EmptyRow cols={2}><span style={{ color: 'var(--danger)' }}>Could not load batches{listErr?.status ? ` (${listErr.status})` : ''}.</span></EmptyRow>}
+              {listState === 'empty' && <EmptyRow cols={2}>No lots received yet.</EmptyRow>}
+              {listState === 'ready' && batches.map((b) => (
+                <tr key={b.id} data-testid="batch-list-row" className={activeId === b.id ? 'sel' : ''} onClick={() => setSel(b.id ?? null)}>
                   <td>
                     <b className="mono" style={{ fontFamily: 'var(--font-mono)', fontSize: 11 }}>{b.id}</b>
                     <div className="dim" style={{ fontSize: 11 }}>{[b.sku_label || b.skuLabel, b.cm].filter(Boolean).join(' · ')}</div>
@@ -313,22 +333,33 @@ function BatchRoster({ ctxKey, role, hasProfit }: { ctxKey?: string; role: any; 
       </Card>
 
       <div>
-        {rLoading && (
+        {rosterState === 'loading' && (
           <>
             <Card style={{ marginBottom: 14 }}><Skeleton lines={3} /></Card>
             <Card title="Serial roster" icon={I.list}><Skeleton lines={5} /></Card>
           </>
         )}
 
-        {rosterRes && (rosterRes.status === 401 || rosterRes.status === 403) && (
-          <Card title="Serial roster" icon={I.list}><LayerNote>This roster is withheld — requires the volume layer.</LayerNote></Card>
+        {rosterState === 'forbidden' && (
+          <Card title="Serial roster" icon={I.list}><LayerNote>This roster is withheld — requires the <b>volume</b> layer.</LayerNote></Card>
         )}
 
-        {rosterRes && rosterRes.status >= 400 && rosterRes.status !== 401 && rosterRes.status !== 403 && (
-          <Card title="Serial roster" icon={I.list}><EmptyRowless>Could not load this lot — try again shortly.</EmptyRowless></Card>
+        {rosterState === 'notImplemented' && (
+          <Card title="Serial roster" icon={I.list}>
+            <UnbackedPanel icon={I.list({ size: 22 })}
+              line="The serial roster — every unit a lot became, the recall list — comes online with M7 traceability, with this lot's specific-identification landed cost." />
+          </Card>
         )}
 
-        {d && (
+        {rosterState === 'error' && (
+          <Card title="Serial roster" icon={I.list}><EmptyRowless><span style={{ color: 'var(--danger)' }}>Could not load this lot{rosterErr?.status ? ` (${rosterErr.status})` : ''} — try again shortly.</span></EmptyRowless></Card>
+        )}
+
+        {rosterState === 'empty' && (
+          <Card title="Serial roster" icon={I.list}><EmptyRowless>Select a batch to see its serial roster.</EmptyRowless></Card>
+        )}
+
+        {rosterState === 'ready' && d && (
           <>
             <Card style={{ marginBottom: 14 }}>
               <div className="row between" style={{ alignItems: 'flex-start' }}>
@@ -346,7 +377,7 @@ function BatchRoster({ ctxKey, role, hasProfit }: { ctxKey?: string; role: any; 
                 {hasProfit && d.batch?.landed_unit_cost != null && (
                   <div style={{ textAlign: 'right' }}>
                     <div className="fldlabel">Landed / unit</div>
-                    <div style={{ fontFamily: 'var(--font-disp)', fontSize: 24, fontWeight: 600 }} className="num">{gbpn(d.batch.landed_unit_cost)}</div>
+                    <div style={{ fontFamily: 'var(--font-disp)', fontSize: 24, fontWeight: 600 }} className="num">{gbp(d.batch.landed_unit_cost, d.batch.currency)}</div>
                   </div>
                 )}
               </div>
@@ -360,15 +391,15 @@ function BatchRoster({ ctxKey, role, hasProfit }: { ctxKey?: string; role: any; 
               {hasProfit && d.batch?.landed_unit_cost != null && (
                 <div className="kv" style={{ marginTop: 16, fontSize: 12 }}>
                   <span className="k">Factory + freight + duty</span>
-                  <span className="v num">{gbpn(d.batch.unit_cost)} + {gbpn(d.batch.freight_per_unit)} + {gbpn(d.batch.duty_per_unit)}</span>
+                  <span className="v num">{gbp(d.batch.unit_cost, d.batch.currency)} + {gbp(d.batch.freight_per_unit, d.batch.currency)} + {gbp(d.batch.duty_per_unit, d.batch.currency)}</span>
                   <span className="k" style={{ fontWeight: 600, color: 'var(--text)' }}>Batch landed value</span>
                   <span className="v num" style={{ fontWeight: 600 }}>
-                    {gbpn(d.batch.landed_value != null ? d.batch.landed_value : Number(d.batch.landed_unit_cost) * (Number(d.batch.qty) || serials.length))}
+                    {gbp(d.batch.landed_value != null ? d.batch.landed_value : Number(d.batch.landed_unit_cost) * (Number(d.batch.qty) || serials.length), d.batch.currency)}
                   </span>
                 </div>
               )}
               {!hasProfit && (
-                <LayerNote>Landed cost for this lot is hidden — requires the profitability layer. Identity and the recall roster remain fully visible.</LayerNote>
+                <LayerNote>Landed cost for this lot is hidden — requires the <b>profitability</b> layer. Identity and the recall roster remain fully visible.</LayerNote>
               )}
             </Card>
 
@@ -383,7 +414,7 @@ function BatchRoster({ ctxKey, role, hasProfit }: { ctxKey?: string; role: any; 
                     {serials.slice(0, 120).map((s, i) => (
                       <tr key={i} data-testid="batch-roster-row" style={{ cursor: 'default' }}>
                         <td className="mono" style={{ fontFamily: 'var(--font-mono)', fontSize: 11 }}>{s.sn || s.serial}</td>
-                        <td><Chip s={SSTAT[s.status] || 'neutral'}>{human(s.status)}</Chip></td>
+                        <td><Chip s={SSTAT[s.status || ''] || 'neutral'}>{human(s.status || '')}</Chip></td>
                         <td className="mono dim" style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5 }}>{s.order || '—'}</td>
                         <td className="dim">{s.customer || '—'}</td>
                         <td className="dim">{s.dispatched_at || s.dispatchedAt || '—'}</td>
