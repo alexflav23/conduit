@@ -8,6 +8,9 @@ stages:
 
 variables:
   SBT_OPTS: "-Duser.home=$CI_PROJECT_DIR"
+  # terraform init pulls the private rbac module from GitLab's module registry; the CI job token authenticates
+  # it (the source project must allowlist hypervolt/conduit under CI/CD → Token Access).
+  TF_TOKEN_gitlab_com: "${CI_JOB_TOKEN}"
 
 scalafmt:
   stage: lint
