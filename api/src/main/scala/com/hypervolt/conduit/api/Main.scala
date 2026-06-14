@@ -83,7 +83,7 @@ object Main extends IOApp.Simple {
         val googleVerifier = Option.when(cfg.googleAuth.enabled)(
           new GoogleTokenVerifier[IO](
             new com.auth0.jwk.GuavaCachedJwkProvider(
-              new com.auth0.jwk.UrlJwkProvider(new java.net.URL(GoogleTokenVerifier.JwksUrl))
+              new com.auth0.jwk.UrlJwkProvider(java.net.URI.create(GoogleTokenVerifier.JwksUrl).toURL())
             ),
             cfg.googleAuth.clientId,
             cfg.googleAuth.workspaceDomain
