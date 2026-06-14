@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { getForecastRuns, getForecastRunReport, getForecastRunDiff } from './api';
+import { getForecastRuns, getForecastRunReport, getForecastRunDiff, getForecastRunAccounts, getForecastRunAccount } from './api';
 import { asArray } from './state';
 import { PageHead, Card, Chip, LoadBar } from './kit/kit';
 import { I } from './kit/icons';
@@ -23,6 +23,8 @@ export function ForecastRuns({ token }: { token: string }) {
   const [groupBy, setGroupBy] = useState('segment');
   const [market, setMarket] = useState('');
   const [diff, setDiff] = useState<any | null>(null);
+  const [accountRows, setAccountRows] = useState<any[]>([]);
+  const [drill, setDrill] = useState<{ id: string; data: any } | null>(null);
 
   const load = async () => {
     const r = await getForecastRuns(token);
@@ -46,8 +48,23 @@ export function ForecastRuns({ token }: { token: string }) {
 
   const compare = async (gb?: string, mkt?: string) => {
     if (!from || !to) return;
-    const r = await getForecastRunDiff(token, from, to, gb ?? groupBy, mkt ?? market);
+    const axis = gb ?? groupBy;
+    const r = await getForecastRunDiff(token, from, to, axis === 'account' ? 'segment' : axis, mkt ?? market);
     setDiff(r.status === 200 ? r.json : null);
+    if (axis === 'account') await loadAccounts(mkt ?? market);
+  };
+
+  const loadAccounts = async (mkt?: string) => {
+    if (!from || !to) return;
+    setDrill(null);
+    const r = await getForecastRunAccounts(token, from, to, { market: mkt ?? market });
+    setAccountRows(r.status === 200 ? asArray(r.json) : []);
+  };
+
+  const openDrill = async (companyId: string) => {
+    if (drill?.id === companyId) { setDrill(null); return; }
+    const r = await getForecastRunAccount(token, companyId, to);
+    setDrill(r.status === 200 ? { id: companyId, data: r.json } : null);
   };
 
   const rep = report;
@@ -173,7 +190,7 @@ export function ForecastRuns({ token }: { token: string }) {
             <div className="row g8" style={{ flexWrap: 'wrap', marginBottom: 10 }}>
               <span className="dim">Browse delta by</span>
               <div className="seg">
-                {['segment', 'channel', 'market'].map((a) => (
+                {['segment', 'channel', 'market', 'account'].map((a) => (
                   <button key={a} className={groupBy === a ? 'on' : ''} data-testid={`fr-by-${a}`} onClick={() => { setGroupBy(a); compare(a, market); }}>{a[0].toUpperCase() + a.slice(1)}</button>
                 ))}
               </div>
@@ -183,6 +200,59 @@ export function ForecastRuns({ token }: { token: string }) {
                 {asArray(diff.markets).map((m: any) => <option key={m.id} value={m.id}>{m.name}</option>)}
               </select>
             </div>
+
+            {groupBy === 'account' && (
+              <div className="tablewrap" style={{ marginBottom: 14 }}>
+                <table className="tbl" data-testid="fr-accounts">
+                  <thead><tr>
+                    <th>Account</th><th>Champion</th><th className="num">Forecast Δ</th><th className="num">Error Δ</th>
+                    <th className="num">On-shelf</th><th className="num">Rate /mo</th><th className="num">Runway (d)</th><th></th>
+                  </tr></thead>
+                  <tbody>
+                    {accountRows.map((a: any, i: number) => (
+                      <React.Fragment key={i}>
+                        <tr data-testid="fr-account-row">
+                          <td><b>{a.name}</b></td>
+                          <td>{a.champion_changed
+                            ? <span><span className="mono dim">{a.from_policy}</span> → <Chip s="accent">{a.to_policy}</Chip></span>
+                            : <span className="mono dim">{a.to_policy ?? '—'}</span>}</td>
+                          <td className="num">{Number(a.forecast_delta) > 0 ? '+' : ''}{Number(a.forecast_delta).toLocaleString('en-GB')}</td>
+                          <td className="num"><Chip s={Number(a.error_delta_pct) <= 0 ? 'ok' : 'warn'}>{Number(a.error_delta_pct) > 0 ? '+' : ''}{a.error_delta_pct}</Chip></td>
+                          <td className="num">{Number(a.shelf_stock).toLocaleString('en-GB')}</td>
+                          <td className="num">{Number(a.depletion_rate).toLocaleString('en-GB')}</td>
+                          <td className="num">{a.runway_days == null ? '—' : Math.round(Number(a.runway_days))}</td>
+                          <td><button className="btn sm" data-testid="fr-account-drill" onClick={() => openDrill(a.company_id)}>{drill?.id === a.company_id ? 'Hide' : 'Why'}</button></td>
+                        </tr>
+                        {drill && drill.id === a.company_id && (
+                          <tr data-testid="fr-drill"><td colSpan={8} style={{ background: 'var(--bg-2)' }}>
+                            <div className="grid" style={{ gridTemplateColumns: 'repeat(2, 1fr)', padding: '10px 4px' }}>
+                              <div>
+                                <div className="dim" style={{ fontSize: 11.5, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>Participating models (the bake-off)</div>
+                                <table className="tbl"><thead><tr><th>Model</th><th>Kind</th><th className="num">Mean err</th><th></th></tr></thead><tbody>
+                                  {asArray(drill.data.participants).map((m: any, j: number) => (
+                                    <tr key={j}><td className="mono">{m.model_key}</td><td><Chip s={m.structural ? 'accent' : 'neutral'}>{m.structural ? 'structural' : 'statistical'}</Chip></td><td className="num">{m.mean_abs_error}</td><td>{m.is_champion && <Chip s="ok">champion</Chip>}</td></tr>
+                                  ))}
+                                </tbody></table>
+                              </div>
+                              <div>
+                                <div className="dim" style={{ fontSize: 11.5, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>Live depletion by SKU (stock · rate · runway)</div>
+                                <table className="tbl"><thead><tr><th>SKU</th><th className="num">On-shelf</th><th className="num">Rate /mo</th><th className="num">Runway (d)</th></tr></thead><tbody>
+                                  {asArray(drill.data.depletion).map((d: any, j: number) => (
+                                    <tr key={j}><td className="mono">{d.sku}</td><td className="num">{Number(d.shelf_stock).toLocaleString('en-GB')}</td><td className="num">{Number(d.depletion_rate).toLocaleString('en-GB')}</td><td className="num">{d.runway_days == null ? '—' : Math.round(Number(d.runway_days))}</td></tr>
+                                  ))}
+                                </tbody></table>
+                              </div>
+                            </div>
+                          </td></tr>
+                        )}
+                      </React.Fragment>
+                    ))}
+                    {accountRows.length === 0 && <tr><td className="dim" colSpan={8} style={{ padding: '12px' }} data-testid="fr-accounts-empty">No accounts on this filter.</td></tr>}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            {groupBy !== 'account' && (
             <div className="tablewrap" style={{ marginBottom: 14 }}>
               <table className="tbl" data-testid="fr-breakdown">
                 <thead><tr>
@@ -206,6 +276,7 @@ export function ForecastRuns({ token }: { token: string }) {
                 </tbody>
               </table>
             </div>
+            )}
             <div className="row" style={{ gap: 26, flexWrap: 'wrap', marginBottom: 14 }}>
               {stat('Error Δ', `${diff.error_delta_pct > 0 ? '+' : ''}${diff.error_delta_pct} pts`, 'fr-diff-error', true)}
               {stat('Accounts added', diff.accounts_added, 'fr-diff-added')}

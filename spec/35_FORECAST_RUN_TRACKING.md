@@ -41,6 +41,22 @@ carries `from`/`to` total-level error, the **error Δ**, forecast Δ, actual Δ 
 served-grain definition as the headline, so page and spec cannot drift. (No channel *name* table exists today;
 the channel axis labels by `channel_id` — swap to a name source if one lands.)
 
+### 4.1 Account-level delta + the live depletion drill
+`GET /api/v1/forecast/runs/diff/accounts?from=&to=&market=&segment=&channel=&limit=` — per account (in either
+origin): champion change (from-policy → to-policy), forecast Δ, error Δ, **and the live depletion state from
+`account_forecast_state`** — on-shelf stock, the **live depletion rate** (`velocity_ewma`, units/mo), runway
+days, reorder point. Sorted by `|forecast Δ|` so the **enterprise accounts that moved most surface first**;
+optional market/segment/channel filters scope the drill. This is where stock + depletion matter most.
+
+`GET /api/v1/forecast/runs/account/{company}?origin=` — the per-account drill: the **participators** (the
+per-model bake-off at that origin — who competed, their mean abs error, the winner flagged) + the account's
+**live per-SKU depletion** (stock · rate · runway). The desk renders this inline under the account row.
+
+> Honest scope: the live depletion fields are *current* (the soft-real-time projection), not a per-origin
+> snapshot, so the account view shows the run-to-run **forecast/champion** delta alongside the **live**
+> stock/rate. A historical depletion-rate delta per origin needs the engine to snapshot
+> `account_forecast_state` per run — the natural follow-on.
+
 ## 5. The narrative (RunDiff, pure + unit-tested)
 Bullets a human reads: coverage change (accounts added/dropped), total-level error improvement/worsening,
 champion switches (and how many moved onto a **structural** model — real telemetry — vs reverted to a

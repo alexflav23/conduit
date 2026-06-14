@@ -1,5 +1,6 @@
 package com.hypervolt.conduit.forecast
 
+import cats.syntax.all._
 import doobie._
 import doobie.implicits._
 import doobie.postgres.implicits._
@@ -158,6 +159,128 @@ object ForecastRunReportRepo {
       })
       .map(_.sortBy(j => -j.hcursor.get[BigDecimal]("error_delta_pct").getOrElse(BigDecimal(0)).abs))
   }
+
+  // The account-level delta between two origins (doc 26 §7), joined to the LIVE depletion state
+  // (account_forecast_state — shelf, velocity = the live rate, runway). Sorted by the biggest forecast move so
+  // the enterprise accounts that matter surface first. Optional market/segment/channel filters scope the drill.
+  def accountDelta(
+      from: LocalDate,
+      to: LocalDate,
+      market: Option[UUID],
+      segment: Option[String],
+      channel: Option[UUID],
+      limit: Int
+  ): ConnectionIO[List[Json]] = {
+    val filt = List(
+      market.map(m => fr"AND p.market_id = $m"),
+      segment.map(s => fr"AND p.segment = $s"),
+      channel.map(c => fr"AND p.channel_id = $c")
+    ).flatten.foldLeft(Fragment.empty)(_ ++ _)
+    (fr"""SELECT ps.company_id, max(p.display_name),
+            max(ps.policy_key) FILTER (WHERE ps.origin_month = $from),
+            max(ps.policy_key) FILTER (WHERE ps.origin_month = $to),
+            COALESCE(sum(ps.forecast_qty) FILTER (WHERE ps.origin_month = $from), 0),
+            COALESCE(sum(ps.actual_qty)   FILTER (WHERE ps.origin_month = $from), 0),
+            COALESCE(sum(ps.forecast_qty) FILTER (WHERE ps.origin_month = $to), 0),
+            COALESCE(sum(ps.actual_qty)   FILTER (WHERE ps.origin_month = $to), 0),
+            COALESCE(s.shelf, 0), COALESCE(s.velocity, 0), s.runway, s.reorder, s.last_event_at
+          FROM policy_selection ps
+          JOIN party p ON p.id = ps.company_id
+          LEFT JOIN (SELECT company_id, sum(shelf_stock) shelf, sum(velocity_ewma) velocity,
+                       min(runway_days) runway, min(reorder_point_days) reorder, max(last_event_at) last_event_at
+                     FROM account_forecast_state GROUP BY company_id) s ON s.company_id = ps.company_id
+          WHERE ps.origin_month IN ($from, $to) """ ++ filt ++ fr"""
+          GROUP BY ps.company_id, s.shelf, s.velocity, s.runway, s.reorder, s.last_event_at
+          ORDER BY abs(COALESCE(sum(ps.forecast_qty) FILTER (WHERE ps.origin_month = $to), 0)
+                     - COALESCE(sum(ps.forecast_qty) FILTER (WHERE ps.origin_month = $from), 0)) DESC
+          LIMIT $limit""")
+      .query[
+        (
+            UUID,
+            String,
+            Option[String],
+            Option[String],
+            BigDecimal,
+            BigDecimal,
+            BigDecimal,
+            BigDecimal,
+            BigDecimal,
+            BigDecimal,
+            Option[BigDecimal],
+            Option[BigDecimal],
+            Option[Instant]
+        )
+      ]
+      .to[List]
+      .map(_.map {
+        case (id, name, fPol, tPol, fFc, fAc, tFc, tAc, shelf, velocity, runway, reorder, lastEvent) =>
+          val fErr = RunDiff.totalLevelErrorPct(fFc, fAc)
+          val tErr = RunDiff.totalLevelErrorPct(tFc, tAc)
+          Json.obj(
+            "company_id"         -> id.toString.asJson,
+            "name"               -> name.asJson,
+            "from_policy"        -> fPol.fold(Json.Null)(_.asJson),
+            "to_policy"          -> tPol.fold(Json.Null)(_.asJson),
+            "champion_changed"   -> (fPol.isDefined && tPol.isDefined && fPol != tPol).asJson,
+            "from_forecast"      -> fFc.asJson,
+            "to_forecast"        -> tFc.asJson,
+            "forecast_delta"     -> (tFc - fFc).asJson,
+            "from_error_pct"     -> fErr.asJson,
+            "to_error_pct"       -> tErr.asJson,
+            "error_delta_pct"    -> (tErr - fErr).asJson,
+            "shelf_stock"        -> shelf.asJson,
+            "depletion_rate"     -> velocity.asJson,
+            "runway_days"        -> runway.fold(Json.Null)(_.asJson),
+            "reorder_point_days" -> reorder.fold(Json.Null)(_.asJson),
+            "last_event_at"      -> lastEvent.fold(Json.Null)(_.toString.asJson)
+          )
+      })
+  }
+
+  // The "participators" behind one account's champion at an origin: the per-model bake-off (who competed + their
+  // scored error), flagged with the winner — and the account's live per-SKU depletion (shelf, rate, runway).
+  def accountDrill(origin: LocalDate, company: UUID): ConnectionIO[Json] =
+    (accountParticipants(origin, company), accountDepletion(company)).mapN { (parts, depl) =>
+      Json.obj("participants" -> Json.fromValues(parts), "depletion" -> Json.fromValues(depl))
+    }
+
+  private def accountParticipants(origin: LocalDate, company: UUID): ConnectionIO[List[Json]] =
+    sql"""SELECT ma.model_key, count(*), round(avg(ma.abs_error), 2),
+                 bool_or(ps.policy_key = ma.model_key)
+          FROM model_accuracy ma
+          LEFT JOIN policy_selection ps ON ps.origin_month = ma.origin_month AND ps.company_id = ma.company_id
+          WHERE ma.origin_month = $origin AND ma.company_id = $company
+          GROUP BY ma.model_key ORDER BY avg(ma.abs_error)"""
+      .query[(String, Int, BigDecimal, Option[Boolean])]
+      .to[List]
+      .map(_.map {
+        case (key, scored, mean, champ) =>
+          Json.obj(
+            "model_key"      -> key.asJson,
+            "scored"         -> scored.asJson,
+            "mean_abs_error" -> mean.asJson,
+            "structural"     -> RunDiff.isStructural(key).asJson,
+            "is_champion"    -> champ.getOrElse(false).asJson
+          )
+      })
+
+  private def accountDepletion(company: UUID): ConnectionIO[List[Json]] =
+    sql"""SELECT v.sku, s.shelf_stock, s.velocity_ewma, s.runway_days, s.reorder_point_days, s.last_event_at
+          FROM account_forecast_state s JOIN product_variant v ON v.id = s.product_variant_id
+          WHERE s.company_id = $company ORDER BY v.sku"""
+      .query[(String, BigDecimal, BigDecimal, Option[BigDecimal], Option[BigDecimal], Option[Instant])]
+      .to[List]
+      .map(_.map {
+        case (sku, shelf, velocity, runway, reorder, lastEvent) =>
+          Json.obj(
+            "sku"                -> sku.asJson,
+            "shelf_stock"        -> shelf.asJson,
+            "depletion_rate"     -> velocity.asJson,
+            "runway_days"        -> runway.fold(Json.Null)(_.asJson),
+            "reorder_point_days" -> reorder.fold(Json.Null)(_.asJson),
+            "last_event_at"      -> lastEvent.fold(Json.Null)(_.toString.asJson)
+          )
+      })
 
   // The markets present across two origins — populates the delta's market filter.
   def marketsFor(from: LocalDate, to: LocalDate): ConnectionIO[List[Json]] =

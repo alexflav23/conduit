@@ -154,6 +154,56 @@ final class ForecastRunRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[
           }
       })
 
+  private def uuidOpt(s: Option[String]): Option[java.util.UUID] =
+    s.flatMap(x => Try(java.util.UUID.fromString(x)).toOption)
+
+  // Account-level delta: per-account champion change + forecast Δ + the LIVE depletion state (stock, rate,
+  // runway) — sorted by biggest forecast move so enterprise accounts surface. Optional market/segment/channel.
+  private val accounts =
+    base.get
+      .in("api" / "v1" / "forecast" / "runs" / "diff" / "accounts")
+      .in(query[String]("from"))
+      .in(query[String]("to"))
+      .in(query[Option[String]]("market"))
+      .in(query[Option[String]]("segment"))
+      .in(query[Option[String]]("channel"))
+      .in(query[Option[Int]]("limit"))
+      .out(jsonBody[Json])
+      .serverLogic(p => {
+        case (fromStr, toStr, mkt, seg, chan, lim) =>
+          if (!gate(p)) Async[F].pure(Left(denied))
+          else
+            (origin(fromStr), origin(toStr)).tupled match {
+              case Left(e) => Async[F].pure(Left(e))
+              case Right((fromO, toO)) =>
+                ForecastRunReportRepo
+                  .accountDelta(fromO, toO, uuidOpt(mkt), seg, uuidOpt(chan), lim.getOrElse(100).min(500))
+                  .transact(xa)
+                  .map(rows => Right(Json.fromValues(rows)))
+            }
+      })
+
+  // One account's drill-down: the participating models (the bake-off) at an origin + its live per-SKU depletion.
+  private val account =
+    base.get
+      .in("api" / "v1" / "forecast" / "runs" / "account" / path[String]("company"))
+      .in(query[String]("origin"))
+      .out(jsonBody[Json])
+      .serverLogic(p => {
+        case (companyStr, originStr) =>
+          if (!gate(p)) Async[F].pure(Left(denied))
+          else
+            (
+              origin(originStr),
+              Try(java.util.UUID.fromString(companyStr)).toEither.left
+                .map(_ => err(StatusCode.BadRequest, "bad_request", s"invalid id: $companyStr"))
+            ).tupled match {
+              case Left(e) => Async[F].pure(Left(e))
+              case Right((o, c)) =>
+                ForecastRunReportRepo.accountDrill(o, c).transact(xa).map(Right(_))
+            }
+      })
+
   val routes: HttpRoutes[F] =
-    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(List(runs, report, diff))
+    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(List(runs, report, diff, accounts, account))
 }

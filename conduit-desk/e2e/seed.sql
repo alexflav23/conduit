@@ -305,4 +305,10 @@ BEGIN
       ('2026-03-01', acct2, 'seasonal_naive', '{"seasonal_naive":1.0}'::jsonb, 90, 100),
       ('2026-06-01', acct2, 'seasonal_naive', '{"seasonal_naive":1.0}'::jsonb, 95, 100);
   END IF;
+
+  -- live depletion state (the account-diff's stock + rate + runway) for the H6Q Leeds enterprise account
+  INSERT INTO account_forecast_state (company_id, product_variant_id, shelf_stock, velocity_ewma, runway_days, reorder_point_days, last_event_at)
+    VALUES (acct, v_id, 5000, 2950, 51, 14, now())
+    ON CONFLICT (company_id, product_variant_id)
+      DO UPDATE SET shelf_stock = 5000, velocity_ewma = 2950, runway_days = 51, reorder_point_days = 14, last_event_at = now();
 END $$;
