@@ -8,9 +8,6 @@ stages:
 
 variables:
   SBT_OPTS: "-Duser.home=$CI_PROJECT_DIR"
-  # terraform init pulls the private rbac module from GitLab's module registry; the CI job token authenticates
-  # it (the source project must allowlist hypervolt/conduit under CI/CD → Token Access).
-  TF_TOKEN_gitlab_com: "${CI_JOB_TOKEN}"
 
 scalafmt:
   stage: lint
@@ -28,10 +25,8 @@ financial-gates:
   script:
     - nix-shell --run "sbt noFloatCheck schemaCheck secretScan migrationCheck"
 
-# M-Assurance G (doc 29 G): the terraform gate. fmt is offline — it runs on every push, anywhere. The full
-# `plan` (init pulls the estate modules over GitLab SSH + assumes the per-env AWS role) runs only on the
-# estate-credentialed runner on protected branches; it never gates a feature branch and never needs secrets
-# on a fork. A drift or a malformed module is caught before the deploy path, not during it.
+# House pattern (athena/ghost-busters): CI only fmt-checks terraform — offline, no AWS, no module fetch.
+# init/validate/plan/apply are run MANUALLY from dev laptops (which carry the AWS operator role + GitLab SSH).
 terraform-fmt:
   stage: lint
   tags:
@@ -39,30 +34,6 @@ terraform-fmt:
   script:
     # terraform is unfree in nixpkgs (BSL) — NIXPKGS_ALLOW_UNFREE + --impure to permit it.
     - NIXPKGS_ALLOW_UNFREE=1 nix-shell --impure -p terraform --run "terraform fmt -check -recursive terraform/"
-
-# Enforcing on every pipeline: backend-less init (fetches the private module sources over the estate runner's
-# GitLab SSH key — no AWS needed) + validate catches malformed HCL and broken module wiring before the deploy
-# path. This is the always-on gate; the credentialed plan below adds drift detection on protected branches.
-terraform-validate:
-  stage: lint
-  tags:
-    - x86_64-nix-24.11   # the estate runner carries the GitLab SSH deploy key + module-registry token for sources
-  script:
-    # TF_WORKSPACE=staging so workspace-keyed locals (per_env, deploy_versions, indexed by terraform.workspace)
-    # resolve during validate — validate otherwise runs in `default`, which those maps don't key. roles-global is
-    # applied in the `default` workspace, so it validates there. -backend=false keeps it AWS-free (no plan/state).
-    # git::ssh module sources clone over HTTPS with the CI job token (no SSH key/known_hosts on the runner);
-    # the source projects allowlist hypervolt/conduit under CI/CD → Token Access. The credential is assembled
-    # in a shell var so no credentialed URL literal sits in the file (which would trip the secretScan gate).
-    - CREDS="gitlab-ci-token:${CI_JOB_TOKEN}"
-    - git config --global url."https://${CREDS}@gitlab.com/".insteadOf "ssh://git@gitlab.com/"
-    # cacert: the nix-built terraform has no CA bundle, so the GitLab module-registry fetch fails TLS verify.
-    - NIXPKGS_ALLOW_UNFREE=1 nix-shell --impure -p terraform cacert --run '
-        for m in roles-global rds conduit-records conduit-tigerbeetle conduit-api conduit-consumer; do
-          echo "== validate $m ==";
-          ws=staging; [ "$m" = "roles-global" ] && ws=default;
-          (cd terraform/$m && terraform init -backend=false -input=false >/dev/null && TF_WORKSPACE=$ws terraform validate) || exit 1;
-        done'
 
 # NOTE: there is intentionally no `terraform plan` job. plan/apply are run manually from dev laptops (which
 # carry the AWS operator role); the shared CI runner has no AWS credentials. CI's terraform gate is the
