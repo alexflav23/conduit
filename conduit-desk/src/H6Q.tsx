@@ -266,6 +266,7 @@ interface BoardData {
   months?: string[];
   currency?: string;
   fx_rate?: string;
+  fx_source?: string;
   as_of?: string;
   segments?: BoardRow[];
   total?: BoardRow;
@@ -377,7 +378,7 @@ function DemandBoardCard({ market, scenario, sid, hasCommercial }: { market: str
               <button key={c} className={ccy === c ? 'on' : ''} data-testid={`h6q-ccy-${c}`} onClick={() => setCcy(c)}>{c}</button>
             ))}
           </div>
-          <span className="dim" style={{ fontSize: 12 }}>by segment · revenue at each segment&rsquo;s net tier price · {scenario} · <b style={{ color: 'var(--text)' }} data-testid="h6q-board-revenue">{state === 'ready' && total ? money(total.revenue) : '—'}</b></span>
+          <span className="dim" style={{ fontSize: 12 }}>by segment · revenue at each segment&rsquo;s net tier price{d.currency && d.currency !== 'GBP' && d.fx_source ? ` · GBP→${d.currency} @ ${d.fx_source}` : ''} · {scenario} · <b style={{ color: 'var(--text)' }} data-testid="h6q-board-revenue">{state === 'ready' && total ? money(total.revenue) : '—'}</b></span>
         </div>
       }
       style={{ padding: 0 }} className="tablewrap">

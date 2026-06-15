@@ -62,10 +62,6 @@ object DemandBoardRepo {
       .to[List]
       .map(_.collect { case (s, Some(a)) => s -> a }.toMap)
 
-  private def fxRate(quote: String): ConnectionIO[Option[BigDecimal]] =
-    if (quote == "GBP") Option(BigDecimal(1)).pure[ConnectionIO]
-    else sql"SELECT rate FROM exchange_rate WHERE base = 'GBP' AND quote = $quote ORDER BY as_of DESC LIMIT 1".query[BigDecimal].option
-
   private val SegLabel = Map(
     "installers"    -> "Installers",
     "energy"        -> "Energy",
@@ -154,9 +150,16 @@ object DemandBoardRepo {
     marketMonthly(market, scenario).flatMap { mkt =>
       val year = mkt.headOption.map(_._1.take(4).toInt).getOrElse(now.getYear)
       val qx   = qctx(year, now)
-      (accounts, shippedByQuarter(year), aspBySegment, fxRate(currency)).mapN { (accts, shipQ, asp, rateOpt) =>
-        val fx       = rateOpt.getOrElse(BigDecimal(1))
-        val ccy      = if (rateOpt.isDefined) currency else "GBP"
+      // Convert revenue to the presentation currency through Conduit's own FX mechanism (Consolidation.resolveRate
+      // — hedge-locked rate if one covers `now`, else the closing/spot rate from the exchange_rate register, with
+      // full provenance). No bespoke rate query; identity (rate 1) when no rate exists, so USD honestly shows GBP
+      // rather than a fabricated number until the register is fed a real rate.
+      (accounts, shippedByQuarter(year), aspBySegment, com.hypervolt.conduit.gl.ConsolidationRepo.resolveRate("GBP", currency, now)).mapN {
+        (accts, shipQ, asp, rateInfo) =>
+        val (rate, rateSource, _, _) = rateInfo
+        val resolved = rateSource != "identity"            // a real hedge/closing/spot rate was found
+        val fx       = if (resolved) rate else BigDecimal(1)
+        val ccy      = if (resolved || currency == "GBP") currency else "GBP"
         val totalAct = math.max(accts.map(_.activations).sum, 1L)
         val months   = mkt.map(_._1)
         def aspOf(seg: String): BigDecimal               = asp.getOrElse(seg, asp.values.headOption.getOrElse(BigDecimal(0)))
@@ -187,8 +190,9 @@ object DemandBoardRepo {
         }.sum
         Json.obj(
           "months"   -> months.asJson,
-          "currency" -> ccy.asJson,
-          "fx_rate"  -> fx.toString.asJson,
+          "currency"  -> ccy.asJson,
+          "fx_rate"   -> fx.toString.asJson,
+          "fx_source" -> (if (ccy != "GBP") rateSource else "base").asJson,
           "as_of"    -> now.toString.asJson,
           "segments" -> Json.fromValues(segments),
           "total"    -> rowJson("Total", "__total__", mkt, totalShipQ, totalRevenue, qx, None)

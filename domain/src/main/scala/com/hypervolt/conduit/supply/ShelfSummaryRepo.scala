@@ -50,18 +50,18 @@ object ShelfSummaryRepo {
 
   private val BucketOrder = List("0-30", "31-60", "61-90", "91-180", "180+")
 
-  private def fxRate(quote: String): ConnectionIO[BigDecimal] =
-    if (quote == "GBP") BigDecimal(1).pure[ConnectionIO]
-    else sql"SELECT rate FROM exchange_rate WHERE base = 'GBP' AND quote = $quote ORDER BY as_of DESC LIMIT 1"
-      .query[BigDecimal].option.map(_.getOrElse(BigDecimal(1)))
-
-  def summary(currency: String): ConnectionIO[Json] =
-    (kpis, ageBuckets, fxRate(currency)).mapN {
-      case ((ghosts, stale90, stale180, asp, ttaDays), buckets, fxRate) =>
+  // Capital-tied-up converts through Conduit's FX mechanism (Consolidation.resolveRate); identity ⇒ GBP, never a
+  // fabricated rate.
+  def summary(currency: String, asOf: java.time.LocalDate): ConnectionIO[Json] =
+    (kpis, ageBuckets, com.hypervolt.conduit.gl.ConsolidationRepo.resolveRate("GBP", currency, asOf)).mapN {
+      case ((ghosts, stale90, stale180, asp, ttaDays), buckets, (rate, rateSource, _, _)) =>
+        val resolved = rateSource != "identity"
+        val fx       = if (resolved) rate else BigDecimal(1)
+        val ccy      = if (resolved || currency == "GBP") currency else "GBP"
         Json.obj(
           "ghosts"            -> ghosts.asJson,
-          "ghost_value"       -> (BigDecimal(ghosts) * asp * fxRate).setScale(0, BigDecimal.RoundingMode.HALF_UP).toString.asJson,
-          "currency"          -> currency.asJson,
+          "ghost_value"       -> (BigDecimal(ghosts) * asp * fx).setScale(0, BigDecimal.RoundingMode.HALF_UP).toString.asJson,
+          "currency"          -> ccy.asJson,
           "stale_90"          -> stale90.asJson,
           "stale_180"         -> stale180.asJson,
           "median_tta_weeks"  -> ttaDays.map(d => (d / 7).setScale(1, BigDecimal.RoundingMode.HALF_UP).toDouble).asJson,

@@ -53,7 +53,7 @@ final class ShelfDetailRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[
       .serverLogic(p =>
         currencyOpt =>
           if (!gate(p)) Async[F].pure(Left(denied))
-          else ShelfSummaryRepo.summary(currencyOpt.map(_.trim.toUpperCase).filter(_.nonEmpty).getOrElse("GBP")).transact(xa).map(Right(_))
+          else ShelfSummaryRepo.summary(currencyOpt.map(_.trim.toUpperCase).filter(_.nonEmpty).getOrElse("GBP"), java.time.LocalDate.now()).transact(xa).map(Right(_))
       )
 
   val routes: HttpRoutes[F] =
