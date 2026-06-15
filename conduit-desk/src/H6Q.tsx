@@ -566,7 +566,7 @@ function Capture({ toast, ctx, scenarioIds }: { role: any; toast: (m: string, k?
 
       {state === 'empty' && (
         <Card title="My forecast" icon={I.layers}>
-          <EmptyRow cols={1}>No open cycle — there's nothing to capture right now.</EmptyRow>
+          <div className="dim" style={{ padding: '18px 12px', textAlign: 'center' }}>No open cycle — there's nothing to capture right now.</div>
         </Card>
       )}
 
