@@ -1,4 +1,6 @@
-// Minimal API client for the Conduit desk. Bearer token = `dev:<keycloak_id>` against the dev backend.
+// Minimal API client for the Conduit desk. The bearer is the live OIDC access token (or a dev override).
+import { currentToken } from './lib/auth';
+
 const DEMO_CHANNEL = '11111111-1111-1111-1111-111111111111';
 const DEMO_MARKET = '22222222-2222-2222-2222-222222222222';
 
@@ -25,11 +27,11 @@ export async function scenarioId(token: string, s: string): Promise<string> {
   return (await scenarioMap(token))[s] ?? s;
 }
 
-// The authed fetch every view uses for auto-load. The bearer is read from the live session (sessionStorage,
-// set by SignIn / App) so callers don't have to thread the token through — pass just a path + optional init.
+// The authed fetch every view uses for auto-load. The bearer is read live from the OIDC session (or the dev
+// override) so callers don't have to thread the token through — pass just a path + optional init.
 // Returns the shared { status, json } envelope; a non-JSON / empty body yields json: null (never throws).
 export function authToken(): string {
-  return (typeof sessionStorage !== 'undefined' && sessionStorage.getItem('conduit_token')) || '';
+  return currentToken();
 }
 
 export async function apiFetch(path: string, init: RequestInit = {}): Promise<{ status: number; json: any }> {

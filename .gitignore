@@ -32,3 +32,4 @@ local/*.env
 .envrc_cached*
 .envrc.private
 .direnv/
+.env

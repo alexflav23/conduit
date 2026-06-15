@@ -33,10 +33,9 @@ import { Proof } from './Proof';
 import { Access } from './Access';
 import { Notifications } from './Notifications';
 import { AccountPage } from './AccountPage';
-import { SignIn, sessionEmail, signOutGoogle } from './SignIn';
-import { isGoogleToken, tokenExpMs, isExpired, ensureGis, initGoogleAuth, promptGoogleRefresh } from './session';
-
-const GOOGLE_CLIENT_ID = (import.meta as any).env?.VITE_GOOGLE_CLIENT_ID as string | undefined;
+import { useAuth } from 'react-oidc-context';
+import { SignIn, sessionEmail } from './SignIn';
+import { setOidcToken, devToken, setDevToken } from './lib/auth';
 
 // The Conduit Desk shell (spec/ui/README.md "Shell affordances"; structure mirrors .design-ref/desk-shell.jsx,
 // Hypervolt dark-first). A grouped rail, the working-context bar (entity/market/period/scenario with the
@@ -170,7 +169,12 @@ function Menu({ children, onClose, style }: { children: React.ReactNode; onClose
 
 export function App() {
   const { t } = useTranslation();
-  const [token, setTokenState] = useState(() => sessionStorage.getItem('conduit_token') ?? '');
+  const auth = useAuth();
+  // The bearer is a dev-door override if set, else the live OIDC access token. The OIDC token lifecycle (PKCE,
+  // storage, silent renew off the refresh token) is owned by react-oidc-context — no hand-rolled timers here.
+  const [dev, setDev] = useState(devToken());
+  useEffect(() => { setOidcToken(auth.user?.access_token); }, [auth.user]);
+  const token = dev || auth.user?.access_token || '';
   const navigate = useNavigate();
   const location = useLocation();
   // The URL is the source of truth for the active view (react-router). The account page lives at /account/:id;
@@ -195,12 +199,13 @@ export function App() {
   const [palOpen, setPalOpen] = useState(false);
   const [toastNode, toast] = useToast();
 
-  const setToken = (tk: string) => {
-    if (tk) sessionStorage.setItem('conduit_token', tk);
-    else sessionStorage.removeItem('conduit_token');
-    setTokenState(tk);
+  // The non-prod quick-doors set a dev:<id> override; real users go through Keycloak.
+  const enterDev = (tk: string) => { setDevToken(tk); setDev(tk); };
+  const signOut = () => {
+    if (dev) { setDevToken(''); setDev(''); return; }
+    setOidcToken(undefined);
+    auth.signoutRedirect().catch(() => auth.removeUser());
   };
-  const signOut = () => { signOutGoogle(); setToken(''); };
 
   useEffect(() => { document.documentElement.setAttribute('data-theme', theme); localStorage.setItem('conduit.theme', theme); }, [theme]);
   useEffect(() => { localStorage.setItem('conduit.ctx', JSON.stringify(ctx)); }, [ctx]);
@@ -213,38 +218,20 @@ export function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  // Keep a Google session alive. GIS hands back a ~1h ID token with no refresh, so decode its exp and silently
-  // re-issue a fresh credential ~5 min before it lapses (and on tab-focus or after a 401). If it has fully lapsed
-  // and a silent refresh can't recover it, drop to the sign-in screen instead of 401ing in the background.
-  useEffect(() => {
-    if (!token || !isGoogleToken(token) || !GOOGLE_CLIENT_ID) return;
-    let timer: number | undefined;
-    let cancelled = false;
-    const schedule = () => {
-      const exp = tokenExpMs(sessionStorage.getItem('conduit_token') || '');
-      if (!exp) return;
-      timer = window.setTimeout(() => { promptGoogleRefresh(); schedule(); }, Math.max(exp - Date.now() - 5 * 60 * 1000, 1000));
-    };
-    ensureGis().then(() => { if (!cancelled) { initGoogleAuth(GOOGLE_CLIENT_ID, setToken); schedule(); } }).catch(() => {});
-    const onFocus = () => { if (isExpired(sessionStorage.getItem('conduit_token') || '', 5 * 60 * 1000)) promptGoogleRefresh(); };
-    const onUnauthorized = () => {
-      if (!isExpired(sessionStorage.getItem('conduit_token') || '')) return; // a non-expiry 401 isn't a session problem
-      promptGoogleRefresh();
-      window.setTimeout(() => { if (isExpired(sessionStorage.getItem('conduit_token') || '')) { signOutGoogle(); setToken(''); } }, 2500);
-    };
-    window.addEventListener('focus', onFocus);
-    window.addEventListener('conduit:unauthorized', onUnauthorized);
-    return () => { cancelled = true; if (timer) clearTimeout(timer); window.removeEventListener('focus', onFocus); window.removeEventListener('conduit:unauthorized', onUnauthorized); };
-  }, [token]);
-
-  if (!token) return <SignIn onToken={setToken} />;
+  if (!token) {
+    if (auth.isLoading || auth.activeNavigator) {
+      return <div className="signin" data-testid="signin-loading"><div className="panel"><div className="sub">Signing in…</div></div></div>;
+    }
+    // kc_idp_hint sends the user straight to Google rather than Keycloak's own login form.
+    return <SignIn signIn={() => auth.signinRedirect({ extraQueryParams: { kc_idp_hint: 'google' } })} error={auth.error?.message} />;
+  }
 
   const role = roleOf(token);
   const Bell = I.bell, Search = I.search, ChevR = I.chevR;
   const pStatus = periodStatus(ctx.period);
 
   const pickCtx = (k: keyof Ctx, v: string) => { setCtx({ ...ctx, [k]: v }); setMenu(null); toast(`${k[0].toUpperCase()}${k.slice(1)} → ${v}`); };
-  const viewAs = (tk: string) => { setToken(tk); setMenu(null); toast(`Now viewing as ${roleOf(tk).title}`); };
+  const viewAs = (tk: string) => { enterDev(tk); setMenu(null); toast(`Now viewing as ${roleOf(tk).title}`); };
   const go = (r: TabId) => { setRoute(r); setMenu(null); };
 
   return (

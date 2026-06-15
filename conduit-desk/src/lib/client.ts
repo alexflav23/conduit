@@ -2,6 +2,7 @@
 // errors into a {status,json} envelope), `request` THROWS a typed ApiError on any non-2xx, so React Query's
 // error/loading states work without each view hand-rolling status checks. The bearer token is read live from
 // the session, so callers never thread it.
+import { currentToken } from './auth';
 
 export class ApiError extends Error {
   constructor(
@@ -23,7 +24,7 @@ export class ApiError extends Error {
 }
 
 export function authToken(): string {
-  return (typeof sessionStorage !== 'undefined' && sessionStorage.getItem('conduit_token')) || '';
+  return currentToken();
 }
 
 /** GET/POST/etc. against the API. Resolves to parsed JSON on 2xx; throws ApiError otherwise. */
@@ -42,11 +43,6 @@ export async function request<T = unknown>(path: string, init: RequestInit = {})
     let message: string | undefined;
     if (body && typeof body === 'object' && 'message' in body) {
       message = String((body as Record<string, unknown>).message);
-    }
-    // Signal a 401 app-wide so the shell can attempt a silent token refresh / re-auth (the session layer
-    // listens). A 403 is a genuine permission denial and is left to the view's "forbidden" state.
-    if (res.status === 401 && typeof window !== 'undefined') {
-      window.dispatchEvent(new Event('conduit:unauthorized'));
     }
     throw new ApiError(res.status, body, message);
   }
