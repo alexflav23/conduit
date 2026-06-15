@@ -152,10 +152,35 @@ function MatrixCard({ market, scenario, sid, hasCommercial, dim }: { market: str
     if (r.family) fam[k] = r.family;
     if (r.source) src[k] = r.source;
   });
-  const colTotal = (m: string) => skus.reduce((a, s) => a + (cell[`${s}|${m}`] ?? 0), 0);
   const rowTotal = (s: string) => months.reduce((a, m) => a + (cell[`${s}|${m}`] ?? 0), 0);
-  const grand = months.reduce((a, m) => a + colTotal(m), 0);
-  const cols = (state === 'ready' ? months.length : 6) + 2;
+  const grand = months.reduce((a, m) => a + skus.reduce((b, s) => b + (cell[`${s}|${m}`] ?? 0), 0), 0);
+
+  // Quarter grouping (Excel-style outline): months roll up into quarters, collapsed by default. Each quarter
+  // header carries a +/− toggle that expands to reveal its months (then a quarter-subtotal column) or collapses
+  // back to a single quarter total.
+  const MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const monthShort = (m: string) => MONTH_ABBR[parseInt(m.slice(5, 7)) - 1] ?? m;
+  const quarterOf = (m: string) => `${m.slice(0, 4)}-Q${Math.ceil(parseInt(m.slice(5, 7)) / 3)}`;
+  const quarters: { key: string; months: string[] }[] = [];
+  months.forEach((m) => {
+    const qk = quarterOf(m);
+    let qq = quarters.find((x) => x.key === qk);
+    if (!qq) { qq = { key: qk, months: [] }; quarters.push(qq); }
+    qq.months.push(m);
+  });
+  const [expandedQ, setExpandedQ] = useState<Set<string>>(new Set());
+  const toggleQ = (qk: string) => setExpandedQ((s) => { const n = new Set(s); if (n.has(qk)) n.delete(qk); else n.add(qk); return n; });
+  type Col = { kind: 'month'; month: string } | { kind: 'quarter'; key: string; months: string[] };
+  const viewCols: Col[] = quarters.flatMap((qq) =>
+    expandedQ.has(qq.key)
+      ? [...qq.months.map((m) => ({ kind: 'month', month: m } as Col)), { kind: 'quarter', key: qq.key, months: qq.months } as Col]
+      : [{ kind: 'quarter', key: qq.key, months: qq.months } as Col],
+  );
+  const colKey = (c: Col) => (c.kind === 'month' ? c.month : 'q' + c.key);
+  const qShort = (qk: string) => qk.slice(5);
+  const cellCol = (rowKey: string, c: Col) => (c.kind === 'month' ? (cell[`${rowKey}|${c.month}`] ?? 0) : c.months.reduce((a, m) => a + (cell[`${rowKey}|${m}`] ?? 0), 0));
+  const colTotalCol = (c: Col) => skus.reduce((a, s) => a + cellCol(s, c), 0);
+  const cols = (state === 'ready' ? viewCols.length : 6) + 2;
 
   if (state === 'notImplemented') {
     return <NotBacked testid="h6q-matrix-unbacked" message="The demand matrix appears once the forecasting service is wired and a cycle has been published." />;
@@ -171,7 +196,21 @@ function MatrixCard({ market, scenario, sid, hasCommercial, dim }: { market: str
         <table className="tbl">
           <thead><tr>
             <th style={{ position: 'sticky', left: 0, background: 'var(--surface)' }}>{dimLabel}</th>
-            {(state === 'ready' ? months : []).map((m) => <th key={m} className="num">{m}</th>)}
+            {(state === 'ready' ? viewCols : []).map((c) => (
+              <th key={colKey(c)} className="num">
+                {c.kind === 'quarter' ? (
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, justifyContent: 'flex-end' }}>
+                    <button
+                      onClick={() => toggleQ(c.key)}
+                      data-testid={`h6q-q-toggle-${qShort(c.key)}`}
+                      title={expandedQ.has(c.key) ? 'Collapse to quarter' : 'Expand months'}
+                      style={{ width: 15, height: 15, lineHeight: '12px', textAlign: 'center', borderRadius: 3, border: '1px solid var(--border)', background: 'var(--panel-2)', color: 'var(--muted)', cursor: 'pointer', fontSize: 12, padding: 0 }}
+                    >{expandedQ.has(c.key) ? '−' : '+'}</button>
+                    {qShort(c.key)}
+                  </span>
+                ) : monthShort(c.month)}
+              </th>
+            ))}
             {state === 'ready' && <th className="num">Total</th>}
           </tr></thead>
           <tbody>
@@ -186,7 +225,7 @@ function MatrixCard({ market, scenario, sid, hasCommercial, dim }: { market: str
                     <SourceBadge source={src[s]} />
                   </div>
                 </td>
-                {months.map((m) => <td key={m} className="num">{fmt(cell[`${s}|${m}`] ?? 0)}</td>)}
+                {viewCols.map((c) => <td key={colKey(c)} className="num" style={c.kind === 'quarter' ? { fontWeight: 600 } : undefined}>{fmt(cellCol(s, c))}</td>)}
                 <td className="num"><b>{fmt(rowTotal(s))}</b></td>
               </tr>
             ))}
@@ -194,7 +233,7 @@ function MatrixCard({ market, scenario, sid, hasCommercial, dim }: { market: str
           {state === 'ready' && (
             <tfoot><tr>
               <td style={{ position: 'sticky', left: 0, background: 'var(--surface)' }}><b>Total</b></td>
-              {months.map((m) => <td key={m} className="num"><b data-testid={`h6q-coltotal-${m}`}>{fmt(colTotal(m))}</b></td>)}
+              {viewCols.map((c) => <td key={colKey(c)} className="num"><b data-testid={c.kind === 'month' ? `h6q-coltotal-${c.month}` : `h6q-qtotal-${qShort(c.key)}`}>{fmt(colTotalCol(c))}</b></td>)}
               <td className="num"><b>{fmt(grand)}</b></td>
             </tr></tfoot>
           )}
