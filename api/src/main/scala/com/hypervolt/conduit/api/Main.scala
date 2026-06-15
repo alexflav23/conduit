@@ -23,6 +23,7 @@ import com.hypervolt.conduit.api.routes.DocumentRoutes
 import com.hypervolt.conduit.api.routes.InvoiceVoidRoutes
 import com.hypervolt.conduit.api.routes.OrderLifecycleRoutes
 import com.hypervolt.conduit.api.routes.PricingRoutes
+import com.hypervolt.conduit.api.routes.ShelfDetailRoutes
 import com.hypervolt.conduit.api.routes.StripeWebhookRoutes
 import com.hypervolt.conduit.config.AppConfig
 import com.hypervolt.conduit.document.S3DocumentStorage
@@ -97,6 +98,7 @@ object Main extends IOApp.Simple {
         val commerceRoutes    = new CommerceRoutes[IO](xa, auth).routes
         val crmRoutes         = new CrmRoutes[IO](xa, auth).routes
         val activationRoutes  = new ActivationRoutes[IO](xa, auth).routes
+        val shelfDetailRoutes = new ShelfDetailRoutes[IO](xa, auth).routes
         val dealDeskRoutes    = new DealDeskRoutes[IO](xa, auth).routes
         val h6qRoutes         = new H6QRoutes[IO](xa, auth).routes
         val forecastRunRoutes = new ForecastRunRoutes[IO](xa, auth).routes
@@ -145,7 +147,7 @@ object Main extends IOApp.Simple {
             "/" -> (HealthRoutes
               .routes[
                 IO
-              ] <+> accessRoutes <+> pricingRoutes <+> commerceRoutes <+> crmRoutes <+> activationRoutes <+> dealDeskRoutes <+> h6qRoutes <+> forecastRunRoutes <+> icRoutes <+> creditRoutes <+> auditRoutes <+> stripeRoutes <+> documentRoutes <+> attachmentRoutes <+> voidRoutes <+> lifecycleRoutes <+> taxRoutes <+> procurementRoutes <+> structureRoutes <+> returnRoutes <+> privacyRoutes <+> proofRoutes)
+              ] <+> accessRoutes <+> pricingRoutes <+> commerceRoutes <+> crmRoutes <+> activationRoutes <+> shelfDetailRoutes <+> dealDeskRoutes <+> h6qRoutes <+> forecastRunRoutes <+> icRoutes <+> creditRoutes <+> auditRoutes <+> stripeRoutes <+> documentRoutes <+> attachmentRoutes <+> voidRoutes <+> lifecycleRoutes <+> taxRoutes <+> procurementRoutes <+> structureRoutes <+> returnRoutes <+> privacyRoutes <+> proofRoutes)
           ).orNotFound
         val host      = Ipv4Address.fromString(cfg.http.host).getOrElse(ipv4"0.0.0.0")
         val apiPort   = Port.fromInt(cfg.http.port).getOrElse(port"8080")
