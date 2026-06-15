@@ -75,12 +75,47 @@ object AccountDetailRepo {
           )
       })
 
-  def detail(company: UUID, deliveryLimit: Int): ConnectionIO[Json] =
-    (deliveries(company, deliveryLimit), activationSeries(company), depletionSeries(company)).mapN { (dels, acts, depl) =>
+  // Account headline straight off the serial register: shipped (all serials), activated, on-shelf = the difference.
+  def summary(company: UUID): ConnectionIO[Json] =
+    sql"""SELECT p.display_name, COALESCE(p.sector, p.segment),
+                 count(s.id) AS shipped,
+                 count(s.id) FILTER (WHERE s.status = 'activated') AS activated
+          FROM party p LEFT JOIN serial_unit s ON s.company_id = p.id
+          WHERE p.id = $company
+          GROUP BY p.display_name, COALESCE(p.sector, p.segment)"""
+      .query[(String, Option[String], Int, Int)]
+      .option
+      .map(_.fold(Json.Null) {
+        case (name, sector, shipped, activated) =>
+          Json.obj(
+            "name"      -> name.asJson,
+            "sector"    -> sector.asJson,
+            "shipped"   -> shipped.asJson,
+            "activated" -> activated.asJson,
+            "on_shelf"  -> (shipped - activated).asJson
+          )
+      })
+
+  private def weeklyActivations(company: UUID): ConnectionIO[List[(LocalDate, Int)]] =
+    sql"""SELECT date_trunc('week', activated_at)::date, count(*)::int
+          FROM serial_unit
+          WHERE company_id = $company AND status = 'activated' AND activated_at IS NOT NULL
+          GROUP BY 1 ORDER BY 1"""
+      .query[(LocalDate, Int)]
+      .to[List]
+
+  private def onShelf(company: UUID): ConnectionIO[Int] =
+    sql"SELECT count(*)::int FROM serial_unit WHERE company_id = $company AND status = 'dispatched'".query[Int].unique
+
+  def detail(company: UUID, deliveryLimit: Int, anchor: LocalDate): ConnectionIO[Json] =
+    (summary(company), deliveries(company, deliveryLimit), activationSeries(company), depletionSeries(company),
+     weeklyActivations(company), onShelf(company)).mapN { (sum, dels, acts, depl, weekly, shelf) =>
       Json.obj(
-        "deliveries" -> Json.fromValues(dels),
+        "summary"     -> sum,
+        "deliveries"  -> Json.fromValues(dels),
         "activations" -> acts,
-        "depletion"  -> Json.fromValues(depl)
+        "depletion"   -> Json.fromValues(depl),
+        "forecast"    -> DepletionForecast.project(weekly, shelf, anchor)
       )
     }
 }

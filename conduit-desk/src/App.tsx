@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { Routes, Route, Navigate, useNavigate, useLocation, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { LOCALES, LOCALE_LABEL, setLocale } from './i18n';
 import { I } from './kit/icons';
@@ -31,6 +32,7 @@ import { Sync } from './Sync';
 import { Proof } from './Proof';
 import { Access } from './Access';
 import { Notifications } from './Notifications';
+import { AccountPage } from './AccountPage';
 import { SignIn, sessionEmail, signOutGoogle } from './SignIn';
 
 // The Conduit Desk shell (spec/ui/README.md "Shell affordances"; structure mirrors .design-ref/desk-shell.jsx,
@@ -106,6 +108,14 @@ const PAGES: Record<TabId, React.ComponentType<any>> = {
   audit: Auditability, period: Period, sync: Sync, proof: Proof, access: Access, notifications: Notifications,
 };
 
+// Renders the feature page for the /:tab route; an unknown tab falls back to the Order Desk.
+function TabView(props: ViewProps) {
+  const { tab } = useParams();
+  const Page = tab ? PAGES[tab as TabId] : undefined;
+  if (!Page) return <Navigate to="/order" replace />;
+  return <Page key={tab + '|' + props.token} {...props} />;
+}
+
 // The viewer's identity + data-layer grant. The bearer (set by SignIn) is the server-side projection key; the
 // layer set here mirrors what the server would have projected in so the shell can SHOW the viewer's layers in
 // the role chip / view-as switcher (the wall itself is enforced server-side — withheld layers never arrive).
@@ -158,7 +168,13 @@ function Menu({ children, onClose, style }: { children: React.ReactNode; onClose
 export function App() {
   const { t } = useTranslation();
   const [token, setTokenState] = useState(() => sessionStorage.getItem('conduit_token') ?? '');
-  const [route, setRoute] = useState<TabId>(() => (localStorage.getItem('conduit.route') as TabId) || 'order');
+  const navigate = useNavigate();
+  const location = useLocation();
+  // The URL is the source of truth for the active view (react-router). The account page lives at /account/:id;
+  // for nav highlighting it keeps the Shelf tab lit since that's where accounts are reached from.
+  const seg = location.pathname.split('/')[1] || 'order';
+  const route = (seg === 'account' ? 'shelf' : seg) as TabId;
+  const setRoute = (r: TabId) => navigate('/' + r);
   const [theme, setTheme] = useState(() => localStorage.getItem('conduit.theme') || 'dark');
   const [ctx, setCtx] = useState<Ctx>(() => {
     const base = { entity: 'Hypervolt Ltd (UK)', market: 'UK', period: '2026-09', scenario: 'P50' };
@@ -184,7 +200,6 @@ export function App() {
   const signOut = () => { signOutGoogle(); setToken(''); };
 
   useEffect(() => { document.documentElement.setAttribute('data-theme', theme); localStorage.setItem('conduit.theme', theme); }, [theme]);
-  useEffect(() => { localStorage.setItem('conduit.route', route); }, [route]);
   useEffect(() => { localStorage.setItem('conduit.ctx', JSON.stringify(ctx)); }, [ctx]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -198,7 +213,6 @@ export function App() {
   if (!token) return <SignIn onToken={setToken} />;
 
   const role = roleOf(token);
-  const View = PAGES[route];
   const Bell = I.bell, Search = I.search, ChevR = I.chevR;
   const pStatus = periodStatus(ctx.period);
 
@@ -329,7 +343,13 @@ export function App() {
             )}
           </div>
         </header>
-        <div className="work">{View ? <View key={route + '|' + token} token={token} role={role} ctx={ctx} toast={toast} /> : null}</div>
+        <div className="work">
+          <Routes>
+            <Route path="/" element={<Navigate to="/order" replace />} />
+            <Route path="/account/:id" element={<AccountPage key={'account|' + token} token={token} role={role} ctx={ctx} toast={toast} />} />
+            <Route path="/:tab" element={<TabView token={token} role={role} ctx={ctx} toast={toast} />} />
+          </Routes>
+        </div>
       </div>
 
       <Palette open={palOpen} onClose={() => setPalOpen(false)} go={(r) => setRoute(r)} />
