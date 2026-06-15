@@ -281,14 +281,18 @@ function AttnPct({ pct }: { pct?: number | null }) {
 }
 function QuarterCell({ c }: { c?: QCell }) {
   if (!c) return <td className="num dim">—</td>;
+  const tip =
+    c.state === 'prior'   ? `Attainment ${((c.attainment ?? 0) * 100).toFixed(0)}% — ${num(c.shipped)} installed of ${num(c.units)} forecast`
+    : c.state === 'current' ? `Quarter in progress — ${((c.attainment ?? 0) * 100).toFixed(0)}% installed to date, tracking to ~${((c.eoq ?? 0) * 100).toFixed(0)}% by quarter end`
+    : 'Forecast — future quarter, no attainment yet';
   return (
-    <td className="num">
-      <div>{num(c.units)}</div>
+    <td className="num" title={tip}>
+      <div style={{ fontVariantNumeric: 'tabular-nums' }}>{num(c.units)}</div>
       {c.state === 'prior' && c.attainment != null && (
-        <div style={{ fontSize: 10 }}><AttnPct pct={c.attainment} /></div>
+        <div style={{ fontSize: 10.5, marginTop: 2 }}><span className="dim" style={{ fontSize: 9 }}>att </span><AttnPct pct={c.attainment} /></div>
       )}
       {c.state === 'current' && (
-        <div style={{ fontSize: 10 }}><AttnPct pct={c.attainment} />{c.eoq != null && <span className="dim"> → {(c.eoq * 100).toFixed(0)}%</span>}</div>
+        <div style={{ fontSize: 10.5, marginTop: 2 }}><AttnPct pct={c.attainment} />{c.eoq != null && <span className="dim"> → {(c.eoq * 100).toFixed(0)}<span style={{ fontSize: 8.5 }}> eoq</span></span>}</div>
       )}
     </td>
   );
@@ -387,7 +391,7 @@ function DemandBoardCard({ market, scenario, sid, hasCommercial }: { market: str
             <th>Trend</th>
             <th className="num">Forecast</th>
             <th className="num">Shipped</th>
-            <th style={{ width: 130 }}>Fcst attain<span className="dim" style={{ fontWeight: 400 }}> · yr</span></th>
+            <th style={{ width: 140 }} title="Pro-rata run-rate: if the current install pace holds, this is where the full year lands vs forecast">Year <span className="dim" style={{ fontWeight: 400 }}>(run-rate)</span></th>
             <th className="num">Revenue</th>
           </tr></thead>
           <tbody>

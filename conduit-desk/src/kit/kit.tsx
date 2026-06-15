@@ -107,7 +107,7 @@ export function Coverage({ pct }: { pct: number }) {
   const col = pct >= 85 ? 'var(--ok)' : pct >= 65 ? 'var(--warn)' : 'var(--danger)';
   return (
     <div className="covbar">
-      <div className="track"><i style={{ width: p + '%', background: `linear-gradient(90deg,${col}88,${col})` }} /></div>
+      <div className="track"><i style={{ width: p + '%', background: col, opacity: 0.9 }} /></div>
       <span className="pct" style={{ color: col }}>{pct.toFixed(0)}%</span>
     </div>
   );
