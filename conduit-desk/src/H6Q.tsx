@@ -3,7 +3,7 @@ import { useApi, request } from './lib/query';
 import { ApiError } from './lib/client';
 import { marketId, H6Q_MARKET, ForecastLine } from './api';
 import {
-  PageHead, Card, Chip, Coverage, EmptyRow, LayerNote, SkeletonRow, Skeleton, num,
+  PageHead, Card, Chip, Coverage, EmptyRow, LayerNote, SkeletonRow, Skeleton, num, gbp,
 } from './kit/kit';
 import { I } from './kit/icons';
 import { asArray } from './state';
@@ -120,9 +120,11 @@ function Board({ role, market, period, scenarioIds }: { role: any; market: strin
         <span className="dim" style={{ fontSize: 12 }}>{(market === H6Q_MARKET ? 'UK' : market)} · {period} · {scenario}</span>
       </div>
 
-      {mode === 'matrix'
-        ? <MatrixCard market={mkt} scenario={scenario} sid={sid} hasCommercial={hasCommercial} dim={dim} />
-        : <ReconcileCard market={mkt} period={period} scenario={scenario} sid={sid} groupBy={groupBy} setGroupBy={setGroupBy} />}
+      {mode !== 'matrix'
+        ? <ReconcileCard market={mkt} period={period} scenario={scenario} sid={sid} groupBy={groupBy} setGroupBy={setGroupBy} />
+        : dim === 'sector'
+          ? <DemandBoardCard market={mkt} scenario={scenario} sid={sid} hasCommercial={hasCommercial} />
+          : <MatrixCard market={mkt} scenario={scenario} sid={sid} hasCommercial={hasCommercial} dim={dim} />}
     </>
   );
 }
@@ -240,6 +242,133 @@ function MatrixCard({ market, scenario, sid, hasCommercial, dim }: { market: str
         </table>
       )}
       <div className="layer-note" style={{ padding: '9px 14px' }}>{I.layers()}Total demand, fully visible — never one SKU at a time. <span className="src-model">Model</span> rows are the engine's 12k projections; <span className="src-human">human</span> rows are agent capture.{!hasCommercial && ' Revenue is layer-restricted for your role.'}</div>
+    </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Demand board (the "By sector" view): segment rows with quarterly shape, trend (sparkline + QoQ), shipped,
+// attainment, and revenue — each segment expandable to its contributing accounts (the base forecast unit).
+// ---------------------------------------------------------------------------
+interface BoardRow {
+  key?: string;
+  label?: string;
+  quarters?: { q: string; units: number }[];
+  forecast?: number;
+  shipped?: number;
+  attainment?: number;
+  trend?: { qoq_pct: number; spark: number[] };
+  revenue?: string;
+  contributors?: BoardRow[] | null;
+}
+interface BoardData {
+  months?: string[];
+  segments?: BoardRow[];
+  total?: { forecast: number; shipped: number; attainment: number; revenue: string; quarters: { q: string; units: number }[] };
+}
+
+function Spark({ data }: { data?: number[] }) {
+  if (!data || data.length < 2) return null;
+  const W = 64, H = 20, max = Math.max(...data, 1), min = Math.min(...data, 0);
+  const x = (i: number) => (i * W) / (data.length - 1);
+  const y = (v: number) => H - 2 - ((v - min) / Math.max(max - min, 1)) * (H - 4);
+  const d = data.map((v, i) => (i ? 'L' : 'M') + x(i).toFixed(1) + ' ' + y(v).toFixed(1)).join(' ');
+  return <svg viewBox={`0 0 ${W} ${H}`} width={W} height={H} style={{ display: 'block' }} aria-hidden><path d={d} fill="none" stroke="var(--ok)" strokeWidth={1.5} /></svg>;
+}
+
+function TrendCell({ t }: { t?: { qoq_pct: number; spark: number[] } }) {
+  const q = t?.qoq_pct ?? 0;
+  const color = q > 0 ? 'var(--ok)' : q < 0 ? 'var(--warn)' : 'var(--muted)';
+  return (
+    <div className="row g8" style={{ alignItems: 'center', justifyContent: 'flex-end' }}>
+      <Spark data={t?.spark} />
+      <span style={{ color, fontFamily: 'var(--font-mono)', fontSize: 11.5, minWidth: 44, textAlign: 'right' }}>{q > 0 ? '▲' : q < 0 ? '▼' : '–'}{Math.abs(q)}%</span>
+    </div>
+  );
+}
+
+function DemandRow({ r, qkeys, depth, expanded, toggle }: { r: BoardRow; qkeys: string[]; depth: number; expanded: Set<string>; toggle: (k: string) => void }) {
+  const qmap: Record<string, number> = {};
+  (r.quarters ?? []).forEach((x) => { qmap[x.q] = x.units; });
+  const kids = Array.isArray(r.contributors) ? r.contributors : [];
+  const open = expanded.has(r.key ?? '');
+  return (
+    <>
+      <tr data-testid="demand-row" style={depth > 0 ? { background: 'var(--bg-2)' } : undefined}>
+        <td style={{ position: 'sticky', left: 0, background: depth > 0 ? 'var(--bg-2)' : 'var(--surface)', paddingLeft: 14 + depth * 18 }}>
+          {kids.length > 0 ? (
+            <button onClick={() => toggle(r.key ?? '')} data-testid={`demand-expand-${r.key}`} title={open ? 'Collapse' : 'Expand accounts'}
+              style={{ width: 16, height: 16, marginRight: 7, borderRadius: 3, border: '1px solid var(--border)', background: 'var(--panel-2)', color: 'var(--muted)', cursor: 'pointer', fontSize: 12, padding: 0, lineHeight: '13px' }}>{open ? '−' : '+'}</button>
+          ) : <span style={{ display: 'inline-block', width: 23 }} />}
+          <b style={depth > 0 ? { fontWeight: 400, fontSize: 12.5 } : undefined}>{r.label}</b>
+          {kids.length > 0 ? <span className="dim" style={{ fontSize: 10.5, marginLeft: 6 }}>{kids.length} accounts</span> : null}
+        </td>
+        {qkeys.map((q) => <td key={q} className="num">{num(qmap[q] ?? 0)}</td>)}
+        <td><TrendCell t={r.trend} /></td>
+        <td className="num"><b>{num(r.forecast)}</b></td>
+        <td className="num dim">{num(r.shipped)}</td>
+        <td style={{ width: 120 }}><Coverage pct={(r.attainment ?? 0) * 100} /></td>
+        <td className="num" style={{ fontWeight: 600 }}>{gbp(r.revenue)}</td>
+      </tr>
+      {open && kids.map((c) => <DemandRow key={c.key} r={c} qkeys={qkeys} depth={depth + 1} expanded={expanded} toggle={toggle} />)}
+    </>
+  );
+}
+
+function DemandBoardCard({ market, scenario, sid, hasCommercial }: { market: string; scenario: Scenario; sid?: string; hasCommercial: boolean }) {
+  const q = useApi<BoardData>(
+    ['h6q-board', market, sid],
+    `/api/v1/h6q/demand-board?market=${encodeURIComponent(market)}&scenario=${encodeURIComponent(sid ?? '')}`,
+    { enabled: !!sid },
+  );
+  const err = q.error as ApiError | null;
+  const d = q.data ?? {};
+  const segments = Array.isArray(d.segments) ? d.segments : [];
+  const total = d.total;
+  const state = phaseOf(!sid || q.isLoading, err, segments);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const toggle = (k: string) => setExpanded((s) => { const n = new Set(s); if (n.has(k)) n.delete(k); else n.add(k); return n; });
+  const qkeys = ((total?.quarters ?? segments[0]?.quarters ?? []) as { q: string }[]).map((x) => x.q);
+  const cols = qkeys.length + 5;
+
+  if (state === 'notImplemented') return <NotBacked testid="h6q-board-unbacked" message="The demand board appears once a forecast cycle is published." />;
+
+  return (
+    <Card title="Demand board" icon={I.trend}
+      aux={<span className="dim" style={{ fontSize: 12 }}>by segment · units allocated by activation share · revenue at each segment&rsquo;s net tier price · {scenario} · <b style={{ color: 'var(--text)' }} data-testid="h6q-board-revenue">{state === 'ready' && total ? gbp(total.revenue) : '—'}</b></span>}
+      style={{ padding: 0 }} className="tablewrap">
+      {state === 'forbidden' && <LayerNote>Demand is hidden — requires the <code>volume</code> layer.</LayerNote>}
+      {state === 'error' && <div className="banner danger" data-testid="h6q-board-error" style={{ margin: 14 }}>Couldn&rsquo;t load the demand board (HTTP {err?.status}).</div>}
+      {(state !== 'forbidden' && state !== 'error') && (
+        <table className="tbl">
+          <thead><tr>
+            <th style={{ position: 'sticky', left: 0, background: 'var(--surface)' }}>Segment</th>
+            {qkeys.map((qk) => <th key={qk} className="num">{qk}</th>)}
+            <th>Trend</th>
+            <th className="num">Forecast</th>
+            <th className="num">Shipped</th>
+            <th style={{ width: 120 }}>Attainment</th>
+            <th className="num">Revenue</th>
+          </tr></thead>
+          <tbody>
+            {state === 'loading' && <><SkeletonRow cols={cols} /><SkeletonRow cols={cols} /><SkeletonRow cols={cols} /></>}
+            {state === 'empty' && <EmptyRow cols={cols}>No forecast for {scenario} yet.</EmptyRow>}
+            {state === 'ready' && segments.map((s) => <DemandRow key={s.key} r={s} qkeys={qkeys} depth={0} expanded={expanded} toggle={toggle} />)}
+          </tbody>
+          {state === 'ready' && total && (
+            <tfoot><tr>
+              <td style={{ position: 'sticky', left: 0, background: 'var(--surface)' }}><b>Total</b></td>
+              {qkeys.map((qk) => <td key={qk} className="num"><b>{num(total.quarters.find((x) => x.q === qk)?.units ?? 0)}</b></td>)}
+              <td></td>
+              <td className="num"><b>{num(total.forecast)}</b></td>
+              <td className="num dim">{num(total.shipped)}</td>
+              <td style={{ width: 120 }}><Coverage pct={(total.attainment ?? 0) * 100} /></td>
+              <td className="num"><b>{gbp(total.revenue)}</b></td>
+            </tr></tfoot>
+          )}
+        </table>
+      )}
+      <div className="layer-note" style={{ padding: '9px 14px' }}>{I.layers()}Segments roll up from account-level forecasts — expand one to its accounts. Revenue = forecast units × the segment&rsquo;s realized net price (tiered per customer type).{!hasCommercial && ' Revenue is layer-restricted for your role.'}</div>
     </Card>
   );
 }
