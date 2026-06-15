@@ -13,7 +13,7 @@ export { sessionEmail, signOutGoogle };
 
 declare global {
   interface Window {
-    google?: { accounts: { id: { initialize: (c: object) => void; renderButton: (el: HTMLElement, opts: object) => void; disableAutoSelect: () => void } } };
+    google?: { accounts: { id: { initialize: (c: object) => void; renderButton: (el: HTMLElement, opts: object) => void; disableAutoSelect: () => void; prompt: (cb?: (n: unknown) => void) => void } } };
   }
 }
 
@@ -41,6 +41,7 @@ export function SignIn({ onToken }: { onToken: (token: string) => void }) {
       window.google.accounts.id.initialize({
         client_id: GOOGLE_CLIENT_ID,
         hosted_domain: 'hypervolt.co.uk',
+        auto_select: true,
         callback: (resp: { credential?: string }) => {
           if (resp.credential) onToken(resp.credential);
           else setError('Sign-in failed — use your hypervolt.co.uk Google account.');

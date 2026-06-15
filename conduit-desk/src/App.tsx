@@ -34,6 +34,9 @@ import { Access } from './Access';
 import { Notifications } from './Notifications';
 import { AccountPage } from './AccountPage';
 import { SignIn, sessionEmail, signOutGoogle } from './SignIn';
+import { isGoogleToken, tokenExpMs, isExpired, ensureGis, initGoogleAuth, promptGoogleRefresh } from './session';
+
+const GOOGLE_CLIENT_ID = (import.meta as any).env?.VITE_GOOGLE_CLIENT_ID as string | undefined;
 
 // The Conduit Desk shell (spec/ui/README.md "Shell affordances"; structure mirrors .design-ref/desk-shell.jsx,
 // Hypervolt dark-first). A grouped rail, the working-context bar (entity/market/period/scenario with the
@@ -209,6 +212,30 @@ export function App() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, []);
+
+  // Keep a Google session alive. GIS hands back a ~1h ID token with no refresh, so decode its exp and silently
+  // re-issue a fresh credential ~5 min before it lapses (and on tab-focus or after a 401). If it has fully lapsed
+  // and a silent refresh can't recover it, drop to the sign-in screen instead of 401ing in the background.
+  useEffect(() => {
+    if (!token || !isGoogleToken(token) || !GOOGLE_CLIENT_ID) return;
+    let timer: number | undefined;
+    let cancelled = false;
+    const schedule = () => {
+      const exp = tokenExpMs(sessionStorage.getItem('conduit_token') || '');
+      if (!exp) return;
+      timer = window.setTimeout(() => { promptGoogleRefresh(); schedule(); }, Math.max(exp - Date.now() - 5 * 60 * 1000, 1000));
+    };
+    ensureGis().then(() => { if (!cancelled) { initGoogleAuth(GOOGLE_CLIENT_ID, setToken); schedule(); } }).catch(() => {});
+    const onFocus = () => { if (isExpired(sessionStorage.getItem('conduit_token') || '', 5 * 60 * 1000)) promptGoogleRefresh(); };
+    const onUnauthorized = () => {
+      if (!isExpired(sessionStorage.getItem('conduit_token') || '')) return; // a non-expiry 401 isn't a session problem
+      promptGoogleRefresh();
+      window.setTimeout(() => { if (isExpired(sessionStorage.getItem('conduit_token') || '')) { signOutGoogle(); setToken(''); } }, 2500);
+    };
+    window.addEventListener('focus', onFocus);
+    window.addEventListener('conduit:unauthorized', onUnauthorized);
+    return () => { cancelled = true; if (timer) clearTimeout(timer); window.removeEventListener('focus', onFocus); window.removeEventListener('conduit:unauthorized', onUnauthorized); };
+  }, [token]);
 
   if (!token) return <SignIn onToken={setToken} />;
 

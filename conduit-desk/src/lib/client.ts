@@ -43,6 +43,11 @@ export async function request<T = unknown>(path: string, init: RequestInit = {})
     if (body && typeof body === 'object' && 'message' in body) {
       message = String((body as Record<string, unknown>).message);
     }
+    // Signal a 401 app-wide so the shell can attempt a silent token refresh / re-auth (the session layer
+    // listens). A 403 is a genuine permission denial and is left to the view's "forbidden" state.
+    if (res.status === 401 && typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('conduit:unauthorized'));
+    }
     throw new ApiError(res.status, body, message);
   }
   return body as T;
