@@ -1,0 +1,6 @@
+{"base": "GBP", "quote": "EUR", "rate": 1.1563, "as_of": "2026-06-15", "rate_type": "spot", "source": "ecb"}
+{"base": "GBP", "quote": "USD", "rate": 1.3421, "as_of": "2026-06-15", "rate_type": "spot", "source": "ecb"}
+{"base": "USD", "quote": "EUR", "rate": 0.86155, "as_of": "2026-06-15", "rate_type": "spot", "source": "ecb"}
+{"base": "USD", "quote": "GBP", "rate": 0.74509, "as_of": "2026-06-15", "rate_type": "spot", "source": "ecb"}
+{"base": "EUR", "quote": "GBP", "rate": 0.86483, "as_of": "2026-06-15", "rate_type": "spot", "source": "ecb"}
+{"base": "EUR", "quote": "USD", "rate": 1.1607, "as_of": "2026-06-15", "rate_type": "spot", "source": "ecb"}
