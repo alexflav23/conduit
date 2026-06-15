@@ -479,16 +479,18 @@ final class H6QRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
       .in("api" / "v1" / "h6q" / "demand-board")
       .in(query[String]("market"))
       .in(query[String]("scenario"))
+      .in(query[Option[String]]("currency"))
       .out(jsonBody[Json])
       .serverLogic(principal => {
-        case (marketStr, scenarioStr) =>
+        case (marketStr, scenarioStr, currencyOpt) =>
           if (!PolicyEngine.hasPermission(principal, Action.View, "pipeline_coverage"))
             Async[F].pure(Left(err(StatusCode.Forbidden, "forbidden", "requires view:pipeline_coverage")))
           else
             (uuid(marketStr), uuid(scenarioStr)).tupled match {
               case Left(e) => Async[F].pure(Left(e))
               case Right((market, scenario)) =>
-                DemandBoardRepo.board(market, scenario, contributorsPerSegment = 12)
+                val currency = currencyOpt.map(_.trim.toUpperCase).filter(_.nonEmpty).getOrElse("GBP")
+                DemandBoardRepo.board(market, scenario, contributorsPerSegment = 12, currency = currency)
                   .transact(xa)
                   .map(j => Right(Projection.projectFor(principal, "pipeline_coverage", j)))
             }

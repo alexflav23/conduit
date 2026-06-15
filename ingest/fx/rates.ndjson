@@ -1,0 +1,4 @@
+{"base":"GBP","quote":"USD","rate":1.27,"as_of":"2026-06-01","rate_type":"spot","source":"seed"}
+{"base":"USD","quote":"GBP","rate":0.7874,"as_of":"2026-06-01","rate_type":"spot","source":"seed"}
+{"base":"EUR","quote":"USD","rate":1.08,"as_of":"2026-06-01","rate_type":"spot","source":"seed"}
+{"base":"GBP","quote":"EUR","rate":1.176,"as_of":"2026-06-01","rate_type":"spot","source":"seed"}

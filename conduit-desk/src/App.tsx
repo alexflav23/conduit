@@ -36,6 +36,7 @@ import { AccountPage } from './AccountPage';
 import { useAuth } from 'react-oidc-context';
 import { SignIn, sessionEmail } from './SignIn';
 import { setOidcToken, devToken, setDevToken } from './lib/auth';
+import { queryClient } from './lib/query';
 
 // The Conduit Desk shell (spec/ui/README.md "Shell affordances"; structure mirrors .design-ref/desk-shell.jsx,
 // Hypervolt dark-first). A grouped rail, the working-context bar (entity/market/period/scenario with the
@@ -173,8 +174,13 @@ export function App() {
   // The bearer is a dev-door override if set, else the live OIDC access token. The OIDC token lifecycle (PKCE,
   // storage, silent renew off the refresh token) is owned by react-oidc-context — no hand-rolled timers here.
   const [dev, setDev] = useState(devToken());
-  useEffect(() => { setOidcToken(auth.user?.access_token); }, [auth.user]);
-  const token = dev || auth.user?.access_token || '';
+  // An EXPIRED access token counts as no token: the shell drops to sign-in (the renew effect below tries to
+  // recover in the background) instead of rendering with a stale bearer that 401s every call and spins forever.
+  const liveOidcToken = auth.user && !auth.user.expired ? (auth.user.access_token ?? '') : '';
+  // Publish the live token to the API client + refetch everything when it changes (e.g. after a silent renew)
+  // so queries that failed on the stale token recover instead of staying errored.
+  useEffect(() => { setOidcToken(liveOidcToken); queryClient.invalidateQueries(); }, [liveOidcToken]);
+  const token = dev || liveOidcToken;
   const navigate = useNavigate();
   const location = useLocation();
   // The URL is the source of truth for the active view (react-router). The account page lives at /account/:id;
@@ -209,6 +215,17 @@ export function App() {
 
   useEffect(() => { document.documentElement.setAttribute('data-theme', theme); localStorage.setItem('conduit.theme', theme); }, [theme]);
   useEffect(() => { localStorage.setItem('conduit.ctx', JSON.stringify(ctx)); }, [ctx]);
+  // OIDC session recovery: when the access token lapses, silently renew via the refresh token; if that fails
+  // (refresh expired / revoked), drop the user so the shell falls back to sign-in instead of 401ing forever.
+  useEffect(() => {
+    if (dev) return;
+    const renew = () => { auth.signinSilent().catch(() => auth.removeUser()); };
+    const drop = () => { auth.removeUser(); };
+    auth.events.addAccessTokenExpired(renew);
+    auth.events.addSilentRenewError(drop);
+    if (auth.user?.expired) renew();
+    return () => { auth.events.removeAccessTokenExpired(renew); auth.events.removeSilentRenewError(drop); };
+  }, [auth.events, auth.user, dev]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setPalOpen((o) => !o); return; }

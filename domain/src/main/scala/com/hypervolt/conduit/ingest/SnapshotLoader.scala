@@ -66,8 +66,32 @@ object SnapshotLoader {
     "hubspot"      -> hubspot,
     "mrpeasy"      -> mrpeasy,
     "ghostbusters" -> ghostbusters,
-    "h6q"          -> h6q
+    "h6q"          -> h6q,
+    "fx"           -> fx
   )
+
+  // ingest/fx/rates.ndjson — {"base":"GBP","quote":"USD","rate":1.27,"as_of":"2026-06-01","rate_type":"spot","source":"seed"}
+  // The FX rate store (doc 04): presentation/consolidation currency reporting reads the latest rate per pair. A
+  // real provider feed lands the same shape; seeded rates bootstrap USD reporting until that's wired.
+  private def fx(@scala.annotation.unused dataset: String, row: Json): ConnectionIO[Int] = {
+    val c = row.hcursor
+    (
+      c.get[String]("base").toOption,
+      c.get[String]("quote").toOption,
+      c.get[BigDecimal]("rate").toOption,
+      c.get[String]("as_of").toOption.flatMap(s => scala.util.Try(LocalDate.parse(s)).toOption)
+    ).tupled match {
+      case None => 0.pure[ConnectionIO]
+      case Some((base, quote, rate, asOf)) =>
+        val rt  = c.get[String]("rate_type").toOption.getOrElse("spot")
+        val src = c.get[String]("source").toOption.getOrElse("seed")
+        sql"""INSERT INTO exchange_rate (base, quote, rate, rate_type, as_of, source)
+              SELECT $base, $quote, $rate, $rt, $asOf, $src
+              WHERE NOT EXISTS (
+                SELECT 1 FROM exchange_rate WHERE base = $base AND quote = $quote AND as_of = $asOf AND rate_type = $rt
+              )""".update.run
+    }
+  }
 
   // ingest/exogenous/<series_key>.ndjson — {"period_month":"2024-01-01","value":123456,"known_at":"2024-02-05T00:00:00Z"}
   // The censored regressor store (doc 26 §5): known_at is what lets a backtest see only what was knowable then.

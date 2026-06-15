@@ -39,6 +39,7 @@ object ForecastQueryRepo {
   // moment it exists — no schema/config change.
   def variants: ConnectionIO[List[Json]] =
     sql"""SELECT v.id, v.sku, f.name FROM product_variant v JOIN product_family f ON f.id = v.family_id
+          WHERE v.generation <> 'mrp'
           ORDER BY f.name, v.sku LIMIT 200"""
       .query[(UUID, String, String)]
       .to[List]

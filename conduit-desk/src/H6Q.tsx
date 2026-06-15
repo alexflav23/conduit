@@ -3,7 +3,7 @@ import { useApi, request } from './lib/query';
 import { ApiError } from './lib/client';
 import { marketId, H6Q_MARKET, ForecastLine } from './api';
 import {
-  PageHead, Card, Chip, Coverage, EmptyRow, LayerNote, SkeletonRow, Skeleton, num, gbp,
+  PageHead, Card, Chip, Coverage, EmptyRow, LayerNote, SkeletonRow, Skeleton, num,
 } from './kit/kit';
 import { I } from './kit/icons';
 import { asArray } from './state';
@@ -263,6 +263,8 @@ interface BoardRow {
 }
 interface BoardData {
   months?: string[];
+  currency?: string;
+  fx_rate?: string;
   segments?: BoardRow[];
   total?: { forecast: number; shipped: number; attainment: number; revenue: string; quarters: { q: string; units: number }[] };
 }
@@ -287,7 +289,7 @@ function TrendCell({ t }: { t?: { qoq_pct: number; spark: number[] } }) {
   );
 }
 
-function DemandRow({ r, qkeys, depth, expanded, toggle }: { r: BoardRow; qkeys: string[]; depth: number; expanded: Set<string>; toggle: (k: string) => void }) {
+function DemandRow({ r, qkeys, depth, expanded, toggle, money }: { r: BoardRow; qkeys: string[]; depth: number; expanded: Set<string>; toggle: (k: string) => void; money: (v?: string) => string }) {
   const qmap: Record<string, number> = {};
   (r.quarters ?? []).forEach((x) => { qmap[x.q] = x.units; });
   const kids = Array.isArray(r.contributors) ? r.contributors : [];
@@ -308,17 +310,18 @@ function DemandRow({ r, qkeys, depth, expanded, toggle }: { r: BoardRow; qkeys: 
         <td className="num"><b>{num(r.forecast)}</b></td>
         <td className="num dim">{num(r.shipped)}</td>
         <td style={{ width: 120 }}><Coverage pct={(r.attainment ?? 0) * 100} /></td>
-        <td className="num" style={{ fontWeight: 600 }}>{gbp(r.revenue)}</td>
+        <td className="num" style={{ fontWeight: 600 }}>{money(r.revenue)}</td>
       </tr>
-      {open && kids.map((c) => <DemandRow key={c.key} r={c} qkeys={qkeys} depth={depth + 1} expanded={expanded} toggle={toggle} />)}
+      {open && kids.map((c) => <DemandRow key={c.key} r={c} qkeys={qkeys} depth={depth + 1} expanded={expanded} toggle={toggle} money={money} />)}
     </>
   );
 }
 
 function DemandBoardCard({ market, scenario, sid, hasCommercial }: { market: string; scenario: Scenario; sid?: string; hasCommercial: boolean }) {
+  const [ccy, setCcy] = useState<'GBP' | 'USD'>('GBP');
   const q = useApi<BoardData>(
-    ['h6q-board', market, sid],
-    `/api/v1/h6q/demand-board?market=${encodeURIComponent(market)}&scenario=${encodeURIComponent(sid ?? '')}`,
+    ['h6q-board', market, sid, ccy],
+    `/api/v1/h6q/demand-board?market=${encodeURIComponent(market)}&scenario=${encodeURIComponent(sid ?? '')}&currency=${ccy}`,
     { enabled: !!sid },
   );
   const err = q.error as ApiError | null;
@@ -330,12 +333,24 @@ function DemandBoardCard({ market, scenario, sid, hasCommercial }: { market: str
   const toggle = (k: string) => setExpanded((s) => { const n = new Set(s); if (n.has(k)) n.delete(k); else n.add(k); return n; });
   const qkeys = ((total?.quarters ?? segments[0]?.quarters ?? []) as { q: string }[]).map((x) => x.q);
   const cols = qkeys.length + 5;
+  // Format money in the board's reported currency (falls back to GBP server-side if a pair isn't seeded).
+  const sym = (d.currency ?? ccy) === 'USD' ? '$' : '£';
+  const money = (v?: string) => sym + (Number(v ?? 0)).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
   if (state === 'notImplemented') return <NotBacked testid="h6q-board-unbacked" message="The demand board appears once a forecast cycle is published." />;
 
   return (
     <Card title="Demand board" icon={I.trend}
-      aux={<span className="dim" style={{ fontSize: 12 }}>by segment · units allocated by activation share · revenue at each segment&rsquo;s net tier price · {scenario} · <b style={{ color: 'var(--text)' }} data-testid="h6q-board-revenue">{state === 'ready' && total ? gbp(total.revenue) : '—'}</b></span>}
+      aux={
+        <div className="row g8" style={{ alignItems: 'center' }}>
+          <div className="seg">
+            {(['GBP', 'USD'] as const).map((c) => (
+              <button key={c} className={ccy === c ? 'on' : ''} data-testid={`h6q-ccy-${c}`} onClick={() => setCcy(c)}>{c}</button>
+            ))}
+          </div>
+          <span className="dim" style={{ fontSize: 12 }}>by segment · revenue at each segment&rsquo;s net tier price · {scenario} · <b style={{ color: 'var(--text)' }} data-testid="h6q-board-revenue">{state === 'ready' && total ? money(total.revenue) : '—'}</b></span>
+        </div>
+      }
       style={{ padding: 0 }} className="tablewrap">
       {state === 'forbidden' && <LayerNote>Demand is hidden — requires the <code>volume</code> layer.</LayerNote>}
       {state === 'error' && <div className="banner danger" data-testid="h6q-board-error" style={{ margin: 14 }}>Couldn&rsquo;t load the demand board (HTTP {err?.status}).</div>}
@@ -353,7 +368,7 @@ function DemandBoardCard({ market, scenario, sid, hasCommercial }: { market: str
           <tbody>
             {state === 'loading' && <><SkeletonRow cols={cols} /><SkeletonRow cols={cols} /><SkeletonRow cols={cols} /></>}
             {state === 'empty' && <EmptyRow cols={cols}>No forecast for {scenario} yet.</EmptyRow>}
-            {state === 'ready' && segments.map((s) => <DemandRow key={s.key} r={s} qkeys={qkeys} depth={0} expanded={expanded} toggle={toggle} />)}
+            {state === 'ready' && segments.map((s) => <DemandRow key={s.key} r={s} qkeys={qkeys} depth={0} expanded={expanded} toggle={toggle} money={money} />)}
           </tbody>
           {state === 'ready' && total && (
             <tfoot><tr>
@@ -363,7 +378,7 @@ function DemandBoardCard({ market, scenario, sid, hasCommercial }: { market: str
               <td className="num"><b>{num(total.forecast)}</b></td>
               <td className="num dim">{num(total.shipped)}</td>
               <td style={{ width: 120 }}><Coverage pct={(total.attainment ?? 0) * 100} /></td>
-              <td className="num"><b>{gbp(total.revenue)}</b></td>
+              <td className="num"><b>{money(total.revenue)}</b></td>
             </tr></tfoot>
           )}
         </table>
