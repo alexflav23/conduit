@@ -177,9 +177,12 @@ export function App() {
   // An EXPIRED access token counts as no token: the shell drops to sign-in (the renew effect below tries to
   // recover in the background) instead of rendering with a stale bearer that 401s every call and spins forever.
   const liveOidcToken = auth.user && !auth.user.expired ? (auth.user.access_token ?? '') : '';
-  // Publish the live token to the API client + refetch everything when it changes (e.g. after a silent renew)
-  // so queries that failed on the stale token recover instead of staying errored.
-  useEffect(() => { setOidcToken(liveOidcToken); queryClient.invalidateQueries(); }, [liveOidcToken]);
+  // Publish the live token to the API client SYNCHRONOUSLY during render — child query effects run before the
+  // parent's effects, so an effect here would let the first request fire with an empty bearer (→ 400). Setting it
+  // in the render body guarantees currentToken() is correct before any child fetch.
+  setOidcToken(liveOidcToken);
+  // Refetch everything when the token changes (e.g. after a silent renew) so queries recover.
+  useEffect(() => { queryClient.invalidateQueries(); }, [liveOidcToken]);
   const token = dev || liveOidcToken;
   const navigate = useNavigate();
   const location = useLocation();
@@ -215,17 +218,15 @@ export function App() {
 
   useEffect(() => { document.documentElement.setAttribute('data-theme', theme); localStorage.setItem('conduit.theme', theme); }, [theme]);
   useEffect(() => { localStorage.setItem('conduit.ctx', JSON.stringify(ctx)); }, [ctx]);
-  // OIDC session recovery: when the access token lapses, silently renew via the refresh token; if that fails
-  // (refresh expired / revoked), drop the user so the shell falls back to sign-in instead of 401ing forever.
+  // The library (automaticSilentRenew) owns token renewal — don't also call signinSilent here, or the two race
+  // on the rotating refresh token and one gets a 400. Only react to a terminal failure: if renewal can't recover,
+  // drop the user so the shell falls back cleanly to sign-in instead of looping on a dead token.
   useEffect(() => {
     if (dev) return;
-    const renew = () => { auth.signinSilent().catch(() => auth.removeUser()); };
     const drop = () => { auth.removeUser(); };
-    auth.events.addAccessTokenExpired(renew);
     auth.events.addSilentRenewError(drop);
-    if (auth.user?.expired) renew();
-    return () => { auth.events.removeAccessTokenExpired(renew); auth.events.removeSilentRenewError(drop); };
-  }, [auth.events, auth.user, dev]);
+    return () => { auth.events.removeSilentRenewError(drop); };
+  }, [auth.events, dev]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setPalOpen((o) => !o); return; }
