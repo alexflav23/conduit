@@ -2,8 +2,43 @@ import React, { useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useApi } from './lib/query';
 import { ApiError } from './lib/client';
-import { PageHead, Card, Chip, Coverage, EmptyRow, LayerNote, SkeletonRow, num } from './kit/kit';
+import { PageHead, Card, Chip, Coverage, EmptyRow, LayerNote, SkeletonRow, num, gbp } from './kit/kit';
 import { I } from './kit/icons';
+
+interface ShelfSummary {
+  ghosts?: number; ghost_value?: string; currency?: string;
+  stale_90?: number; stale_180?: number; median_tta_weeks?: number | null;
+  age_distribution?: { bucket: string; count: number }[];
+}
+const BUCKET_TONE: Record<string, string> = { '0-30': 'var(--ok)', '31-60': 'var(--ok)', '61-90': 'var(--warn)', '91-180': 'var(--warn)', '180+': 'var(--danger)' };
+
+function KpiCard({ label, value, sub, danger }: { label: string; value: React.ReactNode; sub?: React.ReactNode; danger?: boolean }) {
+  return (
+    <Card title={label} icon={I.battery}>
+      <div style={{ fontFamily: 'var(--font-disp)', fontSize: 24, fontWeight: 600, color: danger ? 'var(--danger)' : 'var(--text)', padding: '2px 2px 3px' }}>{value}</div>
+      {sub != null && <div className="dim" style={{ fontSize: 11 }}>{sub}</div>}
+    </Card>
+  );
+}
+// Ghost fleet by shelf age (spec/ui Shelf life): older stock is more at risk of never activating.
+function AgeDistribution({ buckets }: { buckets: { bucket: string; count: number }[] }) {
+  const total = buckets.reduce((a, b) => a + (b.count ?? 0), 0) || 1;
+  return (
+    <Card title="Shelf-age distribution" icon={I.layers}
+      aux={<span className="dim" style={{ fontSize: 11.5 }}>{num(total)} on-shelf · older = more at risk</span>} style={{ marginBottom: 14 }}>
+      <div style={{ display: 'flex', height: 14, borderRadius: 6, overflow: 'hidden', background: 'var(--bg-2)' }}>
+        {buckets.map((b) => (b.count ?? 0) > 0 ? (
+          <div key={b.bucket} title={`${b.bucket}d: ${num(b.count)}`} style={{ width: (100 * (b.count ?? 0) / total) + '%', background: BUCKET_TONE[b.bucket] ?? 'var(--muted)' }} />
+        ) : null)}
+      </div>
+      <div className="row g12" style={{ marginTop: 9, fontSize: 11, flexWrap: 'wrap' }}>
+        {buckets.map((b) => (
+          <span key={b.bucket} className="row g6"><span style={{ width: 10, height: 10, borderRadius: 2, background: BUCKET_TONE[b.bucket] ?? 'var(--muted)', display: 'inline-block' }} />{b.bucket}d <b style={{ color: 'var(--text)' }}>{num(b.count)}</b></span>
+        ))}
+      </div>
+    </Card>
+  );
+}
 
 // Shelf — per-account stock (spec/ui/06-shelf.md, doc 20 D11). The real-time picture from the serial
 // register: shipped -> activated -> on-shelf, with measured runway days and a reorder point. The hero is
@@ -58,6 +93,8 @@ export function Shelf({ ctx }: { role: any; ctx: Ctx; toast: (m: string, k?: str
     ['shelf-board', ctx.entity, ctx.market, ctx.period, ctx.scenario],
     '/api/v1/h6q/shelf',
   );
+  const summaryQ = useApi<ShelfSummary>(['shelf-summary', ctx.market], '/api/v1/h6q/shelf-summary?currency=GBP');
+  const sum = summaryQ.data ?? {};
   const err = board.error as ApiError | null;
 
   const rows = useMemo(() => {
@@ -91,6 +128,18 @@ export function Shelf({ ctx }: { role: any; ctx: Ctx; toast: (m: string, k?: str
             : undefined
         }
       />
+
+      {summaryQ.isSuccess && (sum.ghosts ?? 0) > 0 && (
+        <>
+          <div className="grid" style={{ gridTemplateColumns: 'repeat(4,1fr)', gap: 12, marginBottom: 14 }}>
+            <KpiCard label="Ghosts on shelf" value={num(sum.ghosts)} sub="dispatched, not yet activated" />
+            <KpiCard label="Capital tied up" value={gbp(sum.ghost_value)} sub="on-shelf × net ASP" />
+            <KpiCard label="Stale > 90d" value={num(sum.stale_90)} danger={(sum.stale_90 ?? 0) > 0} sub={(sum.stale_180 ?? 0) > 0 ? `${num(sum.stale_180)} over 180d` : 'none over 180d'} />
+            <KpiCard label="Median time to activate" value={`${sum.median_tta_weeks ?? '—'}w`} sub="dispatch → activation" />
+          </div>
+          <AgeDistribution buckets={sum.age_distribution ?? []} />
+        </>
+      )}
 
       <Card
         title="Shelf board"

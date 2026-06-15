@@ -8,6 +8,7 @@ import com.hypervolt.conduit.api.auth.ApiError
 import com.hypervolt.conduit.api.auth.AuthService
 import com.hypervolt.conduit.api.auth.Secured
 import com.hypervolt.conduit.supply.AccountDetailRepo
+import com.hypervolt.conduit.supply.ShelfSummaryRepo
 import doobie.implicits._
 import doobie.util.transactor.Transactor
 import io.circe.Json
@@ -43,6 +44,18 @@ final class ShelfDetailRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[
             }
       )
 
+  // Fleet ghost-summary: KPIs (ghosts, capital tied up, stale, median time-to-activate) + shelf-age distribution.
+  private val summary =
+    base.get
+      .in("api" / "v1" / "h6q" / "shelf-summary")
+      .in(query[Option[String]]("currency"))
+      .out(jsonBody[Json])
+      .serverLogic(p =>
+        currencyOpt =>
+          if (!gate(p)) Async[F].pure(Left(denied))
+          else ShelfSummaryRepo.summary(currencyOpt.map(_.trim.toUpperCase).filter(_.nonEmpty).getOrElse("GBP")).transact(xa).map(Right(_))
+      )
+
   val routes: HttpRoutes[F] =
-    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(List(detail))
+    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(List(detail, summary))
 }
