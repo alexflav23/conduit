@@ -476,21 +476,22 @@ final class H6QRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
       .in("api" / "v1" / "h6q" / "coverage" / "matrix")
       .in(query[String]("market"))
       .in(query[String]("scenario"))
+      .in(query[Option[String]]("group_by"))
       .out(jsonBody[Json])
       .serverLogic(principal => {
-        case (marketStr, scenarioStr) =>
+        case (marketStr, scenarioStr, groupByOpt) =>
           if (!PolicyEngine.hasPermission(principal, Action.View, "pipeline_coverage"))
             Async[F].pure(Left(err(StatusCode.Forbidden, "forbidden", "requires view:pipeline_coverage")))
           else
             (uuid(marketStr), uuid(scenarioStr)).tupled match {
               case Left(e) => Async[F].pure(Left(e))
               case Right((market, scenario)) =>
-                ForecastQueryRepo
-                  .coverageMatrix(market, scenario)
-                  .transact(xa)
-                  .map(rows =>
-                    Right(Json.fromValues(rows.map(r => Projection.projectFor(principal, "pipeline_coverage", r))))
-                  )
+                val io = groupByOpt.map(_.trim.toLowerCase).filter(g => Set("account", "sector", "market").contains(g)) match {
+                  case Some(g) => ForecastQueryRepo.coverageMatrixBy(market, scenario, g, limit = 40)
+                  case None    => ForecastQueryRepo.coverageMatrix(market, scenario)
+                }
+                io.transact(xa)
+                  .map(rows => Right(Json.fromValues(rows.map(r => Projection.projectFor(principal, "pipeline_coverage", r)))))
             }
       })
 

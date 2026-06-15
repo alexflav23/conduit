@@ -20,6 +20,9 @@ import { asArray } from './state';
 
 const SCENARIOS = ['P20', 'P50', 'P80'] as const;
 type Scenario = typeof SCENARIOS[number];
+// The demand matrix can pivot its row axis: by SKU (the model/human capture) or — allocated by activation
+// share — by account, sector, or market. account/sector/market come from /coverage/matrix?group_by=.
+type MatrixDim = 'sku' | 'account' | 'sector' | 'market';
 const fmt = (n: number) => num(n);
 
 interface ScenarioRow { id: string; type?: string; toggle_basis?: unknown }
@@ -88,6 +91,7 @@ function Board({ role, market, period, scenarioIds }: { role: any; market: strin
   const [mode, setMode] = useState<'matrix' | 'reconcile'>('matrix');
   const [scenario, setScenario] = useState<Scenario>('P50');
   const [groupBy, setGroupBy] = useState<'branch' | 'agent'>('branch');
+  const [dim, setDim] = useState<MatrixDim>('sku');
 
   const hasCommercial = Array.isArray(role?.layers) && role.layers.indexOf('commercial') >= 0;
   const mkt = marketId(market);
@@ -105,21 +109,29 @@ function Board({ role, market, period, scenarioIds }: { role: any; market: strin
             <button key={s} className={scenario === s ? 'on' : ''} data-testid={`h6q-scenario-${s}`} onClick={() => setScenario(s)} style={{ fontFamily: 'var(--font-mono)' }}>{s}</button>
           ))}
         </div>
+        {mode === 'matrix' && (
+          <div className="seg">
+            {(['sku', 'account', 'sector', 'market'] as MatrixDim[]).map((d) => (
+              <button key={d} className={dim === d ? 'on' : ''} data-testid={`h6q-dim-${d}`} onClick={() => setDim(d)} style={{ textTransform: 'capitalize' }}>{d}</button>
+            ))}
+          </div>
+        )}
         <div className="sp" />
         <span className="dim" style={{ fontSize: 12 }}>{(market === H6Q_MARKET ? 'UK' : market)} · {period} · {scenario}</span>
       </div>
 
       {mode === 'matrix'
-        ? <MatrixCard market={mkt} scenario={scenario} sid={sid} hasCommercial={hasCommercial} />
+        ? <MatrixCard market={mkt} scenario={scenario} sid={sid} hasCommercial={hasCommercial} dim={dim} />
         : <ReconcileCard market={mkt} period={period} scenario={scenario} sid={sid} groupBy={groupBy} setGroupBy={setGroupBy} />}
     </>
   );
 }
 
-function MatrixCard({ market, scenario, sid, hasCommercial }: { market: string; scenario: Scenario; sid?: string; hasCommercial: boolean }) {
+function MatrixCard({ market, scenario, sid, hasCommercial, dim }: { market: string; scenario: Scenario; sid?: string; hasCommercial: boolean; dim: MatrixDim }) {
+  const groupParam = dim === 'sku' ? '' : `&group_by=${dim}`;
   const q = useApi<any[]>(
-    ['h6q-matrix', market, sid],
-    `/api/v1/h6q/coverage/matrix?market=${encodeURIComponent(market)}&scenario=${encodeURIComponent(sid ?? '')}`,
+    ['h6q-matrix', market, sid, dim],
+    `/api/v1/h6q/coverage/matrix?market=${encodeURIComponent(market)}&scenario=${encodeURIComponent(sid ?? '')}${groupParam}`,
     { enabled: !!sid },
   );
   const err = q.error as ApiError | null;
@@ -127,15 +139,18 @@ function MatrixCard({ market, scenario, sid, hasCommercial }: { market: string; 
   const loading = !sid || q.isLoading;
   const state = phaseOf(loading, err, rows);
 
+  // Preserve the backend's row order (SKU is alphabetical; account is busiest-first with "Other" last).
   const months = Array.from(new Set(rows.map((r) => r.month))).sort();
-  const skus = Array.from(new Set(rows.map((r) => r.sku))).sort();
+  const skus = Array.from(new Set(rows.map((r) => r.key ?? r.sku)));
+  const dimLabel = dim === 'sku' ? 'SKU' : dim === 'account' ? 'Account' : dim === 'sector' ? 'Sector' : 'Market';
   const cell: Record<string, number> = {};
   const fam: Record<string, string> = {};
   const src: Record<string, string> = {};
   rows.forEach((r) => {
-    cell[`${r.sku}|${r.month}`] = r.forecast;
-    if (r.family) fam[r.sku] = r.family;
-    if (r.source) src[r.sku] = r.source;
+    const k = r.key ?? r.sku;
+    cell[`${k}|${r.month}`] = r.forecast;
+    if (r.family) fam[k] = r.family;
+    if (r.source) src[k] = r.source;
   });
   const colTotal = (m: string) => skus.reduce((a, s) => a + (cell[`${s}|${m}`] ?? 0), 0);
   const rowTotal = (s: string) => months.reduce((a, m) => a + (cell[`${s}|${m}`] ?? 0), 0);
@@ -148,14 +163,14 @@ function MatrixCard({ market, scenario, sid, hasCommercial }: { market: string; 
 
   return (
     <Card title="Demand matrix" icon={I.trend}
-      aux={<span className="dim" style={{ fontSize: 12 }}>Forecast units · all SKUs × all months · {scenario} · <b style={{ color: 'var(--text)' }} data-testid="h6q-grand-total">{state === 'ready' ? `${fmt(grand)} units` : '—'}</b></span>}
+      aux={<span className="dim" style={{ fontSize: 12 }}>Forecast units · by {dimLabel.toLowerCase()} × all months{dim !== 'sku' ? ' · allocated by activation share' : ''} · {scenario} · <b style={{ color: 'var(--text)' }} data-testid="h6q-grand-total">{state === 'ready' ? `${fmt(grand)} units` : '—'}</b></span>}
       style={{ padding: 0 }} className="tablewrap">
       {state === 'forbidden' && <LayerNote>Demand is hidden — requires the <code>volume</code> layer.</LayerNote>}
       {state === 'error' && <div className="banner danger" data-testid="h6q-board-error" style={{ margin: 14 }}>Couldn't load the demand matrix (HTTP {err?.status}).</div>}
       {(state !== 'forbidden' && state !== 'error') && (
         <table className="tbl">
           <thead><tr>
-            <th style={{ position: 'sticky', left: 0, background: 'var(--surface)' }}>SKU</th>
+            <th style={{ position: 'sticky', left: 0, background: 'var(--surface)' }}>{dimLabel}</th>
             {(state === 'ready' ? months : []).map((m) => <th key={m} className="num">{m}</th>)}
             {state === 'ready' && <th className="num">Total</th>}
           </tr></thead>

@@ -261,6 +261,52 @@ object ForecastQueryRepo {
           )
       })
 
+  // The demand matrix pivoted by a dimension other than SKU (account / sector / market). The market-level P50
+  // monthly totals are allocated across the dimension by each account's share of historical activations — top-down
+  // forecast, bottom-up weights — so the rows always sum back to the market total the SKU matrix shows. account
+  // is capped to the busiest `limit` accounts; sector rolls those up by the account's sector; market is the total.
+  def coverageMatrixBy(market: UUID, scenario: UUID, groupBy: String, limit: Int): ConnectionIO[List[Json]] = {
+    val cte =
+      fr"""WITH act AS (
+             SELECT s.company_id, p.display_name AS name, COALESCE(p.sector, p.segment) AS sector, count(*)::numeric AS n
+             FROM serial_unit s JOIN party p ON p.id = s.company_id
+             WHERE s.status = 'activated' AND s.company_id IS NOT NULL
+             GROUP BY s.company_id, p.display_name, COALESCE(p.sector, p.segment)
+           ),
+           tot AS (SELECT GREATEST(SUM(n), 1) AS total FROM act),
+           mf AS (
+             SELECT to_char(period_month, 'YYYY-MM') AS month, SUM(forecast_qty)::numeric AS fc
+             FROM pipeline_coverage
+             WHERE market_id = $market AND scenario_id = $scenario AND level = 'market' AND product_variant_id IS NOT NULL
+             GROUP BY 1
+           )"""
+    val q = groupBy match {
+      case "account" =>
+        cte ++ fr"""
+          , top AS (SELECT name, n, row_number() OVER (ORDER BY n DESC) AS rk FROM act ORDER BY n DESC LIMIT $limit)
+          , topsum AS (SELECT COALESCE(SUM(n), 0) AS tn, COUNT(*) AS c FROM top)
+          SELECT z.key, z.month, z.forecast FROM (
+            SELECT top.name AS key, mf.month AS month, round(mf.fc * top.n / tot.total)::int AS forecast, top.rk AS ord
+            FROM top CROSS JOIN mf CROSS JOIN tot
+            UNION ALL
+            SELECT 'Other (' || ((SELECT COUNT(*) FROM act) - (SELECT c FROM topsum)) || ' accounts)', mf.month,
+                   round(mf.fc * (tot.total - (SELECT tn FROM topsum)) / tot.total)::int, 1000000
+            FROM mf CROSS JOIN tot
+          ) z ORDER BY z.ord, z.month"""
+      case "sector" =>
+        cte ++ fr"""
+          , sec AS (SELECT COALESCE(sector, 'unclassified') AS sector, SUM(n) AS n FROM act GROUP BY 1)
+          SELECT sec.sector, mf.month, round(mf.fc * sec.n / tot.total)::int
+          FROM sec CROSS JOIN mf CROSS JOIN tot ORDER BY sec.n DESC, mf.month"""
+      case _ =>
+        cte ++ fr"""
+          SELECT 'United Kingdom'::text, mf.month, mf.fc::int FROM mf ORDER BY mf.month"""
+    }
+    q.query[(String, String, Int)]
+      .to[List]
+      .map(_.map { case (key, month, fc) => Json.obj("key" -> key.asJson, "sku" -> key.asJson, "month" -> month.asJson, "forecast" -> fc.asJson) })
+  }
+
   // Reconcile (doc 12 §11 GET /h6q/coverage/reconcile): the branch axis and the agent axis must tie.
   def reconcile(market: UUID, period: LocalDate, scenario: UUID): ConnectionIO[Json] =
     sql"""SELECT level, COALESCE(SUM(forecast_qty),0), COALESCE(SUM(weighted_pipeline_qty),0),
