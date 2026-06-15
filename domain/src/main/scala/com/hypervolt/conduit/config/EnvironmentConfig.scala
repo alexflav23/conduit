@@ -47,6 +47,12 @@ final case class GoogleAuthConfig(clientId: String, workspaceDomain: String) {
   def enabled: Boolean = clientId.nonEmpty
 }
 
+// Keycloak OIDC (estate IdP). `issuer` is validated against the token's `iss` (the browser-facing realm URL);
+// `jwksUrl` is fetched server-side and may differ (e.g. a docker-internal host). Empty issuer ⇒ verifier off.
+final case class KeycloakConfig(issuer: String, jwksUrl: String, audience: String) {
+  def enabled: Boolean = issuer.nonEmpty
+}
+
 final case class AppConfig(
     env: String,
     shadow: Boolean,
@@ -58,7 +64,8 @@ final case class AppConfig(
     xero: XeroConfig,
     stripe: StripeConfig,
     documents: DocumentsConfig,
-    googleAuth: GoogleAuthConfig
+    googleAuth: GoogleAuthConfig,
+    keycloak: KeycloakConfig
 )
 
 object EnvironmentConfig {
@@ -109,6 +116,11 @@ object EnvironmentConfig {
       googleAuth = GoogleAuthConfig(
         clientId = hv.getConfig("auth").getString("google_client_id"),
         workspaceDomain = hv.getConfig("auth").getString("workspace_domain")
+      ),
+      keycloak = KeycloakConfig(
+        issuer = hv.getConfig("auth").getString("keycloak_issuer"),
+        jwksUrl = hv.getConfig("auth").getString("keycloak_jwks_url"),
+        audience = hv.getConfig("auth").getString("keycloak_audience")
       )
     )
   }

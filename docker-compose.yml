@@ -59,10 +59,14 @@ services:
   conduit-keycloak:
     image: quay.io/keycloak/keycloak:25.0
     container_name: conduit-keycloak
-    command: start-dev --http-port=8083
+    # Import the `conduit` realm on boot (public PKCE desk client + local test user + a disabled Google IdP to
+    # enable once federation is configured). Idempotent: re-import overwrites the realm.
+    command: start-dev --http-port=8083 --import-realm
     environment:
       KEYCLOAK_ADMIN: admin
       KEYCLOAK_ADMIN_PASSWORD: admin
+    volumes:
+      - ./keycloak:/opt/keycloak/data/import:ro
     ports:
       - "8083:8083"
     networks:
@@ -86,6 +90,11 @@ services:
       INGEST_DIR: /app/ingest
       # Google Workspace sign-in (flows in from direnv via the shell). Empty = verifier off, dev:<id> tokens only.
       GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:-}
+      # Keycloak OIDC: validate `iss` exactly as the browser sees it (localhost), but fetch JWKS over the compose
+      # network (the api container can't reach the host's localhost:8083).
+      CONDUIT_KEYCLOAK_ISSUER: http://localhost:8083/realms/conduit
+      CONDUIT_KEYCLOAK_JWKS_URL: http://conduit-keycloak:8083/realms/conduit/protocol/openid-connect/certs
+      CONDUIT_KEYCLOAK_AUDIENCE: conduit-api
     volumes:
       - ./ingest:/app/ingest:ro
     ports: ["8080:8080", "9990:9990", "9464:9464"]

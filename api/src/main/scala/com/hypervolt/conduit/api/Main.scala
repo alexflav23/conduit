@@ -8,6 +8,7 @@ import cats.syntax.all._
 import com.comcast.ip4s._
 import com.hypervolt.conduit.api.auth.AuthService
 import com.hypervolt.conduit.api.auth.GoogleTokenVerifier
+import com.hypervolt.conduit.api.auth.KeycloakJwtVerifier
 import com.hypervolt.conduit.api.routes.AccessRoutes
 import com.hypervolt.conduit.api.routes.ActivationRoutes
 import com.hypervolt.conduit.api.routes.AuditRoutes
@@ -92,7 +93,16 @@ object Main extends IOApp.Simple {
             cfg.googleAuth.workspaceDomain
           )
         )
-        val auth              = new AuthService[IO](xa, devMode = cfg.env != "prod", google = googleVerifier)
+        val keycloakVerifier = Option.when(cfg.keycloak.enabled)(
+          new KeycloakJwtVerifier[IO](
+            new com.auth0.jwk.GuavaCachedJwkProvider(
+              new com.auth0.jwk.UrlJwkProvider(java.net.URI.create(cfg.keycloak.jwksUrl).toURL())
+            ),
+            cfg.keycloak.issuer,
+            cfg.keycloak.audience
+          )
+        )
+        val auth              = new AuthService[IO](xa, devMode = cfg.env != "prod", google = googleVerifier, keycloak = keycloakVerifier)
         val accessRoutes      = new AccessRoutes[IO](xa, auth).routes
         val pricingRoutes     = new PricingRoutes[IO](xa, auth).routes
         val commerceRoutes    = new CommerceRoutes[IO](xa, auth).routes

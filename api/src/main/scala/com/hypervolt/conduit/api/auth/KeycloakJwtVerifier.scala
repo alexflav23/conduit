@@ -8,10 +8,11 @@ import com.auth0.jwt.algorithms.Algorithm
 import java.security.interfaces.RSAPublicKey
 
 // Verifies a Keycloak-issued OIDC JWT (P2.4 / doc 34): RS256 against the realm's JWKS, issuer (the realm URL),
-// audience (our client), and expiry (java-jwt enforces `exp` by default). Returns the `sub` — the keycloak id —
-// which the caller maps to a Conduit Principal (the doc-05 policy layer then applies). Google federates as an
-// IdP *inside* Keycloak, so the user experience is unchanged; this is just the server-side trust anchor moving
-// from Google's JWKS to the realm's. Mirrors GoogleTokenVerifier (the same auth0 jwks-rsa + java-jwt machinery).
+// audience (our client), and expiry (java-jwt enforces `exp` by default). Returns the verified `email` — the
+// stable Workspace identity — which the caller maps to a Conduit Principal (the doc-05 policy layer then
+// applies). Resolving by email unifies with the Google door, so a user keeps the same identity + roles whether
+// the token came straight from Google or via Keycloak (Google federates as an IdP *inside* Keycloak). This just
+// moves the server-side trust anchor from Google's JWKS to the realm's. Mirrors GoogleTokenVerifier.
 final class KeycloakJwtVerifier[F[_]: Sync](jwks: JwkProvider, issuer: String, audience: String) {
 
   def verify(token: String): F[Option[String]] =
@@ -25,7 +26,8 @@ final class KeycloakJwtVerifier[F[_]: Sync](jwks: JwkProvider, issuer: String, a
           .withAudience(audience)
           .build()
           .verify(token)
-        Option(verified.getSubject).filter(_.nonEmpty)
+        // A non-empty subject proves a well-formed Keycloak token; the principal is resolved by the email claim.
+        Option(verified.getSubject).filter(_.nonEmpty).flatMap(_ => Option(verified.getClaim("email").asString())).filter(_.nonEmpty)
       }
       .recover { case _: Exception => None }
 }
