@@ -6,6 +6,7 @@ import com.hypervolt.conduit.access._
 import com.hypervolt.conduit.api.auth.ApiError
 import com.hypervolt.conduit.api.auth.AuthService
 import com.hypervolt.conduit.api.auth.Secured
+import com.hypervolt.conduit.forecast.DemandBoardRepo
 import com.hypervolt.conduit.forecast.ForecastLine
 import com.hypervolt.conduit.forecast.ForecastQueryRepo
 import com.hypervolt.conduit.forecast.ForecastService
@@ -471,6 +472,28 @@ final class H6QRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
             }
       })
 
+  // The demand board (spec/ui H6Q): forecast by revenue segment with quarters, trend, shipped, attainment and
+  // tier-aware revenue, each segment expandable to its contributing accounts.
+  private val demandBoard =
+    base.get
+      .in("api" / "v1" / "h6q" / "demand-board")
+      .in(query[String]("market"))
+      .in(query[String]("scenario"))
+      .out(jsonBody[Json])
+      .serverLogic(principal => {
+        case (marketStr, scenarioStr) =>
+          if (!PolicyEngine.hasPermission(principal, Action.View, "pipeline_coverage"))
+            Async[F].pure(Left(err(StatusCode.Forbidden, "forbidden", "requires view:pipeline_coverage")))
+          else
+            (uuid(marketStr), uuid(scenarioStr)).tupled match {
+              case Left(e) => Async[F].pure(Left(e))
+              case Right((market, scenario)) =>
+                DemandBoardRepo.board(market, scenario, contributorsPerSegment = 12)
+                  .transact(xa)
+                  .map(j => Right(Projection.projectFor(principal, "pipeline_coverage", j)))
+            }
+      })
+
   private val coverageMatrix =
     base.get
       .in("api" / "v1" / "h6q" / "coverage" / "matrix")
@@ -587,6 +610,7 @@ final class H6QRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
         coverage,
         coverageBySku,
         coverageMatrix,
+        demandBoard,
         waterfall,
         autoPoPropose,
         suppliers,
