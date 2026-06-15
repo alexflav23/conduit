@@ -104,18 +104,27 @@ object AccountDetailRepo {
       .query[(LocalDate, Int)]
       .to[List]
 
+  // Serials shipped per week (dispatch date) — the (+) side of the actual on-shelf reconstruction.
+  private def weeklyShipped(company: UUID): ConnectionIO[List[(LocalDate, Int)]] =
+    sql"""SELECT date_trunc('week', d.date)::date, count(*)::int
+          FROM serial_unit s JOIN dispatch d ON d.id = s.dispatch_id
+          WHERE s.company_id = $company AND d.date IS NOT NULL
+          GROUP BY 1 ORDER BY 1"""
+      .query[(LocalDate, Int)]
+      .to[List]
+
   private def onShelf(company: UUID): ConnectionIO[Int] =
     sql"SELECT count(*)::int FROM serial_unit WHERE company_id = $company AND status = 'dispatched'".query[Int].unique
 
   def detail(company: UUID, deliveryLimit: Int, anchor: LocalDate): ConnectionIO[Json] =
     (summary(company), deliveries(company, deliveryLimit), activationSeries(company), depletionSeries(company),
-     weeklyActivations(company), onShelf(company)).mapN { (sum, dels, acts, depl, weekly, shelf) =>
+     weeklyActivations(company), weeklyShipped(company), onShelf(company)).mapN { (sum, dels, acts, depl, weekly, shipped, shelf) =>
       Json.obj(
         "summary"     -> sum,
         "deliveries"  -> Json.fromValues(dels),
         "activations" -> acts,
         "depletion"   -> Json.fromValues(depl),
-        "forecast"    -> DepletionForecast.project(weekly, shelf, anchor)
+        "forecast"    -> DepletionForecast.project(weekly, shipped, shelf, anchor)
       )
     }
 }

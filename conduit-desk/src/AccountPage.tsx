@@ -14,9 +14,19 @@ type Ctx = { entity: string; market: string; period: string; scenario: string };
 interface Delivery { dispatch_no?: string; date?: string | null; status?: string; shipped?: number; activated?: number; depletion_pct?: number }
 interface ActPoint { period?: string; activated?: number }
 interface ProjPoint { week?: string; expected_draw?: number; projected_on_shelf?: number; low?: number; high?: number }
+interface HistPoint { week?: string; on_shelf?: number; activated?: number }
 interface Forecast {
   on_shelf?: number; weekly_rate?: number; daily_rate?: number; runway_days?: number | null;
-  stockout_date?: string | null; trend_pct?: number; method?: string; projection?: ProjPoint[];
+  stockout_date?: string | null; trend_pct?: number; method?: string; anchor?: string;
+  history?: HistPoint[]; projection?: ProjPoint[];
+}
+
+// Short axis label: "Jun '26" for month-starts, else "Jun 15".
+function fmtPeriod(p?: string): string {
+  if (!p) return '';
+  const [y, m, d] = p.split('-');
+  const mon = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][parseInt(m, 10) - 1] ?? m;
+  return d === '01' ? `${mon} '${(y ?? '').slice(2)}` : `${mon} ${parseInt(d, 10)}`;
 }
 interface Summary { name?: string; sector?: string; shipped?: number; activated?: number; on_shelf?: number }
 interface AcctDetail {
@@ -30,18 +40,31 @@ type Grain = 'daily' | 'weekly' | 'monthly';
 
 function ActivationBars({ points }: { points: ActPoint[] }) {
   if (!points.length) return <div className="dim" style={{ fontSize: 12, padding: '8px 2px' }}>No activations recorded yet.</div>;
-  const W = 760, H = 130;
+  const W = 760, H = 150, padT = 14, padB = 20;
   const max = Math.max(...points.map((p) => p.activated ?? 0), 1);
   const gap = 1.5;
   const bw = (W - gap * (points.length - 1)) / points.length;
+  const showVals = points.length <= 32;          // value labels only when bars aren't too dense
+  const tickEvery = Math.max(1, Math.round(points.length / 8)); // ~8 dated x-axis ticks
   return (
     <svg viewBox={'0 0 ' + W + ' ' + H} style={{ width: '100%', height: 'auto', display: 'block' }} role="img" aria-label="activation rate over time">
+      <line x1={0} y1={H - padB} x2={W} y2={H - padB} stroke="var(--border)" strokeWidth={1} />
       {points.map((p, i) => {
-        const h = ((p.activated ?? 0) / max) * (H - 4);
+        const h = ((p.activated ?? 0) / max) * (H - padT - padB);
+        const xx = i * (bw + gap);
+        const cx = xx + Math.max(bw, 0.6) / 2;
         return (
-          <rect key={p.period ?? i} x={i * (bw + gap)} y={H - h} width={Math.max(bw, 0.6)} height={h} rx={bw > 3 ? 1 : 0} fill="var(--accent)">
-            <title>{p.period}: {num(p.activated)} activated</title>
-          </rect>
+          <g key={p.period ?? i}>
+            <rect x={xx} y={H - padB - h} width={Math.max(bw, 0.6)} height={h} rx={bw > 3 ? 1 : 0} fill="var(--accent)">
+              <title>{p.period}: {num(p.activated)} activated</title>
+            </rect>
+            {showVals && (p.activated ?? 0) > 0 && (
+              <text x={cx} y={H - padB - h - 3} textAnchor="middle" fontSize={8.5} fill="var(--muted)" fontFamily="var(--font-mono)">{num(p.activated)}</text>
+            )}
+            {i % tickEvery === 0 && (
+              <text x={cx} y={H - 6} textAnchor="middle" fontSize={9} fill="var(--faint)" fontFamily="var(--font-mono)">{fmtPeriod(p.period)}</text>
+            )}
+          </g>
         );
       })}
     </svg>
@@ -49,34 +72,46 @@ function ActivationBars({ points }: { points: ActPoint[] }) {
 }
 
 // Forward depletion: the projected on-shelf line falling toward the stockout, inside a low/high confidence cone.
-function DepletionChart({ proj, onShelf }: { proj: ProjPoint[]; onShelf: number }) {
-  if (!proj.length) return null;
-  const W = 760, H = 200, pad = 28;
-  const n = proj.length;
-  const maxV = Math.max(onShelf, ...proj.map((p) => p.high ?? 0), 1) * 1.05;
-  const x = (i: number) => pad + (i * (W - pad * 2)) / Math.max(n - 1, 1);
-  const y = (v: number) => H - pad - (v / maxV) * (H - pad * 2);
-  const line = (key: 'projected_on_shelf' | 'low' | 'high') =>
-    proj.map((p, i) => (i ? 'L' : 'M') + x(i).toFixed(1) + ' ' + y((p[key] as number) ?? 0).toFixed(1)).join(' ');
+// Actual on-shelf history (solid green) flowing into the forecast (dashed accent + cone), on a dated x-axis,
+// with "now" and forecast-stockout markers.
+function DepletionChart({ history, proj, onShelf }: { history: HistPoint[]; proj: ProjPoint[]; onShelf: number }) {
+  const hist = history ?? [];
+  if (!proj.length && hist.length < 2) return null;
+  const W = 760, H = 220, padL = 6, padR = 6, padT = 20, padB = 26;
+  const dates = [...hist.map((h) => h.week ?? ''), ...proj.map((p) => p.week ?? '')];
+  const n = Math.max(dates.length, 2);
+  const maxV = Math.max(onShelf, ...hist.map((h) => h.on_shelf ?? 0), ...proj.map((p) => p.high ?? p.projected_on_shelf ?? 0), 1) * 1.1;
+  const x = (i: number) => padL + (i * (W - padL - padR)) / (n - 1);
+  const y = (v: number) => H - padB - (v / maxV) * (H - padT - padB);
+  const histN = hist.length;
+  const bIdx = Math.max(histN - 1, 0);                 // "now" = last actual point
+  const fX = (j: number) => x(histN + j);
+  const histPath = hist.map((h, i) => (i ? 'L' : 'M') + x(i).toFixed(1) + ' ' + y(h.on_shelf ?? 0).toFixed(1)).join(' ');
+  const fcPath = `M ${x(bIdx).toFixed(1)} ${y(onShelf).toFixed(1)} ` + proj.map((p, j) => `L ${fX(j).toFixed(1)} ${y(p.projected_on_shelf ?? 0).toFixed(1)}`).join(' ');
   const cone =
-    proj.map((p, i) => (i ? 'L' : 'M') + x(i).toFixed(1) + ' ' + y(p.high ?? 0).toFixed(1)).join(' ') +
-    ' ' + proj.slice().reverse().map((p, j) => 'L' + x(n - 1 - j).toFixed(1) + ' ' + y(p.low ?? 0).toFixed(1)).join(' ') + ' Z';
-  // first week the mid line reaches zero — the forecast stockout
-  const zeroIdx = proj.findIndex((p) => (p.projected_on_shelf ?? 1) <= 0);
+    `M ${x(bIdx).toFixed(1)} ${y(onShelf).toFixed(1)} ` + proj.map((p, j) => `L ${fX(j).toFixed(1)} ${y(p.high ?? 0).toFixed(1)}`).join(' ') + ' ' +
+    proj.slice().reverse().map((p, j) => `L ${fX(proj.length - 1 - j).toFixed(1)} ${y(p.low ?? 0).toFixed(1)}`).join(' ') + ` L ${x(bIdx).toFixed(1)} ${y(onShelf).toFixed(1)} Z`;
+  const zeroJ = proj.findIndex((p) => (p.projected_on_shelf ?? 1) <= 0);
+  const tickEvery = Math.max(1, Math.round(n / 8));
   return (
-    <svg viewBox={'0 0 ' + W + ' ' + H} style={{ width: '100%', height: 'auto', display: 'block' }} role="img" aria-label="forecasted depletion">
-      <line x1={pad} y1={y(0)} x2={W - pad} y2={y(0)} stroke="var(--border)" strokeWidth={1} />
-      <path d={cone} fill="var(--accent)" opacity={0.12} />
-      <path d={line('high')} fill="none" stroke="var(--accent)" strokeWidth={1} opacity={0.35} strokeDasharray="3 3" />
-      <path d={line('low')} fill="none" stroke="var(--accent)" strokeWidth={1} opacity={0.35} strokeDasharray="3 3" />
-      <path d={line('projected_on_shelf')} fill="none" stroke="var(--accent-bright)" strokeWidth={2.5} />
-      {zeroIdx >= 0 && (
+    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', height: 'auto', display: 'block' }} role="img" aria-label="on-shelf actuals + forecasted depletion">
+      <line x1={0} y1={y(0)} x2={W} y2={y(0)} stroke="var(--border)" strokeWidth={1} />
+      {proj.length > 0 && <path d={cone} fill="var(--accent)" opacity={0.12} />}
+      {hist.length > 1 && <path d={histPath} fill="none" stroke="var(--ok)" strokeWidth={2.5} />}
+      {proj.length > 0 && <path d={fcPath} fill="none" stroke="var(--accent-bright)" strokeWidth={2.5} strokeDasharray="5 4" />}
+      {histN > 0 && (
         <g>
-          <line x1={x(zeroIdx)} y1={pad} x2={x(zeroIdx)} y2={H - pad} stroke="var(--danger)" strokeWidth={1.5} strokeDasharray="4 3" />
-          <text x={x(zeroIdx)} y={pad - 6} textAnchor="middle" fontSize={10} fill="var(--danger)" fontFamily="var(--font-mono)">stockout</text>
+          <line x1={x(bIdx)} y1={padT - 6} x2={x(bIdx)} y2={H - padB} stroke="var(--muted)" strokeWidth={1} strokeDasharray="2 3" />
+          <text x={x(bIdx)} y={padT - 9} textAnchor="middle" fontSize={9} fill="var(--muted)" fontFamily="var(--font-mono)">now</text>
         </g>
       )}
-      <text x={pad} y={y(onShelf) - 6} fontSize={10} fill="var(--faint)" fontFamily="var(--font-mono)">{num(onShelf)} on-shelf</text>
+      {zeroJ >= 0 && (
+        <g>
+          <line x1={fX(zeroJ)} y1={padT} x2={fX(zeroJ)} y2={H - padB} stroke="var(--danger)" strokeWidth={1.5} strokeDasharray="4 3" />
+          <text x={Math.min(fX(zeroJ), W - 26)} y={padT - 9} textAnchor="middle" fontSize={9} fill="var(--danger)" fontFamily="var(--font-mono)">stockout</text>
+        </g>
+      )}
+      {dates.map((d, i) => (i % tickEvery === 0 ? <text key={i} x={x(i)} y={H - 8} textAnchor="middle" fontSize={9} fill="var(--faint)" fontFamily="var(--font-mono)">{fmtPeriod(d)}</text> : null))}
     </svg>
   );
 }
@@ -143,9 +178,11 @@ export function AccountPage({ role }: { token: string; role: any; ctx: Ctx; toas
                 </div>
               </div>
             </div>
-            <DepletionChart proj={Array.isArray(f.projection) ? f.projection : []} onShelf={f.on_shelf ?? s.on_shelf ?? 0} />
-            <div className="dim" style={{ fontSize: 11, marginTop: 6 }}>
-              Projected on-shelf (solid) within a confidence cone that widens with the forecast horizon. The dashed line marks the forecast stockout.
+            <DepletionChart history={Array.isArray(f.history) ? f.history : []} proj={Array.isArray(f.projection) ? f.projection : []} onShelf={f.on_shelf ?? s.on_shelf ?? 0} />
+            <div className="row g12" style={{ fontSize: 11, marginTop: 6, alignItems: 'center' }}>
+              <span className="row g6"><span style={{ width: 16, height: 2.5, background: 'var(--ok)', display: 'inline-block' }} />actual on-shelf</span>
+              <span className="row g6"><span style={{ width: 16, height: 0, borderTop: '2.5px dashed var(--accent-bright)', display: 'inline-block' }} />forecast</span>
+              <span className="dim">shaded = confidence cone (widens with horizon); the red line is the forecast stockout.</span>
             </div>
           </Card>
 
