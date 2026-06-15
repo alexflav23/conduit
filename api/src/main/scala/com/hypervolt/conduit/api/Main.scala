@@ -9,6 +9,7 @@ import com.comcast.ip4s._
 import com.hypervolt.conduit.api.auth.AuthService
 import com.hypervolt.conduit.api.auth.GoogleTokenVerifier
 import com.hypervolt.conduit.api.routes.AccessRoutes
+import com.hypervolt.conduit.api.routes.ActivationRoutes
 import com.hypervolt.conduit.api.routes.AuditRoutes
 import com.hypervolt.conduit.api.routes.CommerceRoutes
 import com.hypervolt.conduit.api.routes.CreditRoutes
@@ -95,6 +96,7 @@ object Main extends IOApp.Simple {
         val pricingRoutes     = new PricingRoutes[IO](xa, auth).routes
         val commerceRoutes    = new CommerceRoutes[IO](xa, auth).routes
         val crmRoutes         = new CrmRoutes[IO](xa, auth).routes
+        val activationRoutes  = new ActivationRoutes[IO](xa, auth).routes
         val dealDeskRoutes    = new DealDeskRoutes[IO](xa, auth).routes
         val h6qRoutes         = new H6QRoutes[IO](xa, auth).routes
         val forecastRunRoutes = new ForecastRunRoutes[IO](xa, auth).routes
@@ -143,7 +145,7 @@ object Main extends IOApp.Simple {
             "/" -> (HealthRoutes
               .routes[
                 IO
-              ] <+> accessRoutes <+> pricingRoutes <+> commerceRoutes <+> crmRoutes <+> dealDeskRoutes <+> h6qRoutes <+> forecastRunRoutes <+> icRoutes <+> creditRoutes <+> auditRoutes <+> stripeRoutes <+> documentRoutes <+> attachmentRoutes <+> voidRoutes <+> lifecycleRoutes <+> taxRoutes <+> procurementRoutes <+> structureRoutes <+> returnRoutes <+> privacyRoutes <+> proofRoutes)
+              ] <+> accessRoutes <+> pricingRoutes <+> commerceRoutes <+> crmRoutes <+> activationRoutes <+> dealDeskRoutes <+> h6qRoutes <+> forecastRunRoutes <+> icRoutes <+> creditRoutes <+> auditRoutes <+> stripeRoutes <+> documentRoutes <+> attachmentRoutes <+> voidRoutes <+> lifecycleRoutes <+> taxRoutes <+> procurementRoutes <+> structureRoutes <+> returnRoutes <+> privacyRoutes <+> proofRoutes)
           ).orNotFound
         val host      = Ipv4Address.fromString(cfg.http.host).getOrElse(ipv4"0.0.0.0")
         val apiPort   = Port.fromInt(cfg.http.port).getOrElse(port"8080")

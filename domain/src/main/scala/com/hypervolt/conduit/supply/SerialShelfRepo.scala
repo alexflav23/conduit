@@ -58,4 +58,36 @@ object SerialShelfRepo {
   // Finished-goods on hand for a SKU (what's available to cover demand before a new PO is needed).
   def onHand(variant: UUID): ConnectionIO[Int] =
     sql"SELECT COALESCE(SUM(qty_on_hand),0)::int FROM stock_item WHERE product_variant_id = $variant".query[Int].unique
+
+  // Activation feed (doc 08 §M8): the live sell-through stream — each serial flipping to 'activated', newest
+  // first, attributed to the owning account. Installer/owner are captured at field activation (absent in the
+  // bulk MRP import), so the account name carries the attribution here.
+  def activationFeed(limit: Int): ConnectionIO[List[Json]] =
+    sql"""SELECT s.serial_no, s.activated_at, p.display_name
+          FROM serial_unit s LEFT JOIN party p ON p.id = s.company_id
+          WHERE s.status = 'activated' AND s.activated_at IS NOT NULL
+          ORDER BY s.activated_at DESC
+          LIMIT $limit"""
+      .query[(String, java.time.Instant, Option[String])]
+      .to[List]
+      .map(_.map {
+        case (sn, at, owner) =>
+          Json.obj(
+            "sn"           -> sn.asJson,
+            "activated_at" -> at.toString.asJson,
+            "owner"        -> owner.asJson,
+            "installer"    -> Json.Null
+          )
+      })
+
+  // Sell-in vs sell-through headline: everything dispatched (still on a shelf or already activated) vs activated.
+  def sellInVsThrough: ConnectionIO[Json] =
+    sql"""SELECT count(*) FILTER (WHERE status IN ('dispatched','activated')), count(*) FILTER (WHERE status = 'activated')
+          FROM serial_unit"""
+      .query[(Int, Int)]
+      .unique
+      .map { case (dispatched, activated) => Json.obj("dispatched" -> dispatched.asJson, "activated" -> activated.asJson) }
+
+  def activatedCount: ConnectionIO[Int] =
+    sql"SELECT count(*) FROM serial_unit WHERE status = 'activated'".query[Int].unique
 }
