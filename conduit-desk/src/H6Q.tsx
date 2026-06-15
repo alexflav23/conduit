@@ -250,13 +250,14 @@ function MatrixCard({ market, scenario, sid, hasCommercial, dim }: { market: str
 // Demand board (the "By sector" view): segment rows with quarterly shape, trend (sparkline + QoQ), shipped,
 // attainment, and revenue — each segment expandable to its contributing accounts (the base forecast unit).
 // ---------------------------------------------------------------------------
+interface QCell { q: string; units: number; shipped?: number; attainment?: number | null; eoq?: number | null; state?: string }
 interface BoardRow {
   key?: string;
   label?: string;
-  quarters?: { q: string; units: number }[];
+  quarters?: QCell[];
   forecast?: number;
   shipped?: number;
-  attainment?: number;
+  forecast_attainment?: number | null;
   trend?: { qoq_pct: number; spark: number[] };
   revenue?: string;
   contributors?: BoardRow[] | null;
@@ -265,8 +266,32 @@ interface BoardData {
   months?: string[];
   currency?: string;
   fx_rate?: string;
+  as_of?: string;
   segments?: BoardRow[];
-  total?: { forecast: number; shipped: number; attainment: number; revenue: string; quarters: { q: string; units: number }[] };
+  total?: BoardRow;
+}
+
+// Attainment % with industry-correct semantics: prior quarter = actual, in-progress = QTD → forecast EOQ,
+// future = nothing (no forward attainment on physical installs).
+function AttnPct({ pct }: { pct?: number | null }) {
+  if (pct == null) return <span className="dim">—</span>;
+  const v = pct * 100;
+  const c = v >= 95 ? 'var(--ok)' : v >= 70 ? 'var(--warn)' : 'var(--danger)';
+  return <span style={{ color: c, fontWeight: 600 }}>{v.toFixed(0)}%</span>;
+}
+function QuarterCell({ c }: { c?: QCell }) {
+  if (!c) return <td className="num dim">—</td>;
+  return (
+    <td className="num">
+      <div>{num(c.units)}</div>
+      {c.state === 'prior' && c.attainment != null && (
+        <div style={{ fontSize: 10 }}><AttnPct pct={c.attainment} /></div>
+      )}
+      {c.state === 'current' && (
+        <div style={{ fontSize: 10 }}><AttnPct pct={c.attainment} />{c.eoq != null && <span className="dim"> → {(c.eoq * 100).toFixed(0)}%</span>}</div>
+      )}
+    </td>
+  );
 }
 
 function Spark({ data }: { data?: number[] }) {
@@ -290,8 +315,8 @@ function TrendCell({ t }: { t?: { qoq_pct: number; spark: number[] } }) {
 }
 
 function DemandRow({ r, qkeys, depth, expanded, toggle, money }: { r: BoardRow; qkeys: string[]; depth: number; expanded: Set<string>; toggle: (k: string) => void; money: (v?: string) => string }) {
-  const qmap: Record<string, number> = {};
-  (r.quarters ?? []).forEach((x) => { qmap[x.q] = x.units; });
+  const qmap: Record<string, QCell> = {};
+  (r.quarters ?? []).forEach((x) => { qmap[x.q] = x; });
   const kids = Array.isArray(r.contributors) ? r.contributors : [];
   const open = expanded.has(r.key ?? '');
   return (
@@ -305,11 +330,11 @@ function DemandRow({ r, qkeys, depth, expanded, toggle, money }: { r: BoardRow; 
           <b style={depth > 0 ? { fontWeight: 400, fontSize: 12.5 } : undefined}>{r.label}</b>
           {kids.length > 0 ? <span className="dim" style={{ fontSize: 10.5, marginLeft: 6 }}>{kids.length} accounts</span> : null}
         </td>
-        {qkeys.map((q) => <td key={q} className="num">{num(qmap[q] ?? 0)}</td>)}
+        {qkeys.map((q) => <QuarterCell key={q} c={qmap[q]} />)}
         <td><TrendCell t={r.trend} /></td>
         <td className="num"><b>{num(r.forecast)}</b></td>
         <td className="num dim">{num(r.shipped)}</td>
-        <td style={{ width: 120 }}><Coverage pct={(r.attainment ?? 0) * 100} /></td>
+        <td style={{ width: 130 }}>{r.forecast_attainment == null ? <span className="dim">—</span> : <Coverage pct={r.forecast_attainment * 100} />}</td>
         <td className="num" style={{ fontWeight: 600 }}>{money(r.revenue)}</td>
       </tr>
       {open && kids.map((c) => <DemandRow key={c.key} r={c} qkeys={qkeys} depth={depth + 1} expanded={expanded} toggle={toggle} money={money} />)}
@@ -362,7 +387,7 @@ function DemandBoardCard({ market, scenario, sid, hasCommercial }: { market: str
             <th>Trend</th>
             <th className="num">Forecast</th>
             <th className="num">Shipped</th>
-            <th style={{ width: 120 }}>Attainment</th>
+            <th style={{ width: 130 }}>Fcst attain<span className="dim" style={{ fontWeight: 400 }}> · yr</span></th>
             <th className="num">Revenue</th>
           </tr></thead>
           <tbody>
@@ -373,17 +398,17 @@ function DemandBoardCard({ market, scenario, sid, hasCommercial }: { market: str
           {state === 'ready' && total && (
             <tfoot><tr>
               <td style={{ position: 'sticky', left: 0, background: 'var(--surface)' }}><b>Total</b></td>
-              {qkeys.map((qk) => <td key={qk} className="num"><b>{num(total.quarters.find((x) => x.q === qk)?.units ?? 0)}</b></td>)}
+              {qkeys.map((qk) => <QuarterCell key={qk} c={(total.quarters ?? []).find((x) => x.q === qk)} />)}
               <td></td>
               <td className="num"><b>{num(total.forecast)}</b></td>
               <td className="num dim">{num(total.shipped)}</td>
-              <td style={{ width: 120 }}><Coverage pct={(total.attainment ?? 0) * 100} /></td>
+              <td style={{ width: 130 }}>{total.forecast_attainment == null ? <span className="dim">—</span> : <Coverage pct={total.forecast_attainment * 100} />}</td>
               <td className="num"><b>{money(total.revenue)}</b></td>
             </tr></tfoot>
           )}
         </table>
       )}
-      <div className="layer-note" style={{ padding: '9px 14px' }}>{I.layers()}Segments roll up from account-level forecasts — expand one to its accounts. Revenue = forecast units × the segment&rsquo;s realized net price (tiered per customer type).{!hasCommercial && ' Revenue is layer-restricted for your role.'}</div>
+      <div className="layer-note" style={{ padding: '9px 14px' }}>{I.layers()}Attainment is time-aware: prior quarters show actual shipped ÷ forecast; the quarter in progress shows quarter-to-date <b>→</b> a run-rate forecast to end-of-quarter; future quarters have none. <b>Fcst attain · yr</b> is the pro-rata run-rate for the full year. Revenue = forecast units × the segment&rsquo;s net tier price.{!hasCommercial && ' Revenue is layer-restricted for your role.'}</div>
     </Card>
   );
 }

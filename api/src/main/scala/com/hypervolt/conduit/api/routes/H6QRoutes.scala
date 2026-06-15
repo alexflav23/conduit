@@ -490,7 +490,7 @@ final class H6QRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
               case Left(e) => Async[F].pure(Left(e))
               case Right((market, scenario)) =>
                 val currency = currencyOpt.map(_.trim.toUpperCase).filter(_.nonEmpty).getOrElse("GBP")
-                DemandBoardRepo.board(market, scenario, contributorsPerSegment = 12, currency = currency)
+                DemandBoardRepo.board(market, scenario, contributorsPerSegment = 12, currency = currency, now = java.time.LocalDate.now())
                   .transact(xa)
                   .map(j => Right(Projection.projectFor(principal, "pipeline_coverage", j)))
             }
