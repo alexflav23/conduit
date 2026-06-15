@@ -296,8 +296,9 @@ object SnapshotLoader {
         val total  = num(c, "total_price_cur").orElse(num(c, "total_price")).getOrElse(BigDecimal(0))
         mrpParty(customer).flatMap { party =>
           sql"""INSERT INTO "order" (order_no, type, sold_to_party_id, bill_to_party_id, status, txn_currency,
-                                     payment_method, subtotal_ex_vat, vat_total, total_inc_vat)
-                VALUES (${"MRP-" + code}, 'trade', $party, $party, $status, 'GBP', 'invoice', $total, 0, $total)
+                                     payment_method, subtotal_ex_vat, vat_total, total_inc_vat, market_id, order_date)
+                VALUES (${"MRP-" + code}, 'trade', $party, $party, $status, 'GBP', 'invoice', $total, 0, $total,
+                        (SELECT id FROM market WHERE code = 'UK'), $created)
                 ON CONFLICT (order_no) DO NOTHING RETURNING id""".query[UUID].option.flatMap {
             case None => 0.pure[ConnectionIO] // already loaded — idempotent
             case Some(orderId) =>

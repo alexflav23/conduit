@@ -204,4 +204,35 @@ object OrderRepo {
           })
         )
     }
+
+  // Order worklist (doc 06): the historical order register, newest first, with the buying account name and a line
+  // count. Optional market/status filters and a free-text match over order number or customer.
+  def list(market: Option[UUID], status: Option[String], q: Option[String], limit: Int): ConnectionIO[List[Json]] =
+    (fr"""SELECT o.id, o.order_no, o.status, o.type, o.adlp_category, o.txn_currency,
+                 o.subtotal_ex_vat, o.total_inc_vat, o.order_date, p.display_name,
+                 (SELECT count(*) FROM order_line ol WHERE ol.order_id = o.id)
+          FROM "order" o JOIN party p ON p.id = o.sold_to_party_id""" ++
+      Fragments.whereAndOpt(
+        market.map(mk => fr"o.market_id = $mk"),
+        status.map(s => fr"o.status = $s"),
+        q.map(term => fr"(o.order_no ILIKE ${"%" + term + "%"} OR p.display_name ILIKE ${"%" + term + "%"})")
+      ) ++ fr"ORDER BY o.order_date DESC LIMIT $limit")
+      .query[(UUID, String, String, String, String, String, BigDecimal, BigDecimal, Instant, String, Int)]
+      .to[List]
+      .map(_.map {
+        case (id, no, st, tpe, adlp, ccy, sub, total, date, customer, lines) =>
+          Json.obj(
+            "id"              -> id.toString.asJson,
+            "order_no"        -> no.asJson,
+            "status"          -> st.asJson,
+            "type"            -> tpe.asJson,
+            "adlp_category"   -> adlp.asJson,
+            "currency"        -> ccy.asJson,
+            "subtotal_ex_vat" -> sub.toString.asJson,
+            "total_inc_vat"   -> total.toString.asJson,
+            "order_date"      -> date.toString.asJson,
+            "customer"        -> customer.asJson,
+            "lines"           -> lines.asJson
+          )
+      })
 }

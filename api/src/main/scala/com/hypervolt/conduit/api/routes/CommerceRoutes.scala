@@ -268,6 +268,30 @@ final class CommerceRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F])
           }
       )
 
+  private val listOrders =
+    base.get
+      .in("api" / "v1" / "orders")
+      .in(query[Option[String]]("market"))
+      .in(query[Option[String]]("status"))
+      .in(query[Option[String]]("q"))
+      .in(query[Option[Int]]("limit"))
+      .out(jsonBody[Json])
+      .serverLogic(principal => {
+        case (market, status, q, limit) =>
+          if (!PolicyEngine.hasPermission(principal, Action.View, "order"))
+            Async[F].pure(Left(err(StatusCode.Forbidden, "forbidden", "requires view:order")))
+          else
+            optUuid(market) match {
+              case Left(e) => Async[F].pure(Left(e))
+              case Right(mk) =>
+                val cap = limit.getOrElse(100).min(500).max(1)
+                OrderRepo
+                  .list(mk, status.filter(_.nonEmpty), q.filter(_.nonEmpty), cap)
+                  .transact(xa)
+                  .map(rows => Right(Json.fromValues(rows.map(r => Projection.projectFor(principal, "order", r)))))
+            }
+      })
+
   private def orderJson(o: PlacedOrder): Json =
     Json.obj(
       "id"            -> o.id.toString.asJson,
@@ -281,6 +305,6 @@ final class CommerceRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F])
 
   val routes: HttpRoutes[F] =
     Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(
-      List(createParty, billingProfile, creditProfile, placeOrder, amendOrder, getOrder)
+      List(createParty, billingProfile, creditProfile, placeOrder, amendOrder, listOrders, getOrder)
     )
 }
