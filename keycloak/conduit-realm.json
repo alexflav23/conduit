@@ -50,16 +50,6 @@
         "syncMode": "FORCE"
       }
     }
-  ],
-  "users": [
-    {
-      "username": "flavian@hypervolt.co.uk",
-      "email": "flavian@hypervolt.co.uk",
-      "emailVerified": true,
-      "firstName": "Flavian",
-      "lastName": "Alexandru",
-      "enabled": true,
-      "credentials": [{ "type": "password", "value": "conduit-dev", "temporary": false }]
-    }
   ]
 }
+
