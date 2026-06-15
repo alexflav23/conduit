@@ -252,8 +252,9 @@ object SnapshotLoader {
     sql"SELECT id FROM party WHERE display_name = ${"MRP: " + name}".query[UUID].option.flatMap {
       case Some(id) => id.pure[ConnectionIO]
       case None =>
-        sql"""INSERT INTO party (display_name, party_type, is_organization, segment)
-              VALUES (${"MRP: " + name}, 'wholesaler', true, ${segmentOf(name)}) RETURNING id"""
+        sql"""INSERT INTO party (display_name, party_type, is_organization, segment, market_id)
+              VALUES (${"MRP: " + name}, 'wholesaler', true, ${segmentOf(name)},
+                      (SELECT id FROM market WHERE code = 'UK')) RETURNING id"""
           .query[UUID]
           .unique
     }
