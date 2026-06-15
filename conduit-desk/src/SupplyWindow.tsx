@@ -179,6 +179,25 @@ export function SupplyWindow({ role, ctx, toast }: { role: any; ctx: any; toast:
     );
   }
 
+  // No contract manufacturers ⇒ the supply side isn't in this environment (the ingested data is sales-side:
+  // orders, shipments, activations — there are no supplier POs/commitments). Show one honest panel rather than
+  // rendering the per-lane skeletons, which would spin forever because no supplier can be selected.
+  if (!cmsQ.isLoading && !cmsErr && cms.length === 0) {
+    return (
+      <div className="page">
+        {toastNode}
+        <PageHead crumb={'H6Q · Supply window'} title="Supply window" sub="Firm-commitment horizon, auto-PO proposals behind a human gate, and divergence warnings per contract manufacturer." />
+        <Card style={{ padding: '34px 28px', textAlign: 'center' }} data-testid="supply-no-cms">
+          <div style={{ display: 'grid', placeItems: 'center', gap: 10 }}>
+            <span style={{ width: 44, height: 44, borderRadius: 12, display: 'grid', placeItems: 'center', background: 'var(--panel-2)' }}>{I.cpu({ size: 22 })}</span>
+            <div style={{ fontFamily: 'var(--font-disp)', fontSize: 18, fontWeight: 600 }}>No contract manufacturers in this environment</div>
+            <div className="dim" style={{ fontSize: 12.5, maxWidth: 480 }}>The supply window tracks firm commitments + auto-PO proposals against contract manufacturers (e.g. Luxshare). The ingested data is sales-side (orders, shipments, activations) — no supplier POs/commitments exist yet, so there's nothing to schedule against.</div>
+          </div>
+        </Card>
+      </div>
+    );
+  }
+
   return (
     <div className="page">
       {toastNode}
