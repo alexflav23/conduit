@@ -24,6 +24,7 @@ import { Commission } from './Commission';
 import { Documents } from './Documents';
 import { Lifecycle } from './Lifecycle';
 import { Warranty } from './Warranty';
+import { Shadow } from './Shadow';
 import { Tax } from './Tax';
 import { Intercompany } from './Intercompany';
 import { Procurement } from './Procurement';
@@ -54,7 +55,7 @@ type TabId =
   | 'inventory' | 'purchasing' | 'batch' | 'activation' | 'warranty'
   | 'finance' | 'commission' | 'docs' | 'lifecycle' | 'tax'
   | 'intercompany' | 'procurement' | 'treasury'
-  | 'audit' | 'period' | 'sync' | 'proof' | 'access' | 'notifications';
+  | 'audit' | 'period' | 'sync' | 'shadow' | 'proof' | 'access' | 'notifications';
 
 interface NavItem { id: TabId; label: string; icon: keyof typeof I }
 
@@ -97,6 +98,7 @@ const GROUPS: { sec: string; items: NavItem[] }[] = [
     { id: 'audit', label: 'Auditability', icon: 'shield' },
     { id: 'period', label: 'Period', icon: 'clock' },
     { id: 'sync', label: 'Sync', icon: 'sync' },
+    { id: 'shadow', label: 'Shadow validation', icon: 'shield' },
     { id: 'proof', label: 'Proof Center', icon: 'scale' },
     { id: 'access', label: 'Access', icon: 'settings' },
     { id: 'notifications', label: 'Notifications', icon: 'bell' },
@@ -110,7 +112,7 @@ const PAGES: Record<TabId, React.ComponentType<any>> = {
   order: OrderDesk, dealdesk: DealDesk, returns: Returns, crm: CRM, reseller: Reseller,
   h6q: H6Q, flow: Flow, supply: SupplyWindow, shelf: Shelf, engine: Forecasting, runs: ForecastRuns,
   inventory: Inventory, purchasing: Purchasing, batch: BatchGenealogy, activation: Activation,
-  finance: Finance, commission: Commission, docs: Documents, lifecycle: Lifecycle, warranty: Warranty, tax: Tax,
+  finance: Finance, commission: Commission, docs: Documents, lifecycle: Lifecycle, warranty: Warranty, tax: Tax, shadow: Shadow,
   intercompany: Intercompany, procurement: Procurement, treasury: Treasury,
   audit: Auditability, period: Period, sync: Sync, proof: Proof, access: Access, notifications: Notifications,
 };

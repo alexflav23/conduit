@@ -190,6 +190,11 @@ body {
 .btn.primary { background: var(--accent); border-color: transparent; color: var(--on-accent);
   box-shadow: 0 1px 2px rgba(150,45,255,0.30), inset 0 1px 0 rgba(255,255,255,0.2); }
 .btn.primary:hover { background: var(--accent-bright); filter: none; }
+/* compact toggle chip — filter + inline triage actions (shadow validation queue, etc.) */
+.chipbtn { font-family: var(--font-ui); font-size: 11.5px; font-weight: 600; cursor: pointer; padding: 3px 9px; border-radius: 7px;
+  border: 1px solid var(--border); background: var(--tint); color: var(--muted); transition: background var(--fast), color var(--fast), border-color var(--fast); white-space: nowrap; }
+.chipbtn:hover { background: var(--tint-2); color: var(--text); border-color: var(--border-strong); }
+.chipbtn.on { background: var(--accent); border-color: transparent; color: var(--on-accent); }
 .btn.primary:disabled, .btn:disabled { opacity: 0.4; cursor: not-allowed; box-shadow: none; filter: none; transform: none; }
 .btn.danger { color: var(--danger); border-color: rgba(255,107,126,0.34); background: var(--danger-bg); }
 .btn.danger:hover { background: rgba(255,107,126,0.20); }
