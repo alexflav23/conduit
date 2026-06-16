@@ -23,7 +23,39 @@ interface ActivationProps {
   role: AnyRole;
   ctx: { market?: string; entity?: string; period?: string; scenario?: string };
   toast: (m: string, k?: string) => void;
-  sub?: string; // subroute: 'capacity' (default) | 'live'
+  token: string;
+  sub?: string; // subroute: 'capacity' (default) | 'live' | 'analytics'
+}
+
+interface StreamRow { serial: string; activated_at: string; owner?: string; _t: number }
+
+// Live activation stream via SSE (EventSource). On connect the server replays a recent backlog, then pushes new
+// activations as they arrive; the token rides as a query param (EventSource can't set headers). Newest-first.
+function useActivationStream(token: string, enabled: boolean): { rows: StreamRow[]; connected: boolean } {
+  const [rows, setRows] = React.useState<StreamRow[]>([]);
+  const [connected, setConnected] = React.useState(false);
+  const [, setTick] = React.useState(0);
+  React.useEffect(() => {
+    if (!enabled) return;
+    const t = setInterval(() => setTick((x) => x + 1), 3000); // re-render so the "new" glow fades
+    return () => clearInterval(t);
+  }, [enabled]);
+  React.useEffect(() => {
+    if (!enabled || !token) return;
+    const es = new EventSource(`/api/v1/activations/stream?token=${encodeURIComponent(token)}`);
+    es.onopen = () => setConnected(true);
+    es.addEventListener('activation', (e) => {
+      try {
+        const d = JSON.parse((e as MessageEvent).data);
+        setRows((prev) => [{ serial: d.serial, activated_at: d.activated_at, owner: d.owner, _t: Date.now() }, ...prev].slice(0, 200));
+      } catch {
+        /* ignore malformed frame */
+      }
+    });
+    es.onerror = () => setConnected(false);
+    return () => es.close();
+  }, [token, enabled]);
+  return { rows, connected };
 }
 
 function StatCard({ label, value, tone }: { label: string; value: string; tone?: string }) {
@@ -326,9 +358,10 @@ function SeriesBars({ data }: { data: ActSeriesPoint[] }) {
   );
 }
 
-export function Activation({ role, ctx, toast, sub }: ActivationProps) {
+export function Activation({ role, ctx, toast, token, sub }: ActivationProps) {
   const navigate = useNavigate();
   const view = sub === 'live' ? 'live' : sub === 'analytics' ? 'analytics' : 'capacity';
+  const stream = useActivationStream(token, view === 'live');
   const layers = role?.layers ?? [];
   const canSeeProvision = layers.length === 0 || layers.indexOf('profitability') >= 0;
 
@@ -456,35 +489,35 @@ export function Activation({ role, ctx, toast, sub }: ActivationProps) {
             <StatCard label="Sell-through" value={`${fmtPct(throughPct)}%`} />
             <StatCard label="Capacity online" value={`${num(Math.round(capH?.total_mw ?? 0))} MW`} tone={V2G} />
           </div>
-          <Card title="Live activations" icon={I.wifi} aux="newest first · placement stream (Pulsar)" style={{ padding: 0 }} className="tablewrap">
+          <Card title="Live activations" icon={I.wifi} aux="real-time SSE · placement stream" style={{ padding: 0 }} className="tablewrap">
             <LoadBar>
-              <div className="seg">
-                {['all', 'UK', 'IE'].map((m) => (
-                  <button key={m} className={market === m ? 'on' : ''} onClick={() => setMarket(m)}>{m === 'all' ? 'All' : m}</button>
-                ))}
-              </div>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 'var(--fs-small)', fontWeight: 600 }}>
+                <span style={{ width: 8, height: 8, borderRadius: 8, background: stream.connected ? 'var(--ok)' : 'var(--faint)', boxShadow: stream.connected ? '0 0 7px var(--ok)' : 'none' }} />
+                {stream.connected ? 'live' : 'connecting…'}
+              </span>
               <div style={{ flex: 1 }} />
-              <span className="dim" style={{ fontSize: 'var(--fs-small)' }}>{feedReady ? `${num(feedTotal)} activations` : feedApi.isLoading ? 'loading…' : ''}</span>
+              <span className="dim" style={{ fontSize: 'var(--fs-small)' }}>{num(feedTotal)} total · {num(stream.rows.length)} streamed</span>
             </LoadBar>
-            {feedNotImpl ? (
-              <div style={{ padding: 16 }}><NotAvailable which="activation feed" /></div>
+            {feedForbidden ? (
+              <div style={{ padding: 16 }}><LayerNote>Activation feed hidden — requires the <b>volume</b> layer (<code>view:activation</code>).</LayerNote></div>
             ) : (
               <div style={{ maxHeight: 560, overflowY: 'auto' }}>
                 <table className="tbl">
                   <thead><tr><th>Serial</th><th>Activated</th><th>Owner</th><th>Mkt</th></tr></thead>
                   <tbody>
-                    {feedApi.isLoading && <SkeletonRow cols={4} />}
-                    {feedForbidden && (<tr><td colSpan={4}><LayerNote>Activation feed hidden — requires the <b>volume</b> layer (<code>view:activation</code>).</LayerNote></td></tr>)}
-                    {feedOther && (<tr><td colSpan={4}><div className="banner danger">Could not load activations ({feedErr?.status}).</div></td></tr>)}
-                    {feedReady && acts.map((a, i) => (
-                      <tr key={a.sn ?? a.serial ?? i}>
-                        <td className="mono">{a.sn ?? a.serial}</td>
-                        <td className="dim">{a.activated_at ?? a.activatedAt}</td>
-                        <td className="dim">{a.owner}</td>
-                        <td><Chip s="neutral">{a.market ?? 'UK'}</Chip></td>
-                      </tr>
-                    ))}
-                    {feedReady && acts.length === 0 && <EmptyRow cols={4}>No activations in this market yet.</EmptyRow>}
+                    {stream.rows.length === 0 && !stream.connected && <SkeletonRow cols={4} />}
+                    {stream.rows.map((r, i) => {
+                      const fresh = Date.now() - r._t < 6000;
+                      return (
+                        <tr key={r.serial + '|' + i} style={fresh ? { background: 'color-mix(in srgb, var(--accent) 14%, transparent)', transition: 'background 1.5s' } : { transition: 'background 1.5s' }}>
+                          <td className="mono">{r.serial}</td>
+                          <td className="dim">{new Date(r.activated_at).toLocaleString()}</td>
+                          <td className="dim">{r.owner}</td>
+                          <td><Chip s="neutral">UK</Chip></td>
+                        </tr>
+                      );
+                    })}
+                    {stream.rows.length === 0 && stream.connected && <EmptyRow cols={4}>No recent activations on the stream.</EmptyRow>}
                   </tbody>
                 </table>
               </div>
