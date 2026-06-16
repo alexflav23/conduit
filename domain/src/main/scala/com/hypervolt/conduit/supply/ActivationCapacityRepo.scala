@@ -11,9 +11,10 @@ import scala.math.BigDecimal.RoundingMode.HALF_UP
 // Capacity-connected view (doc 08 fleet analytics): how much EV-charging capacity Hypervolt is actually bringing
 // online over time. Every activated charger is a UK domestic single-phase 32 A install = 7.4 kW connected — the
 // honest per-unit constant for the Home 3 / Home 3 Pro range (no three-phase units in the activated register), not
-// a fabricated figure. The headline metric is the smoothed daily run-rate: a trailing simple moving average of
-// daily MW (default 28 days = 4× weekly, so weekday seasonality cancels and there is no look-ahead), alongside the
-// cumulative MW online (the whole fleet, seeded with the activations that predate the window).
+// a fabricated figure. The headline metric is the smoothed daily run-rate: a trailing mean of daily MW over the
+// last `smooth` calendar days, averaged over WORKING DAYS only (weekends excluded — installs are a weekday
+// activity, and weekend near-zeros otherwise drag the mean down ~⅓), alongside the cumulative MW online (the whole
+// fleet, counting every activation regardless of weekday, seeded with the activations that predate the window).
 object ActivationCapacityRepo {
 
   // kW per activated charger: single-phase 32 A domestic install. Documented constant — every activated SKU in the
@@ -53,15 +54,25 @@ object ActivationCapacityRepo {
 
   private def mw(units: BigDecimal): Double = (units * KwPerUnit / 1000).setScale(3, HALF_UP).toDouble
 
+  private def isWeekday(d: LocalDate): Boolean = d.getDayOfWeek.getValue <= 5 // Mon..Fri = 1..5
+
   def capacity(windowMonths: Int, smoothingDays: Int): ConnectionIO[Json] = {
     val months = windowMonths.max(1).min(60)
     val smooth = smoothingDays.max(1).min(120)
     baseline(months).flatMap(base0 =>
       dailySeries(months).map { rows =>
         val units  = rows.map(_._2).toVector
-        val prefix = units.scanLeft(0L)(_ + _) // prefix(i) = Σ first i days
-        val trailingMean: Int => BigDecimal =
-          i => BigDecimal(prefix(i + 1) - prefix(math.max(0, i + 1 - smooth))) / math.min(i + 1, smooth)
+        val prefix = units.scanLeft(0L)(_ + _) // prefix(i) = Σ first i days — drives cumulative MW (all days)
+        // Weekends drag the run-rate down — installs are a working-day activity — so the trailing mean is computed
+        // over BUSINESS DAYS only: weekend units are excluded from both the sum and the day count. Cumulative MW
+        // still counts every activation, whatever weekday it fell on.
+        val bizUnitPre  = rows.map { case (d, u) => if (isWeekday(d)) u else 0L }.scanLeft(0L)(_ + _).toVector
+        val bizCountPre = rows.map { case (d, _) => if (isWeekday(d)) 1L else 0L }.scanLeft(0L)(_ + _).toVector
+        val trailingMean: Int => BigDecimal = { i =>
+          val lo = math.max(0, i + 1 - smooth)
+          val ct = bizCountPre(i + 1) - bizCountPre(lo)
+          if (ct == 0L) BigDecimal(0) else BigDecimal(bizUnitPre(i + 1) - bizUnitPre(lo)) / ct
+        }
         val points = rows.zipWithIndex.map {
           case ((d, u), i) =>
             Json.obj(

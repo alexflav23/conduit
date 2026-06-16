@@ -173,6 +173,59 @@ function NotAvailable({ which }: { which: string }) {
   );
 }
 
+// "How fast is that?" — frames Hypervolt's install pace against AI-data-centre scale, the energy story of the
+// moment. At the current average install rate (MW per working day → ×260 working days ≈ MW/year), how long would
+// it take to connect as much grid power as some of the data centres being built right now? The capacities are
+// approximate ANNOUNCED/PUBLISHED figures — external reference points, clearly not Hypervolt data.
+const DATA_CENTRES: { name: string; power: number; note: string }[] = [
+  { name: 'Typical hyperscale data centre', power: 100, note: '≈100 MW' },
+  { name: 'xAI · Colossus (Memphis)', power: 300, note: '≈300 MW reported' },
+  { name: 'OpenAI · Stargate (Abilene)', power: 1000, note: '≈1 GW, first phase' },
+  { name: 'Meta · Hyperion', power: 5000, note: '≈5 GW planned' },
+];
+
+const fmtPower = (mw: number) => (mw >= 1000 ? `${(mw / 1000).toFixed(mw % 1000 === 0 ? 0 : 1)} GW` : `${mw} MW`);
+const fmtSpan = (years: number) =>
+  !Number.isFinite(years) || years <= 0 ? '—' : years >= 1.5 ? `${years.toFixed(1)} years` : `${Math.max(1, Math.round(years * 12))} months`;
+
+function DataCentreCompare({ ratePerWorkingDay, loading }: { ratePerWorkingDay: number; loading: boolean }) {
+  const annual = ratePerWorkingDay * 260; // ~260 working days a year ⇒ MW connected per calendar year at this pace
+  const spans = DATA_CENTRES.map((d) => ({ ...d, years: annual > 0 ? d.power / annual : Infinity }));
+  const maxYears = Math.max(...spans.map((s) => (Number.isFinite(s.years) ? s.years : 0)), 0.001);
+  return (
+    <Card style={{ marginBottom: 14, padding: 0 }} className="tablewrap">
+      <div style={{ padding: '14px 18px 4px' }}>
+        <div className="muted" style={{ fontSize: 'var(--fs-small)' }}>How fast is that?</div>
+        <div className="dim" style={{ fontSize: 'var(--fs-xs)', marginTop: 2, maxWidth: 760 }}>
+          AI data centres are the energy story of the moment. At our current pace —{' '}
+          {loading ? '…' : <b>{ratePerWorkingDay.toFixed(2)} MW per working day</b>}{' '}
+          ({loading ? '…' : `≈${num(Math.round(annual))} MW`}/year) — here's how long it would take Hypervolt to connect as much grid power as one of them.
+        </div>
+      </div>
+      <div style={{ padding: '6px 18px 14px' }}>
+        {spans.map((s) => (
+          <div key={s.name} className="row g12" style={{ alignItems: 'center', padding: '9px 0', borderBottom: '1px solid var(--border)' }}>
+            <div style={{ width: 240, minWidth: 240 }}>
+              <div style={{ fontSize: 'var(--fs-small)', fontWeight: 600 }}>{s.name}</div>
+              <div className="dim" style={{ fontSize: 'var(--fs-xs)' }}>{s.note}</div>
+            </div>
+            <div style={{ width: 64, textAlign: 'right', fontFamily: 'var(--font-disp)', fontSize: 14, color: 'var(--faint)' }}>{fmtPower(s.power)}</div>
+            <div style={{ flex: 1, height: 10, borderRadius: 5, background: 'var(--surface3)', overflow: 'hidden' }}>
+              <div style={{ width: `${Math.max(3, ((Number.isFinite(s.years) ? s.years : maxYears) / maxYears) * 100)}%`, height: '100%', background: 'var(--accent)', opacity: 0.85 }} />
+            </div>
+            <div style={{ width: 96, textAlign: 'right', fontFamily: 'var(--font-disp)', fontSize: 16, fontWeight: 600 }}>
+              {loading ? <span className="skel skel-line" style={{ width: 64, height: 16, display: 'inline-block' }} /> : fmtSpan(s.years)}
+            </div>
+          </div>
+        ))}
+        <div className="dim" style={{ fontSize: 'var(--fs-xs)', marginTop: 8 }}>
+          Data-centre capacities are approximate announced/published figures — external reference points, not Hypervolt data. Pace is the trailing working-day install average.
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 export function Activation({ role, ctx, toast }: ActivationProps) {
   const layers = role?.layers ?? [];
   const canSeeProvision = layers.length === 0 || layers.indexOf('profitability') >= 0;
@@ -243,7 +296,7 @@ export function Activation({ role, ctx, toast }: ActivationProps) {
             <div className="muted" style={{ fontSize: 'var(--fs-small)' }}>Capacity connected</div>
             <div className="dim" style={{ fontSize: 'var(--fs-xs)', marginTop: 2 }}>
               How much EV-charging capacity we're actually bringing online — each activated charger is a single-phase
-              32&nbsp;A install ({cap?.kw_per_unit ?? 7.4}&nbsp;kW). Daily run-rate is a {cap?.smoothing_days ?? 28}-day trailing mean.
+              32&nbsp;A install ({cap?.kw_per_unit ?? 7.4}&nbsp;kW). Daily run-rate is a {cap?.smoothing_days ?? 28}-day trailing mean over working days (weekends excluded).
             </div>
           </div>
           <div style={{ textAlign: 'right' }}>
@@ -256,7 +309,7 @@ export function Activation({ role, ctx, toast }: ActivationProps) {
             <div style={{ fontFamily: 'var(--font-disp)', fontSize: 26, fontWeight: 600, color: 'var(--ok)' }}>
               {capApi.isLoading ? <span className="skel skel-line" style={{ width: 80, height: 22, display: 'inline-block' }} /> : `${num(Math.round(capH?.total_mw ?? 0))} MW`}
             </div>
-            <div className="dim" style={{ fontSize: 'var(--fs-xs)' }}>{num(capH?.total_units ?? 0)} chargers online</div>
+            <div className="dim" style={{ fontSize: 'var(--fs-xs)' }}>connected to date</div>
           </div>
         </div>
         {capApi.isLoading ? (
@@ -269,7 +322,7 @@ export function Activation({ role, ctx, toast }: ActivationProps) {
           <>
             <CapacityChart points={capPts} />
             <div className="row g16" style={{ padding: '4px 18px 12px', fontSize: 'var(--fs-xs)' }}>
-              <span className="dim"><span style={{ display: 'inline-block', width: 18, height: 3, background: 'var(--accent)', verticalAlign: 'middle', marginRight: 5 }} />MW connected per day ({cap?.smoothing_days ?? 28}-day mean)</span>
+              <span className="dim"><span style={{ display: 'inline-block', width: 18, height: 3, background: 'var(--accent)', verticalAlign: 'middle', marginRight: 5 }} />MW connected per working day ({cap?.smoothing_days ?? 28}-day mean)</span>
               <span className="dim"><span style={{ display: 'inline-block', width: 18, height: 0, borderTop: '2px dashed var(--ok)', verticalAlign: 'middle', marginRight: 5 }} />cumulative MW online</span>
               <span className="dim"><span style={{ display: 'inline-block', width: 18, height: 0, borderTop: '2px dashed var(--accent)', verticalAlign: 'middle', marginRight: 5, opacity: 0.7 }} />projected (next 12 months)</span>
               {cap?.as_of && <span className="dim" style={{ marginLeft: 'auto' }}>as of {cap.as_of}</span>}
@@ -277,6 +330,9 @@ export function Activation({ role, ctx, toast }: ActivationProps) {
           </>
         )}
       </Card>
+
+      {/* AI-data-centre comparison — "at current speed, how long to connect that much power?" */}
+      <DataCentreCompare ratePerWorkingDay={capH?.current_avg_daily_mw ?? 0} loading={capApi.isLoading} />
 
       {/* sell-in → sell-through hero + provision summary */}
       <div className="grid" style={{ gridTemplateColumns: '1.6fr 1fr 1fr', marginBottom: 14, alignItems: 'stretch' }}>
