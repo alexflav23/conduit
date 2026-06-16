@@ -52,6 +52,12 @@ engine, so Conduit can start with all the historical data."
 
 ## Ignition plan (dependency-ordered)
 
+### ✅ Phase A IGNITED (2026-06-16) — the P&L is live on real history
+- **A1 done**: 39 monthly accounting periods open (2023-10 → 2026-12).
+- **B2 done**: 9 Volex opening lots, **79,044 serials costed (75% HV3PRO fleet)**, specific-id landed cost (real USD @ ECB + £8); lights up M7 genealogy. 25% older SKUs honestly uncosted.
+- **A3 done**: **19,406 dispatches recognised** through the production pipeline (emit `dispatch.created` → relay → `RevenueRecognitionConsumer` → TigerBeetle). **Trial balance exact (debits = credits)**. P&L: **revenue £36.6M ex-VAT · VAT £7.3M (engine 20%) · COGS £19.3M · gross margin £17.4M (47%)**. Lights up M13 (revenue/GL/P&L) on real data; hedged-COGS hook (`HedgeMath.effectiveRate`) ready.
+- **Remaining**: A4 (GL/P&L view + a real period close drill); recognise the 25% uncosted dispatches once their cost lands; make the ignition reproducible at boot (emit `dispatch.created` from the MRP ingest, or an ignition step) — currently the lots/periods/recognition are populated in the live DB but not yet on a clean-boot path.
+
 ### Phase A — light up the financial spine with real history _(real data only)_
 - **A1. Open accounting periods** for the trade history range (monthly, 2023→2026); past closeable, current open. Prereq for all posting. (`accounting_period` = 0 today.)
 - **A2. Activation + warranty backfill (M8):** drive `ActivationService` from the 91,155 real `serial_unit.activated_at`; open warranty provisions. Fix `WarrantyService.backfill` to read `serial_unit.activated_at` (not the empty `activation` table) and invoke it from a boot step / script. ⚠️ DECISION: warranty/COGS cost basis until B2 — use real MRP `std_cost` as interim unit cost.
