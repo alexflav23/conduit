@@ -145,10 +145,34 @@ object SnapshotLoader {
     }
   }
 
+  // ingest/hubspot/rma_tickets.ndjson — support RMA tickets (which unit replaced which). Landed raw here; ignition
+  // resolves the serials → genealogy pointer + warranty inheritance (serials exist by boot). Idempotent on ticket_ref.
+  private def hubspotRmaTicket(row: Json): ConnectionIO[Int] = {
+    val c = row.hcursor
+    c.get[String]("ticket_ref").toOption.orElse(c.get[String]("ticket_id").toOption) match {
+      case None => 0.pure[ConnectionIO]
+      case Some(ref) =>
+        val orig   = c.get[String]("original_serial").toOption.orElse(c.get[String]("faulty_serial").toOption)
+        val repl   = c.get[String]("replacement_serial").toOption.orElse(c.get[String]("new_serial").toOption)
+        val tType  = c.get[String]("ticket_type").toOption.orElse(c.get[String]("type").toOption)
+        val reason = c.get[String]("reason").toOption
+        val opened = c.get[String]("opened_at").toOption.flatMap(s => scala.util.Try(Instant.parse(s)).toOption)
+        val closed = c.get[String]("closed_at").toOption.flatMap(s => scala.util.Try(Instant.parse(s)).toOption)
+        val status = c.get[String]("status").toOption
+        sql"""INSERT INTO rma_ticket (ticket_ref, original_serial, replacement_serial, ticket_type, reason, opened_at, closed_at, status, payload)
+              VALUES ($ref, $orig, $repl, $tType, $reason, $opened, $closed, $status, ${row.noSpaces}::jsonb)
+              ON CONFLICT (ticket_ref) DO UPDATE SET
+                original_serial = EXCLUDED.original_serial, replacement_serial = EXCLUDED.replacement_serial,
+                ticket_type = EXCLUDED.ticket_type, reason = EXCLUDED.reason, opened_at = EXCLUDED.opened_at,
+                closed_at = EXCLUDED.closed_at, status = EXCLUDED.status, payload = EXCLUDED.payload""".update.run
+    }
+  }
+
   // ingest/hubspot/deals_lifecycle.ndjson → deal_snapshot (the order-book substrate, doc 26 §4a).
   // deals_won.ndjson is the older won-only scrape — lifecycle supersedes it, so it is skipped here.
   private def hubspot(dataset: String, row: Json): ConnectionIO[Int] =
-    if (dataset != "deals_lifecycle") 0.pure[ConnectionIO]
+    if (dataset == "rma_tickets") hubspotRmaTicket(row)
+    else if (dataset != "deals_lifecycle") 0.pure[ConnectionIO]
     else {
       val c = row.hcursor
       (

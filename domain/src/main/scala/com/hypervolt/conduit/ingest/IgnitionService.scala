@@ -36,7 +36,8 @@ final class IgnitionService[F[_]: Async](xa: Transactor[F]) {
             placed  <- emitOrderPlaced
             emitted <- emitRecognitionEvents
             invOpen <- emitOpeningInventory(eid)
-          } yield s"stamped=$stamped lots=$lots serials_linked=$linked periods=$periods stock_items=$stock exposure_rows=$exp order_placed_events=$placed recognition_events=$emitted opening_inv_event=$invOpen"
+            repl    <- applyRmaTickets
+          } yield s"stamped=$stamped lots=$lots serials_linked=$linked periods=$periods stock_items=$stock exposure_rows=$exp order_placed_events=$placed recognition_events=$emitted opening_inv_event=$invOpen replacements_linked=$repl"
       }
       .transact(xa)
 
@@ -109,6 +110,26 @@ final class IgnitionService[F[_]: Async](xa: Transactor[F]) {
                  COALESCE(o.created_at, now()), 'pending', 'service:ignition'
           FROM "order" o
           WHERE NOT EXISTS (SELECT 1 FROM outbox_event e WHERE e.event_type = 'order.placed' AND e.aggregate_id = o.id)""".update.run
+
+  // Resolve HubSpot RMA tickets to the serial genealogy: link the replacement unit → the unit it replaced, then
+  // propagate the ROOT original's warranty_end down each replacement chain (a replacement always inherits the
+  // original's warranty — the clock never resets, transitively). Idempotent; a no-op until real tickets land.
+  private def applyRmaTickets: ConnectionIO[Int] =
+    sql"""UPDATE rma_ticket t SET original_serial_unit_id = o.id, replacement_serial_unit_id = r.id
+          FROM serial_unit o, serial_unit r
+          WHERE o.serial_no = t.original_serial AND r.serial_no = t.replacement_serial""".update.run *>
+      sql"""UPDATE serial_unit r SET replaces_serial_unit_id = t.original_serial_unit_id
+            FROM rma_ticket t
+            WHERE r.id = t.replacement_serial_unit_id AND t.original_serial_unit_id IS NOT NULL
+              AND r.replaces_serial_unit_id IS DISTINCT FROM t.original_serial_unit_id""".update.run *>
+      sql"""WITH RECURSIVE chain AS (
+              SELECT id, warranty_end FROM serial_unit WHERE replaces_serial_unit_id IS NULL
+              UNION ALL
+              SELECT s.id, c.warranty_end FROM serial_unit s JOIN chain c ON s.replaces_serial_unit_id = c.id)
+            UPDATE serial_unit s SET warranty_end = c.warranty_end
+            FROM chain c
+            WHERE s.id = c.id AND s.replaces_serial_unit_id IS NOT NULL
+              AND s.warranty_end IS DISTINCT FROM c.warranty_end""".update.run
 
   // Emit dispatch.created for each costed, not-yet-recognised dispatch with no in-flight event — the relay
   // publishes to conduit.orders and the consumer recognises (AR/Revenue/VAT/COGS → TigerBeetle). Idempotent.

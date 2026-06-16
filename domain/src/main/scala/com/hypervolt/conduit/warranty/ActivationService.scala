@@ -11,6 +11,7 @@ import doobie.util.transactor.Transactor
 import io.circe.Json
 import io.circe.syntax._
 import java.time.Instant
+import java.time.LocalDate
 import java.time.ZoneOffset
 import java.util.UUID
 
@@ -66,7 +67,14 @@ final class ActivationService[F[_]: Async](xa: Transactor[F]) {
     for {
       months <- WarrantyProvisioning.legalMonths(su.familyId)
       extra  <- WarrantyProvisioning.extensionMonths(su.id)
-      end = start.plusMonths((months + extra).toLong)
+      fresh = start.plusMonths((months + extra).toLong)
+      // A replacement unit inherits the original's warranty_end — the clock never resets (the original is already
+      // root-propagated, so its end IS the root's). A first-life unit gets the freshly-computed term.
+      inherited <-
+        sql"SELECT o.warranty_end FROM serial_unit r JOIN serial_unit o ON o.id = r.replaces_serial_unit_id WHERE r.id = ${su.id}"
+          .query[LocalDate]
+          .option
+      end = inherited.getOrElse(fresh)
       _ <- sql"""UPDATE serial_unit SET status = 'activated', company_id = COALESCE($companyId, company_id),
                 activated_at = $activatedAt, warranty_end = $end WHERE id = ${su.id}""".update.run
       _ <- WarrantyProvisioning.open(su.id, su.entityId, su.lotBatchId, su.familyId, start, end)
