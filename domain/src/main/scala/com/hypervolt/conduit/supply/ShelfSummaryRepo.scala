@@ -59,13 +59,15 @@ object ShelfSummaryRepo {
         val fx       = if (resolved) rate else BigDecimal(1)
         val ccy      = if (resolved || currency == "GBP") currency else "GBP"
         Json.obj(
-          "ghosts"            -> ghosts.asJson,
-          "ghost_value"       -> (BigDecimal(ghosts) * asp * fx).setScale(0, BigDecimal.RoundingMode.HALF_UP).toString.asJson,
-          "currency"          -> ccy.asJson,
-          "stale_90"          -> stale90.asJson,
-          "stale_180"         -> stale180.asJson,
-          "median_tta_weeks"  -> ttaDays.map(d => (d / 7).setScale(1, BigDecimal.RoundingMode.HALF_UP).toDouble).asJson,
-          "age_distribution"  -> Json.fromValues(BucketOrder.map(b => Json.obj("bucket" -> b.asJson, "count" -> buckets.getOrElse(b, 0L).asJson)))
+          "ghosts"           -> ghosts.asJson,
+          "ghost_value"      -> (BigDecimal(ghosts) * asp * fx).setScale(0, BigDecimal.RoundingMode.HALF_UP).toString.asJson,
+          "currency"         -> ccy.asJson,
+          "stale_90"         -> stale90.asJson,
+          "stale_180"        -> stale180.asJson,
+          "median_tta_weeks" -> ttaDays.map(d => (d / 7).setScale(1, BigDecimal.RoundingMode.HALF_UP).toDouble).asJson,
+          "age_distribution" -> Json.fromValues(
+            BucketOrder.map(b => Json.obj("bucket" -> b.asJson, "count" -> buckets.getOrElse(b, 0L).asJson))
+          )
         )
     }
 }

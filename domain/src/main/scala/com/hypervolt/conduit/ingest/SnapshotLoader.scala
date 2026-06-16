@@ -87,19 +87,21 @@ object SnapshotLoader {
         val duty  = c.get[BigDecimal]("duty_pct").toOption.getOrElse(BigDecimal(0))
         val src   = c.get[String]("source").toOption
         val bands = c.downField("cost_bands").values.toList.flatten
-        bands.traverse { b =>
-          val bc = b.hcursor
-          (bc.get[Int]("min_qty_per_quarter").toOption, bc.get[BigDecimal]("unit_cost_usd").toOption).tupled match {
-            case None => 0.pure[ConnectionIO]
-            case Some((minQ, unitCost)) =>
-              sql"""INSERT INTO supplier_cost (supplier, sku, currency, min_qty_per_quarter, unit_cost, shipping_gbp, duty_pct, source, as_of)
+        bands
+          .traverse { b =>
+            val bc = b.hcursor
+            (bc.get[Int]("min_qty_per_quarter").toOption, bc.get[BigDecimal]("unit_cost_usd").toOption).tupled match {
+              case None => 0.pure[ConnectionIO]
+              case Some((minQ, unitCost)) =>
+                sql"""INSERT INTO supplier_cost (supplier, sku, currency, min_qty_per_quarter, unit_cost, shipping_gbp, duty_pct, source, as_of)
                     SELECT $supplier, $sku, $ccy, $minQ, $unitCost, $ship, $duty, $src, $asOf
                     WHERE NOT EXISTS (
                       SELECT 1 FROM supplier_cost WHERE supplier = $supplier AND sku = $sku
                         AND min_qty_per_quarter = $minQ AND as_of = $asOf
                     )""".update.run
+            }
           }
-        }.map(_.sum)
+          .map(_.sum)
     }
   }
 
@@ -184,7 +186,7 @@ object SnapshotLoader {
         c.get[String]("serial").toOption,
         c.get[String]("activated_at").toOption.flatMap(s => scala.util.Try(Instant.parse(s)).toOption)
       ).tupled match {
-        case None => 0.pure[ConnectionIO]
+        case None                        => 0.pure[ConnectionIO]
         case Some((serial, activatedAt)) =>
           // Flip BOTH the timestamp and the lifecycle status — the shelf board (and ATP) count status='activated',
           // so setting only activated_at left every account reading 0 activated / shipped on-shelf.
@@ -214,7 +216,7 @@ object SnapshotLoader {
           val toggle = str(c, "toggle_basis") // None = base P50, Some("ex_motability") = the ex-cut
           h6qVariant(sku).flatMap { variantId =>
             h6qScenario(toggle).flatMap {
-              case None => 0.pure[ConnectionIO]
+              case None             => 0.pure[ConnectionIO]
               case Some(scenarioId) =>
                 // uq_pipeline_coverage_dim is a UNIQUE INDEX over a COALESCE expression (not a named constraint),
                 // so ON CONFLICT must restate that exact expression to use it as the arbiter.

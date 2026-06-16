@@ -86,7 +86,9 @@ object SerialShelfRepo {
           FROM serial_unit"""
       .query[(Int, Int)]
       .unique
-      .map { case (dispatched, activated) => Json.obj("dispatched" -> dispatched.asJson, "activated" -> activated.asJson) }
+      .map {
+        case (dispatched, activated) => Json.obj("dispatched" -> dispatched.asJson, "activated" -> activated.asJson)
+      }
 
   def activatedCount: ConnectionIO[Int] =
     sql"SELECT count(*) FROM serial_unit WHERE status = 'activated'".query[Int].unique

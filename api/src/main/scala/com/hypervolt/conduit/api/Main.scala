@@ -110,7 +110,8 @@ object Main extends IOApp.Simple {
             cfg.keycloak.audience
           )
         )
-        val auth              = new AuthService[IO](xa, devMode = cfg.env != "prod", google = googleVerifier, keycloak = keycloakVerifier)
+        val auth =
+          new AuthService[IO](xa, devMode = cfg.env != "prod", google = googleVerifier, keycloak = keycloakVerifier)
         val accessRoutes      = new AccessRoutes[IO](xa, auth).routes
         val pricingRoutes     = new PricingRoutes[IO](xa, auth).routes
         val commerceRoutes    = new CommerceRoutes[IO](xa, auth).routes
@@ -147,6 +148,9 @@ object Main extends IOApp.Simple {
         val returnRoutes      = new com.hypervolt.conduit.api.routes.ReturnRoutes[IO](xa, auth).routes
         val treasuryRoutes    = new com.hypervolt.conduit.api.routes.TreasuryRoutes[IO](xa, auth).routes
         val activationStream  = new com.hypervolt.conduit.api.routes.ActivationStreamRoutes[IO](xa, auth).routes
+        val dispatchRoutes    = new com.hypervolt.conduit.api.routes.DispatchRoutes[IO](xa, auth).routes
+        val purchasingRoutes  = new com.hypervolt.conduit.api.routes.PurchasingRoutes[IO](xa, auth).routes
+        val commissionRoutes  = new com.hypervolt.conduit.api.routes.CommissionRoutes[IO](xa, auth).routes
         // the Tamper Sandbox shares the dev-token gate: it exists only outside prod (doc 31 §2.5)
         val proofRoutes =
           new com.hypervolt.conduit.api.routes.ProofRoutes[IO](xa, auth, tamperEnabled = cfg.env != "prod").routes
@@ -167,7 +171,7 @@ object Main extends IOApp.Simple {
             "/" -> (HealthRoutes
               .routes[
                 IO
-              ] <+> accessRoutes <+> pricingRoutes <+> commerceRoutes <+> crmRoutes <+> activationRoutes <+> shelfDetailRoutes <+> dealDeskRoutes <+> h6qRoutes <+> forecastRunRoutes <+> icRoutes <+> creditRoutes <+> auditRoutes <+> stripeRoutes <+> documentRoutes <+> attachmentRoutes <+> voidRoutes <+> lifecycleRoutes <+> taxRoutes <+> procurementRoutes <+> structureRoutes <+> returnRoutes <+> treasuryRoutes <+> activationStream <+> privacyRoutes <+> proofRoutes)
+              ] <+> accessRoutes <+> pricingRoutes <+> commerceRoutes <+> crmRoutes <+> activationRoutes <+> shelfDetailRoutes <+> dealDeskRoutes <+> h6qRoutes <+> forecastRunRoutes <+> icRoutes <+> creditRoutes <+> auditRoutes <+> stripeRoutes <+> documentRoutes <+> attachmentRoutes <+> voidRoutes <+> lifecycleRoutes <+> taxRoutes <+> procurementRoutes <+> structureRoutes <+> returnRoutes <+> treasuryRoutes <+> activationStream <+> dispatchRoutes <+> purchasingRoutes <+> commissionRoutes <+> privacyRoutes <+> proofRoutes)
           ).orNotFound
         val host      = Ipv4Address.fromString(cfg.http.host).getOrElse(ipv4"0.0.0.0")
         val apiPort   = Port.fromInt(cfg.http.port).getOrElse(port"8080")

@@ -117,14 +117,16 @@ final class ActivationRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F
                     Json.obj(
                       "date"  -> date.asJson,
                       "count" -> rows.size.asJson,
-                      "rows" -> Json.fromValues(rows.map(e =>
-                        Json.obj(
-                          "serial"       -> e.serial.asJson,
-                          "activated_at" -> e.activatedAt.toString.asJson,
-                          "owner"        -> e.owner.asJson,
-                          "owner_id"     -> e.ownerId.map(_.toString).asJson
+                      "rows" -> Json.fromValues(
+                        rows.map(e =>
+                          Json.obj(
+                            "serial"       -> e.serial.asJson,
+                            "activated_at" -> e.activatedAt.toString.asJson,
+                            "owner"        -> e.owner.asJson,
+                            "owner_id"     -> e.ownerId.map(_.toString).asJson
+                          )
                         )
-                      ))
+                      )
                     )
                   )
                 }

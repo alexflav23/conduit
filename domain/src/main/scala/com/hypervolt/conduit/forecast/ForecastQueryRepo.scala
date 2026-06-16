@@ -305,7 +305,10 @@ object ForecastQueryRepo {
     }
     q.query[(String, String, Int)]
       .to[List]
-      .map(_.map { case (key, month, fc) => Json.obj("key" -> key.asJson, "sku" -> key.asJson, "month" -> month.asJson, "forecast" -> fc.asJson) })
+      .map(_.map {
+        case (key, month, fc) =>
+          Json.obj("key" -> key.asJson, "sku" -> key.asJson, "month" -> month.asJson, "forecast" -> fc.asJson)
+      })
   }
 
   // Reconcile (doc 12 §11 GET /h6q/coverage/reconcile): the branch axis and the agent axis must tie.

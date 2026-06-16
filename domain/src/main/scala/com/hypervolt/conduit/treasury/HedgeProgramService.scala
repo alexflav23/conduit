@@ -9,7 +9,12 @@ import java.time.LocalDate
 import java.util.UUID
 import scala.math.BigDecimal.RoundingMode
 
-final case class RequiredHedge(exposureType: String, exposureUsd: BigDecimal, ratio: BigDecimal, requiredUsd: BigDecimal)
+final case class RequiredHedge(
+    exposureType: String,
+    exposureUsd: BigDecimal,
+    ratio: BigDecimal,
+    requiredUsd: BigDecimal
+)
 final case class Coverage(exposureUsd: BigDecimal, hedgedUsd: BigDecimal, ratio: BigDecimal)
 
 // The FX hedging program (M12-Treasury): size the required hedge from forecast exposure × the policy ratio, run the
@@ -23,21 +28,23 @@ final class HedgeProgramService[F[_]: Async](xa: Transactor[F]) {
     HedgeProgramRepo.rebuildExposureForecast(entityId, transition).transact(xa)
 
   // Recompute + read the effectiveness stream (hedged vs counterfactual all-spot — the economic hedge contribution).
-  def rebuildEffectiveness(entityId: UUID): F[Int]              = HedgeProgramRepo.rebuildEffectiveness(entityId).transact(xa)
-  def effectiveness(entityId: UUID): F[List[EffectivenessRow]]  = HedgeProgramRepo.effectiveness(entityId).transact(xa)
+  def rebuildEffectiveness(entityId: UUID): F[Int]             = HedgeProgramRepo.rebuildEffectiveness(entityId).transact(xa)
+  def effectiveness(entityId: UUID): F[List[EffectivenessRow]] = HedgeProgramRepo.effectiveness(entityId).transact(xa)
 
   // Required hedged USD by exposure type = Σ exposure × the policy ratio in force (the 50 / 50 / 100 policy).
   def requiredHedge(entityId: UUID, from: LocalDate, to: LocalDate, asOf: LocalDate): F[List[RequiredHedge]] =
-    (HedgeProgramRepo.exposures(entityId, from, to), HedgeProgramRepo.policies(entityId, asOf)).tupled.transact(xa).map {
-      case (exps, pols) =>
-        val ratioOf = pols.map(p => p.exposureType -> p.hedgeRatio).toMap
-        exps.groupBy(_.exposureType).toList.map {
-          case (et, rows) =>
-            val exposure = rows.map(_.amountUsd).sum
-            val ratio    = ratioOf.getOrElse(et, BigDecimal(0))
-            RequiredHedge(et, exposure, ratio, (exposure * ratio).setScale(2, RoundingMode.HALF_UP))
-        }
-    }
+    (HedgeProgramRepo.exposures(entityId, from, to), HedgeProgramRepo.policies(entityId, asOf)).tupled
+      .transact(xa)
+      .map {
+        case (exps, pols) =>
+          val ratioOf = pols.map(p => p.exposureType -> p.hedgeRatio).toMap
+          exps.groupBy(_.exposureType).toList.map {
+            case (et, rows) =>
+              val exposure = rows.map(_.amountUsd).sum
+              val ratio    = ratioOf.getOrElse(et, BigDecimal(0))
+              RequiredHedge(et, exposure, ratio, (exposure * ratio).setScale(2, RoundingMode.HALF_UP))
+          }
+      }
 
   // The hedge ratio actually in force: open contract notional vs forecast exposure (the policy doc's over/under-
   // hedge check — e.g. Contract 3 at 142% vs the 50% policy flags an overhedge).
@@ -50,7 +57,12 @@ final class HedgeProgramService[F[_]: Async](xa: Transactor[F]) {
           .filter(c => !c.validTo.isBefore(from) && c.validFrom.isBefore(to))
           .map(_.notionalOpen)
           .sum
-        Coverage(exposure, hedged, if (exposure > 0) (hedged / exposure).setScale(4, RoundingMode.HALF_UP) else BigDecimal(0))
+        Coverage(
+          exposure,
+          hedged,
+          if (exposure > 0) (hedged / exposure).setScale(4, RoundingMode.HALF_UP)
+          else BigDecimal(0)
+        )
     }
 
   // Propose a hedge contract: created 'proposed', with a pending approval per required board role (maker-checker —

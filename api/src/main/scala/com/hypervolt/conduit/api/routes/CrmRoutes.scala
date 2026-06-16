@@ -30,11 +30,18 @@ final class CrmRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
 
   private def err(s: StatusCode, c: String, m: String): (StatusCode, ApiError) = (s, ApiError(c, m))
   private def gate(p: Principal): Boolean =
-    PolicyEngine.hasPermission(p, Action.View, "order") || PolicyEngine.hasPermission(p, Action.View, "pipeline_coverage")
+    PolicyEngine.hasPermission(p, Action.View, "order") || PolicyEngine.hasPermission(
+      p,
+      Action.View,
+      "pipeline_coverage"
+    )
   private val denied = err(StatusCode.Forbidden, "forbidden", "requires view:order")
 
   private def optUuid(s: Option[String]): Either[(StatusCode, ApiError), Option[UUID]] =
-    s.filter(_.nonEmpty).traverse(v => Try(UUID.fromString(v)).toEither.leftMap(_ => err(StatusCode.BadRequest, "bad_request", s"invalid id: $v")))
+    s.filter(_.nonEmpty)
+      .traverse(v =>
+        Try(UUID.fromString(v)).toEither.leftMap(_ => err(StatusCode.BadRequest, "bad_request", s"invalid id: $v"))
+      )
 
   private val parties =
     base.get
@@ -52,9 +59,15 @@ final class CrmRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
               case Left(e) => Async[F].pure(Left(e))
               case Right(mk) =>
                 val cap = limit.getOrElse(200).min(500).max(1)
-                (CrmReadRepo.listParties(mk, sector.filter(_.nonEmpty), q.filter(_.nonEmpty), cap), CrmReadRepo.sectors).tupled
+                (
+                  CrmReadRepo.listParties(mk, sector.filter(_.nonEmpty), q.filter(_.nonEmpty), cap),
+                  CrmReadRepo.sectors
+                ).tupled
                   .transact(xa)
-                  .map { case (rows, sectors) => Right(Json.obj("rows" -> Json.fromValues(rows), "sectors" -> sectors.asJson)) }
+                  .map {
+                    case (rows, sectors) =>
+                      Right(Json.obj("rows" -> Json.fromValues(rows), "sectors" -> sectors.asJson))
+                  }
             }
       })
 

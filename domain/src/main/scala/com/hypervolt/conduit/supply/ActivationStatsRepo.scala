@@ -27,7 +27,9 @@ object ActivationStatsRepo {
       .query[(LocalDate, Long)]
       .to[List]
       .map(rows =>
-        Json.fromValues(rows.map { case (d, c) => Json.obj("period" -> d.toString.asJson, "count" -> c.asJson, "mw" -> mw(c).asJson) })
+        Json.fromValues(rows.map {
+          case (d, c) => Json.obj("period" -> d.toString.asJson, "count" -> c.asJson, "mw" -> mw(c).asJson)
+        })
       )
   }
 

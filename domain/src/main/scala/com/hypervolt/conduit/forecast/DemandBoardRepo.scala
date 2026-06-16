@@ -87,7 +87,10 @@ object DemandBoardRepo {
     val curQ   = (now.getMonthValue + 2) / 3
     val qStart = LocalDate.of(ny, (curQ - 1) * 3 + 1, 1)
     val qEnd   = qStart.plusMonths(3)
-    val fracQ  = math.min(1.0, math.max(0.02, ChronoUnit.DAYS.between(qStart, now).toDouble / ChronoUnit.DAYS.between(qStart, qEnd).toDouble))
+    val fracQ = math.min(
+      1.0,
+      math.max(0.02, ChronoUnit.DAYS.between(qStart, now).toDouble / ChronoUnit.DAYS.between(qStart, qEnd).toDouble)
+    )
     val yStart = LocalDate.of(ny, 1, 1)
     val fracY  = math.min(1.0, math.max(0.02, ChronoUnit.DAYS.between(yStart, now).toDouble / 365.0))
     QCtx(forecastYear, ny, curQ, fracQ, fracY)
@@ -96,8 +99,15 @@ object DemandBoardRepo {
   private def attn(shipped: BigDecimal, forecast: BigDecimal): Json =
     (if (forecast > 0) (shipped / forecast).setScale(3, BigDecimal.RoundingMode.HALF_UP).toDouble else 0.0).asJson
 
-  private def rowJson(label: String, key: String, monthly: List[(String, BigDecimal)], shippedQ: Map[Int, Long],
-                      revenue: BigDecimal, qx: QCtx, contributors: Option[List[Json]]): Json = {
+  private def rowJson(
+      label: String,
+      key: String,
+      monthly: List[(String, BigDecimal)],
+      shippedQ: Map[Int, Long],
+      revenue: BigDecimal,
+      qx: QCtx,
+      contributors: Option[List[Json]]
+  ): Json = {
     val byQ      = monthly.groupBy { case (m, _) => qNum(m) }.view.mapValues(_.map(_._2).sum).toMap
     val yy       = monthly.headOption.map(_._1.substring(2, 4)).getOrElse("")
     val forecast = monthly.map(_._2).sum
@@ -105,7 +115,8 @@ object DemandBoardRepo {
     val sortedQ  = byQ.keys.toList.sorted
     val qoq =
       if (sortedQ.length >= 2 && byQ(sortedQ(sortedQ.length - 2)) > 0)
-        ((byQ(sortedQ.last) - byQ(sortedQ(sortedQ.length - 2))) / byQ(sortedQ(sortedQ.length - 2)) * 100).setScale(0, BigDecimal.RoundingMode.HALF_UP)
+        ((byQ(sortedQ.last) - byQ(sortedQ(sortedQ.length - 2))) / byQ(sortedQ(sortedQ.length - 2)) * 100)
+          .setScale(0, BigDecimal.RoundingMode.HALF_UP)
       else BigDecimal(0)
 
     val quarters = sortedQ.map { q =>
@@ -134,19 +145,25 @@ object DemandBoardRepo {
       else attn(BigDecimal(ytdShipped) / qx.fracYear, forecast)
 
     Json.obj(
-      "key"          -> key.asJson,
-      "label"        -> label.asJson,
-      "quarters"     -> Json.fromValues(quarters),
-      "forecast"     -> forecast.setScale(0, BigDecimal.RoundingMode.HALF_UP).toLong.asJson,
-      "shipped"      -> totalShipped.asJson,
+      "key"                 -> key.asJson,
+      "label"               -> label.asJson,
+      "quarters"            -> Json.fromValues(quarters),
+      "forecast"            -> forecast.setScale(0, BigDecimal.RoundingMode.HALF_UP).toLong.asJson,
+      "shipped"             -> totalShipped.asJson,
       "forecast_attainment" -> forecastAttainment,
-      "trend"        -> Json.obj("qoq_pct" -> qoq.toInt.asJson, "spark" -> spark.asJson),
-      "revenue"      -> revenue.setScale(2, BigDecimal.RoundingMode.HALF_UP).toString.asJson,
-      "contributors" -> contributors.fold(Json.Null)(Json.fromValues)
+      "trend"               -> Json.obj("qoq_pct" -> qoq.toInt.asJson, "spark" -> spark.asJson),
+      "revenue"             -> revenue.setScale(2, BigDecimal.RoundingMode.HALF_UP).toString.asJson,
+      "contributors"        -> contributors.fold(Json.Null)(Json.fromValues)
     )
   }
 
-  def board(market: UUID, scenario: UUID, contributorsPerSegment: Int, currency: String, now: LocalDate): ConnectionIO[Json] =
+  def board(
+      market: UUID,
+      scenario: UUID,
+      contributorsPerSegment: Int,
+      currency: String,
+      now: LocalDate
+  ): ConnectionIO[Json] =
     marketMonthly(market, scenario).flatMap { mkt =>
       val year = mkt.headOption.map(_._1.take(4).toInt).getOrElse(now.getYear)
       val qx   = qctx(year, now)
@@ -154,48 +171,68 @@ object DemandBoardRepo {
       // — hedge-locked rate if one covers `now`, else the closing/spot rate from the exchange_rate register, with
       // full provenance). No bespoke rate query; identity (rate 1) when no rate exists, so USD honestly shows GBP
       // rather than a fabricated number until the register is fed a real rate.
-      (accounts, shippedByQuarter(year), aspBySegment, com.hypervolt.conduit.gl.ConsolidationRepo.resolveRate("GBP", currency, now)).mapN {
-        (accts, shipQ, asp, rateInfo) =>
-        val (rate, rateSource, _, _) = rateInfo
-        val resolved = rateSource != "identity"            // a real hedge/closing/spot rate was found
-        val fx       = if (resolved) rate else BigDecimal(1)
-        val ccy      = if (resolved || currency == "GBP") currency else "GBP"
-        val totalAct = math.max(accts.map(_.activations).sum, 1L)
-        val months   = mkt.map(_._1)
-        def aspOf(seg: String): BigDecimal               = asp.getOrElse(seg, asp.values.headOption.getOrElse(BigDecimal(0)))
+      (
+        accounts,
+        shippedByQuarter(year),
+        aspBySegment,
+        com.hypervolt.conduit.gl.ConsolidationRepo.resolveRate("GBP", currency, now)
+      ).mapN { (accts, shipQ, asp, rateInfo) =>
+        val (rate, rateSource, _, _)                                  = rateInfo
+        val resolved                                                  = rateSource != "identity" // a real hedge/closing/spot rate was found
+        val fx                                                        = if (resolved) rate else BigDecimal(1)
+        val ccy                                                       = if (resolved || currency == "GBP") currency else "GBP"
+        val totalAct                                                  = math.max(accts.map(_.activations).sum, 1L)
+        val months                                                    = mkt.map(_._1)
+        def aspOf(seg: String): BigDecimal                            = asp.getOrElse(seg, asp.values.headOption.getOrElse(BigDecimal(0)))
         def monthlyFor(share: BigDecimal): List[(String, BigDecimal)] = mkt.map { case (m, fc) => m -> fc * share }
-        def shipOf(a: Acct): Map[Int, Long]              = shipQ.getOrElse(a.company, Map.empty)
+        def shipOf(a: Acct): Map[Int, Long]                           = shipQ.getOrElse(a.company, Map.empty)
 
-        def revenueOf(monthly: List[(String, BigDecimal)], seg: String): BigDecimal = monthly.map(_._2).sum * aspOf(seg) * fx
+        def revenueOf(monthly: List[(String, BigDecimal)], seg: String): BigDecimal =
+          monthly.map(_._2).sum * aspOf(seg) * fx
 
         val bySegment = accts.groupBy(_.segment)
-        val segments = bySegment.toList.map {
-          case (seg, members) =>
-            val segMonthly = monthlyFor(BigDecimal(members.map(_.activations).sum) / totalAct)
-            val segShipQ   = members.foldLeft(Map.empty[Int, Long]) { (acc, a) =>
-              shipOf(a).foldLeft(acc) { case (m, (q, n)) => m.updated(q, m.getOrElse(q, 0L) + n) }
-            }
-            val contribs = members.sortBy(-_.activations).take(contributorsPerSegment).map { a =>
-              val m = monthlyFor(BigDecimal(a.activations) / totalAct)
-              rowJson(a.name, a.company.toString, m, shipOf(a), revenueOf(m, seg), qx, None)
-            }
-            (members.map(_.activations).sum, rowJson(SegLabel.getOrElse(seg, seg), seg, segMonthly, segShipQ, revenueOf(segMonthly, seg), qx, Some(contribs)))
-        }.sortBy(-_._1).map(_._2)
+        val segments = bySegment.toList
+          .map {
+            case (seg, members) =>
+              val segMonthly = monthlyFor(BigDecimal(members.map(_.activations).sum) / totalAct)
+              val segShipQ = members.foldLeft(Map.empty[Int, Long]) { (acc, a) =>
+                shipOf(a).foldLeft(acc) { case (m, (q, n)) => m.updated(q, m.getOrElse(q, 0L) + n) }
+              }
+              val contribs = members.sortBy(-_.activations).take(contributorsPerSegment).map { a =>
+                val m = monthlyFor(BigDecimal(a.activations) / totalAct)
+                rowJson(a.name, a.company.toString, m, shipOf(a), revenueOf(m, seg), qx, None)
+              }
+              (
+                members.map(_.activations).sum,
+                rowJson(
+                  SegLabel.getOrElse(seg, seg),
+                  seg,
+                  segMonthly,
+                  segShipQ,
+                  revenueOf(segMonthly, seg),
+                  qx,
+                  Some(contribs)
+                )
+              )
+          }
+          .sortBy(-_._1)
+          .map(_._2)
 
         val totalShipQ = shipQ.values.foldLeft(Map.empty[Int, Long]) { (acc, m) =>
           m.foldLeft(acc) { case (a, (q, n)) => a.updated(q, a.getOrElse(q, 0L) + n) }
         }
-        val totalRevenue = bySegment.toList.map { case (seg, members) =>
-          revenueOf(monthlyFor(BigDecimal(members.map(_.activations).sum) / totalAct), seg)
+        val totalRevenue = bySegment.toList.map {
+          case (seg, members) =>
+            revenueOf(monthlyFor(BigDecimal(members.map(_.activations).sum) / totalAct), seg)
         }.sum
         Json.obj(
-          "months"   -> months.asJson,
+          "months"    -> months.asJson,
           "currency"  -> ccy.asJson,
           "fx_rate"   -> fx.toString.asJson,
           "fx_source" -> (if (ccy != "GBP") rateSource else "base").asJson,
-          "as_of"    -> now.toString.asJson,
-          "segments" -> Json.fromValues(segments),
-          "total"    -> rowJson("Total", "__total__", mkt, totalShipQ, totalRevenue, qx, None)
+          "as_of"     -> now.toString.asJson,
+          "segments"  -> Json.fromValues(segments),
+          "total"     -> rowJson("Total", "__total__", mkt, totalShipQ, totalRevenue, qx, None)
         )
       }
     }

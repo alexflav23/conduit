@@ -23,13 +23,32 @@ object CrmReadRepo {
                 m.code, p.channel_id, p.account_manager_user_id, p.created_at
          FROM party p LEFT JOIN market m ON m.id = p.market_id"""
 
-  def listParties(market: Option[UUID], sector: Option[String], q: Option[String], limit: Int): doobie.ConnectionIO[List[Json]] =
+  def listParties(
+      market: Option[UUID],
+      sector: Option[String],
+      q: Option[String],
+      limit: Int
+  ): doobie.ConnectionIO[List[Json]] =
     (partyCols ++ Fragments.whereAndOpt(
       market.map(mk => fr"p.market_id = $mk"),
       sector.map(s => fr"COALESCE(p.sector, p.segment) = $s"),
       q.map(term => fr"p.display_name ILIKE ${"%" + term + "%"}")
     ) ++ fr"ORDER BY p.display_name LIMIT $limit")
-      .query[(UUID, String, Option[String], String, Option[String], Option[String], String, Option[String], Option[UUID], Option[UUID], Instant)]
+      .query[
+        (
+            UUID,
+            String,
+            Option[String],
+            String,
+            Option[String],
+            Option[String],
+            String,
+            Option[String],
+            Option[UUID],
+            Option[UUID],
+            Instant
+        )
+      ]
       .to[List]
       .map(_.map {
         case (id, name, legal, ptype, sec, seg, status, mkt, ch, mgr, created) =>
@@ -51,7 +70,8 @@ object CrmReadRepo {
   def sectors: doobie.ConnectionIO[List[String]] =
     sql"""SELECT DISTINCT COALESCE(sector, segment) FROM party
           WHERE COALESCE(sector, segment) IS NOT NULL AND COALESCE(sector, segment) <> '' ORDER BY 1"""
-      .query[String].to[List]
+      .query[String]
+      .to[List]
 
   // deal_snapshot is the HubSpot deal register: no granular stage column, so the board derives open/won/lost from
   // the closed/won flags. The open deals are the live pipeline; closed are kept for the weighted-value baseline.

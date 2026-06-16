@@ -56,7 +56,8 @@ final class TreasuryRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F])
                       "policy"    -> pols.asJson,
                       "contracts" -> cons.asJson,
                       "exposure"  -> exps.asJson,
-                      "coverage"  -> Json.obj("exposure_usd" -> exposureUsd.asJson, "hedged_notional_gbp" -> hedgedGbp.asJson)
+                      "coverage" -> Json
+                        .obj("exposure_usd" -> exposureUsd.asJson, "hedged_notional_gbp" -> hedgedGbp.asJson)
                     )
                   }
               }

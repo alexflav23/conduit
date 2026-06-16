@@ -27,7 +27,10 @@ final class KeycloakJwtVerifier[F[_]: Sync](jwks: JwkProvider, issuer: String, a
           .build()
           .verify(token)
         // A non-empty subject proves a well-formed Keycloak token; the principal is resolved by the email claim.
-        Option(verified.getSubject).filter(_.nonEmpty).flatMap(_ => Option(verified.getClaim("email").asString())).filter(_.nonEmpty)
+        Option(verified.getSubject)
+          .filter(_.nonEmpty)
+          .flatMap(_ => Option(verified.getClaim("email").asString()))
+          .filter(_.nonEmpty)
       }
       .recover { case _: Exception => None }
 }

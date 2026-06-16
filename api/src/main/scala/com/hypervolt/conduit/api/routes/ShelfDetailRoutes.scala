@@ -39,8 +39,13 @@ final class ShelfDetailRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[
           if (!gate(p)) Async[F].pure(Left(denied))
           else
             Try(UUID.fromString(companyStr)).toEither match {
-              case Left(_)        => Async[F].pure(Left((StatusCode.BadRequest, ApiError("bad_request", s"invalid id: $companyStr"))))
-              case Right(company) => AccountDetailRepo.detail(company, deliveryLimit = 300, anchor = java.time.LocalDate.now()).transact(xa).map(Right(_))
+              case Left(_) =>
+                Async[F].pure(Left((StatusCode.BadRequest, ApiError("bad_request", s"invalid id: $companyStr"))))
+              case Right(company) =>
+                AccountDetailRepo
+                  .detail(company, deliveryLimit = 300, anchor = java.time.LocalDate.now())
+                  .transact(xa)
+                  .map(Right(_))
             }
       )
 
@@ -53,7 +58,14 @@ final class ShelfDetailRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[
       .serverLogic(p =>
         currencyOpt =>
           if (!gate(p)) Async[F].pure(Left(denied))
-          else ShelfSummaryRepo.summary(currencyOpt.map(_.trim.toUpperCase).filter(_.nonEmpty).getOrElse("GBP"), java.time.LocalDate.now()).transact(xa).map(Right(_))
+          else
+            ShelfSummaryRepo
+              .summary(
+                currencyOpt.map(_.trim.toUpperCase).filter(_.nonEmpty).getOrElse("GBP"),
+                java.time.LocalDate.now()
+              )
+              .transact(xa)
+              .map(Right(_))
       )
 
   val routes: HttpRoutes[F] =

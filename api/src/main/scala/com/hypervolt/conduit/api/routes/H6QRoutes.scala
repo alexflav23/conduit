@@ -490,7 +490,14 @@ final class H6QRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
               case Left(e) => Async[F].pure(Left(e))
               case Right((market, scenario)) =>
                 val currency = currencyOpt.map(_.trim.toUpperCase).filter(_.nonEmpty).getOrElse("GBP")
-                DemandBoardRepo.board(market, scenario, contributorsPerSegment = 12, currency = currency, now = java.time.LocalDate.now())
+                DemandBoardRepo
+                  .board(
+                    market,
+                    scenario,
+                    contributorsPerSegment = 12,
+                    currency = currency,
+                    now = java.time.LocalDate.now()
+                  )
                   .transact(xa)
                   .map(j => Right(Projection.projectFor(principal, "pipeline_coverage", j)))
             }
@@ -511,12 +518,15 @@ final class H6QRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
             (uuid(marketStr), uuid(scenarioStr)).tupled match {
               case Left(e) => Async[F].pure(Left(e))
               case Right((market, scenario)) =>
-                val io = groupByOpt.map(_.trim.toLowerCase).filter(g => Set("account", "sector", "market").contains(g)) match {
-                  case Some(g) => ForecastQueryRepo.coverageMatrixBy(market, scenario, g, limit = 40)
-                  case None    => ForecastQueryRepo.coverageMatrix(market, scenario)
-                }
+                val io =
+                  groupByOpt.map(_.trim.toLowerCase).filter(g => Set("account", "sector", "market").contains(g)) match {
+                    case Some(g) => ForecastQueryRepo.coverageMatrixBy(market, scenario, g, limit = 40)
+                    case None    => ForecastQueryRepo.coverageMatrix(market, scenario)
+                  }
                 io.transact(xa)
-                  .map(rows => Right(Json.fromValues(rows.map(r => Projection.projectFor(principal, "pipeline_coverage", r)))))
+                  .map(rows =>
+                    Right(Json.fromValues(rows.map(r => Projection.projectFor(principal, "pipeline_coverage", r))))
+                  )
             }
       })
 

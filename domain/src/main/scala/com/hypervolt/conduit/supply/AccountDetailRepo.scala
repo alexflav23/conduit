@@ -32,13 +32,16 @@ object AccountDetailRepo {
       .map(_.map {
         case (no, date, delivered, status, shipped, activated) =>
           Json.obj(
-            "dispatch_no"   -> no.asJson,
-            "date"          -> date.map(_.toString).asJson,
-            "delivered_at"  -> delivered.map(_.toString).asJson,
-            "status"        -> status.asJson,
-            "shipped"       -> shipped.asJson,
-            "activated"     -> activated.asJson,
-            "depletion_pct" -> (if (shipped > 0) BigDecimal(activated * 100) / shipped else BigDecimal(0)).setScale(1, BigDecimal.RoundingMode.HALF_UP).toDouble.asJson
+            "dispatch_no"  -> no.asJson,
+            "date"         -> date.map(_.toString).asJson,
+            "delivered_at" -> delivered.map(_.toString).asJson,
+            "status"       -> status.asJson,
+            "shipped"      -> shipped.asJson,
+            "activated"    -> activated.asJson,
+            "depletion_pct" -> (if (shipped > 0) BigDecimal(activated * 100) / shipped else BigDecimal(0))
+              .setScale(1, BigDecimal.RoundingMode.HALF_UP)
+              .toDouble
+              .asJson
           )
       })
 
@@ -117,8 +120,15 @@ object AccountDetailRepo {
     sql"SELECT count(*)::int FROM serial_unit WHERE company_id = $company AND status = 'dispatched'".query[Int].unique
 
   def detail(company: UUID, deliveryLimit: Int, anchor: LocalDate): ConnectionIO[Json] =
-    (summary(company), deliveries(company, deliveryLimit), activationSeries(company), depletionSeries(company),
-     weeklyActivations(company), weeklyShipped(company), onShelf(company)).mapN { (sum, dels, acts, depl, weekly, shipped, shelf) =>
+    (
+      summary(company),
+      deliveries(company, deliveryLimit),
+      activationSeries(company),
+      depletionSeries(company),
+      weeklyActivations(company),
+      weeklyShipped(company),
+      onShelf(company)
+    ).mapN { (sum, dels, acts, depl, weekly, shipped, shelf) =>
       Json.obj(
         "summary"     -> sum,
         "deliveries"  -> Json.fromValues(dels),

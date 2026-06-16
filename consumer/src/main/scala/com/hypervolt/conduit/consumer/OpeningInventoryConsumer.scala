@@ -25,7 +25,11 @@ import scala.math.BigDecimal.RoundingMode
 // lots — the counterpart the recognition COGS relief credits against, so INV nets to the on-hand value and the
 // inventory↔count reconciliation TIES (rather than being signed off). Triggered by the boot ignition's
 // inventory.opening event (so lots exist first); idempotent — deterministic transfer id ⇒ TB no-op on re-post.
-final class OpeningInventoryConsumer[F[_]: Async](client: PulsarClient, xa: Transactor[F], migration: MigrationService[F]) {
+final class OpeningInventoryConsumer[F[_]: Async](
+    client: PulsarClient,
+    xa: Transactor[F],
+    migration: MigrationService[F]
+) {
 
   private val logger       = Slf4jLogger.getLogger[F]
   private val topic        = "conduit.inventory"
@@ -83,13 +87,22 @@ final class OpeningInventoryConsumer[F[_]: Async](client: PulsarClient, xa: Tran
           totalLotValueMinor.transact(xa).flatMap { minor =>
             if (minor <= BigInt(0)) Async[F].unit
             else
-              migration.ensureAccounts(entity, Currency.GBP, List((migration.invAccount(entity), LedgerAccountCode.Inv))) *>
+              migration
+                .ensureAccounts(entity, Currency.GBP, List((migration.invAccount(entity), LedgerAccountCode.Inv))) *>
                 migration.postOpeningBalances(
                   "ignition",
                   "opening_inventory",
                   entity,
                   Currency.GBP,
-                  List(OpeningLine(entity.toString, s"INV:$entity", LedgerAccountCode.Inv, debitNormal = true, minorAmount = minor))
+                  List(
+                    OpeningLine(
+                      entity.toString,
+                      s"INV:$entity",
+                      LedgerAccountCode.Inv,
+                      debitNormal = true,
+                      minorAmount = minor
+                    )
+                  )
                 )
           }
       }

@@ -25,7 +25,7 @@ final class AuthService[F[_]: Async](
   def resolve(token: String): F[Option[Principal]] =
     devKeycloakId(token) match {
       case Some(kc) => AccessRepo.loadPrincipal(kc).transact(xa)
-      case None =>
+      case None     =>
         // Both Keycloak and Google resolve the principal by the verified Workspace email, so a user keeps the
         // same identity + roles across either door during (and after) the cutover.
         keycloak.flatTraverse(_.verify(token)).flatMap {

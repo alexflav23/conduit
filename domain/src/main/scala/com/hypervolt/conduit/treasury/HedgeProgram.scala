@@ -25,7 +25,7 @@ object HedgeStatus {
   val Extended = "extended"
   val Settled  = "settled"
   val Unwound  = "unwound"
-  val Open      = Set(Executed, Extended)
+  val Open     = Set(Executed, Extended)
 }
 
 final case class HedgeProvider(id: UUID, code: String, name: String, adapter: String, active: Boolean)
@@ -163,22 +163,32 @@ final case class ExtensionQuote(newRate: BigDecimal, pipReduction: Int, newValid
 trait FxHedgeProvider[F[_]] {
   def code: String
   def indicativeForward(req: HedgeQuoteRequest): F[HedgeQuote]
-  def repriceExtension(currentRate: BigDecimal, currentValidTo: LocalDate, newValidTo: LocalDate, spot: BigDecimal): F[ExtensionQuote]
+  def repriceExtension(
+      currentRate: BigDecimal,
+      currentValidTo: LocalDate,
+      newValidTo: LocalDate,
+      spot: BigDecimal
+  ): F[ExtensionQuote]
 }
 
 // Ebury adapter: a simple forward (indicative ≈ spot — no forward-points curve is modelled, so planning uses spot
 // and the booked rate is the one Ebury confirms), 5% / 5% margins, and a maturity-extension repricing modelled on
 // the real Contract-3 case (a 63-pip / 0.47% rate reduction to push the maturity out ~2 months ≈ ~1 pip per day).
 final class EburyProvider[F[_]: Applicative] extends FxHedgeProvider[F] {
-  val code                = "ebury"
-  private val pipsPerDay  = BigDecimal("1.05")
-  private val marginVar   = BigDecimal("0.05")
-  private val marginCall  = BigDecimal("0.05")
+  val code               = "ebury"
+  private val pipsPerDay = BigDecimal("1.05")
+  private val marginVar  = BigDecimal("0.05")
+  private val marginCall = BigDecimal("0.05")
 
   def indicativeForward(req: HedgeQuoteRequest): F[HedgeQuote] =
     HedgeQuote(req.spot, marginVar, marginCall).pure[F]
 
-  def repriceExtension(currentRate: BigDecimal, currentValidTo: LocalDate, newValidTo: LocalDate, spot: BigDecimal): F[ExtensionQuote] = {
+  def repriceExtension(
+      currentRate: BigDecimal,
+      currentValidTo: LocalDate,
+      newValidTo: LocalDate,
+      spot: BigDecimal
+  ): F[ExtensionQuote] = {
     val days = ChronoUnit.DAYS.between(currentValidTo, newValidTo).max(0L)
     val pips = (BigDecimal(days) * pipsPerDay).setScale(0, RoundingMode.HALF_UP).toInt
     ExtensionQuote((currentRate - BigDecimal(pips) / 10000).setScale(8, RoundingMode.HALF_UP), pips, newValidTo).pure[F]
@@ -196,8 +206,9 @@ object HedgeJson {
 
 object HedgeRouting {
   // Select the provider adapter by its registered code. New providers add a case (or this becomes table-driven).
-  def adapter[F[_]: Applicative](code: String): FxHedgeProvider[F] = code match {
-    case "ebury" => new EburyProvider[F]
-    case _       => new EburyProvider[F] // default until further adapters land
-  }
+  def adapter[F[_]: Applicative](code: String): FxHedgeProvider[F] =
+    code match {
+      case "ebury" => new EburyProvider[F]
+      case _       => new EburyProvider[F] // default until further adapters land
+    }
 }

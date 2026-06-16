@@ -53,27 +53,30 @@ object RecognizeBackfill extends IOApp {
       case Some(n)     => n.toIntOption.orElse(Some(5))
       case None        => Some(5)
     }
-    TigerBeetleClient.make[IO](0, env("DEMO_TB_ADDRESSES", "localhost:3033")).use { client =>
-      val service = new RevenueRecognitionService[IO](xa, TigerBeetleLedger.fromClient[IO](client))
-      eligible(limit).flatMap { ids =>
-        IO.println(s"recognising ${ids.size} dispatch(es)...") *>
-          ids
-            .traverse(id =>
-              service.recognize(id).attempt.map {
-                case Right(Right(())) => ("ok", "")
-                case Right(Left(msg)) => ("skip", msg)
-                case Left(e)          => ("error", Option(e.getMessage).getOrElse(e.toString))
+    TigerBeetleClient
+      .make[IO](0, env("DEMO_TB_ADDRESSES", "localhost:3033"))
+      .use { client =>
+        val service = new RevenueRecognitionService[IO](xa, TigerBeetleLedger.fromClient[IO](client))
+        eligible(limit).flatMap { ids =>
+          IO.println(s"recognising ${ids.size} dispatch(es)...") *>
+            ids
+              .traverse(id =>
+                service.recognize(id).attempt.map {
+                  case Right(Right(())) => ("ok", "")
+                  case Right(Left(msg)) => ("skip", msg)
+                  case Left(e)          => ("error", Option(e.getMessage).getOrElse(e.toString))
+                }
+              )
+              .flatMap { results =>
+                val ok    = results.count(_._1 == "ok")
+                val skip  = results.count(_._1 == "skip")
+                val err   = results.count(_._1 == "error")
+                val notes = results.filter(_._1 != "ok").map(_._2).filter(_.nonEmpty).distinct.take(8)
+                IO.println(s"recognised=$ok skipped=$skip errored=$err") *>
+                  notes.traverse_(n => IO.println(s"  · $n"))
               }
-            )
-            .flatMap { results =>
-              val ok    = results.count(_._1 == "ok")
-              val skip  = results.count(_._1 == "skip")
-              val err   = results.count(_._1 == "error")
-              val notes = results.filter(_._1 != "ok").map(_._2).filter(_.nonEmpty).distinct.take(8)
-              IO.println(s"recognised=$ok skipped=$skip errored=$err") *>
-                notes.traverse_(n => IO.println(s"  · $n"))
-            }
+        }
       }
-    }.as(cats.effect.ExitCode.Success)
+      .as(cats.effect.ExitCode.Success)
   }
 }

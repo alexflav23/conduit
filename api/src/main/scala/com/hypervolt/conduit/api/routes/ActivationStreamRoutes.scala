@@ -58,7 +58,8 @@ final class ActivationStreamRoutes[F[_]: Async](xa: Transactor[F], auth: AuthSer
             )
             .flatMap(rows => Stream.emits(rows.map(sse)))
         )
-    val heartbeat = Stream.awakeEvery[F](15.seconds).as(ServerSentEvent(data = Some("ping"), eventType = Some("heartbeat")))
+    val heartbeat =
+      Stream.awakeEvery[F](15.seconds).as(ServerSentEvent(data = Some("ping"), eventType = Some("heartbeat")))
     backlog ++ live.merge(heartbeat)
   }
 
@@ -69,8 +70,8 @@ final class ActivationStreamRoutes[F[_]: Async](xa: Transactor[F], auth: AuthSer
         case Some(tok) =>
           auth.resolve(tok).flatMap {
             case Some(p) if PolicyEngine.hasPermission(p, Action.View, "pipeline_coverage") => Ok(stream)
-            case Some(_) => Forbidden(Json.obj("error" -> "requires view:pipeline_coverage".asJson))
-            case None    => Forbidden(Json.obj("error" -> "invalid token".asJson))
+            case Some(_)                                                                    => Forbidden(Json.obj("error" -> "requires view:pipeline_coverage".asJson))
+            case None                                                                       => Forbidden(Json.obj("error" -> "invalid token".asJson))
           }
       }
   }

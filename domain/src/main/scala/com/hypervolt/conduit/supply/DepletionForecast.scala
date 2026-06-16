@@ -10,27 +10,42 @@ import java.time.LocalDate
 // — no fragile model-run selection — so the runway and stockout date are reproducible from the serial register.
 object DepletionForecast {
 
-  private val Alpha       = 0.35  // EWMA smoothing — higher = more weight on recent weeks
+  private val Alpha        = 0.35 // EWMA smoothing — higher = more weight on recent weeks
   private val HorizonWeeks = 16
 
   // Reconstruct the ACTUAL on-shelf curve for the recent weeks, working backward from today's balance using the
   // real weekly shipped (+) and activated (−), so it joins seamlessly to the forward projection.
-  private def history(weeklyAct: Map[LocalDate, Int], weeklyShip: Map[LocalDate, Int], onShelf: Int, weeks: List[LocalDate]): List[Json] = {
+  private def history(
+      weeklyAct: Map[LocalDate, Int],
+      weeklyShip: Map[LocalDate, Int],
+      onShelf: Int,
+      weeks: List[LocalDate]
+  ): List[Json] = {
     var bal = onShelf.toDouble
     val rev = weeks.reverse.map { w =>
-      val point = Json.obj("week" -> w.toString.asJson, "on_shelf" -> math.round(math.max(0.0, bal)).asJson, "activated" -> weeklyAct.getOrElse(w, 0).asJson)
-      bal = bal - weeklyShip.getOrElse(w, 0) + weeklyAct.getOrElse(w, 0) // step back to the prior week's closing balance
+      val point = Json.obj(
+        "week"      -> w.toString.asJson,
+        "on_shelf"  -> math.round(math.max(0.0, bal)).asJson,
+        "activated" -> weeklyAct.getOrElse(w, 0).asJson
+      )
+      bal =
+        bal - weeklyShip.getOrElse(w, 0) + weeklyAct.getOrElse(w, 0) // step back to the prior week's closing balance
       point
     }
     rev.reverse
   }
 
   // weekly/weeklyShip: (week-start, units) ascending. onShelf: current on-shelf units. anchor: "today".
-  def project(weekly: List[(LocalDate, Int)], weeklyShip: List[(LocalDate, Int)], onShelf: Int, anchor: LocalDate): Json = {
-    val recent      = weekly.takeRight(26)
-    val rates       = recent.map(_._2.toDouble)
-    val histWeeks   = (weekly.map(_._1) ++ weeklyShip.map(_._1)).distinct.sorted.takeRight(26)
-    val histJson    = history(weekly.toMap, weeklyShip.toMap, onShelf, histWeeks)
+  def project(
+      weekly: List[(LocalDate, Int)],
+      weeklyShip: List[(LocalDate, Int)],
+      onShelf: Int,
+      anchor: LocalDate
+  ): Json = {
+    val recent    = weekly.takeRight(26)
+    val rates     = recent.map(_._2.toDouble)
+    val histWeeks = (weekly.map(_._1) ++ weeklyShip.map(_._1)).distinct.sorted.takeRight(26)
+    val histJson  = history(weekly.toMap, weeklyShip.toMap, onShelf, histWeeks)
     if (rates.isEmpty || onShelf <= 0)
       return Json.obj(
         "on_shelf"      -> onShelf.asJson,
@@ -52,7 +67,8 @@ object DepletionForecast {
     val last4  = rates.takeRight(4)
     val prior4 = rates.dropRight(4).takeRight(4)
     val trendPct =
-      if (prior4.nonEmpty && prior4.sum > 0) ((last4.sum / last4.length) - (prior4.sum / prior4.length)) / (prior4.sum / prior4.length) * 100
+      if (prior4.nonEmpty && prior4.sum > 0)
+        ((last4.sum / last4.length) - (prior4.sum / prior4.length)) / (prior4.sum / prior4.length) * 100
       else 0.0
 
     val weeklyRate = math.max(ewma, 0.0)
@@ -62,11 +78,11 @@ object DepletionForecast {
 
     // Forward cone: deplete on-shelf each week by the rate; low/high bands widen with √week × weekly std.
     val proj = (1 to HorizonWeeks).map { w =>
-      val wk    = anchor.plusWeeks(w.toLong)
-      val band  = std * math.sqrt(w.toDouble)
-      val mid   = math.max(0.0, onShelf - weeklyRate * w)
-      val low   = math.max(0.0, onShelf - (weeklyRate + band) * w)
-      val high  = math.max(0.0, onShelf - math.max(0.0, weeklyRate - band) * w)
+      val wk   = anchor.plusWeeks(w.toLong)
+      val band = std * math.sqrt(w.toDouble)
+      val mid  = math.max(0.0, onShelf - weeklyRate * w)
+      val low  = math.max(0.0, onShelf - (weeklyRate + band) * w)
+      val high = math.max(0.0, onShelf - math.max(0.0, weeklyRate - band) * w)
       Json.obj(
         "week"               -> wk.toString.asJson,
         "expected_draw"      -> math.round(weeklyRate).asJson,
