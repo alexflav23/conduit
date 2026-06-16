@@ -27,7 +27,7 @@ final class FreeShipmentService[F[_]: Async](xa: Transactor[F]) {
            WHEN """ ++ internalMatch ++ fr""" THEN 'r_and_d'
            WHEN p.display_name ILIKE 'amazon%' THEN 'marketplace_return'
            WHEN EXISTS (SELECT 1 FROM "order" o2 WHERE o2.sold_to_party_id = o.sold_to_party_id
-                         AND o2.subtotal_ex_vat > 0 AND o2.order_date <= o.order_date) THEN 'warranty_or_rma_replacement'
+                         AND o2.subtotal_ex_vat > 0 AND o2.order_date <= o.order_date) THEN 'free_replacement_to_customer'
            WHEN EXISTS (SELECT 1 FROM "order" o2 WHERE o2.sold_to_party_id = o.sold_to_party_id
                          AND o2.subtotal_ex_vat > 0) THEN 'sample_converted'
            ELSE 'sample_prospect'
@@ -38,7 +38,7 @@ final class FreeShipmentService[F[_]: Async](xa: Transactor[F]) {
            WHEN """ ++ internalMatch ++ fr""" THEN 'internal/engineering account — units built for R&D, prototyping or testing'
            WHEN p.display_name ILIKE 'amazon%' THEN 'Amazon marketplace returns/replacements (not a sample)'
            WHEN EXISTS (SELECT 1 FROM "order" o2 WHERE o2.sold_to_party_id = o.sold_to_party_id
-                         AND o2.subtotal_ex_vat > 0 AND o2.order_date <= o.order_date) THEN 'free unit to a customer with a prior paid order (warranty/RMA/goodwill)'
+                         AND o2.subtotal_ex_vat > 0 AND o2.order_date <= o.order_date) THEN 'free unit to a customer with a prior paid order — warranty/RMA/goodwill/promo, reason pending RMA-ticket linkage'
            WHEN EXISTS (SELECT 1 FROM "order" o2 WHERE o2.sold_to_party_id = o.sold_to_party_id
                          AND o2.subtotal_ex_vat > 0) THEN 'free unit preceded the customer''s first paid order (sample that converted)'
            ELSE 'free unit to a party that never placed a paid order (prospect sample)'
@@ -92,27 +92,26 @@ final class FreeShipmentService[F[_]: Async](xa: Transactor[F]) {
           Json.obj("month" -> month.asJson, "category" -> cat.asJson, "shipments" -> n.asJson, "cogs" -> cogs.asJson)
       })
 
-  // The warranty-accrual basis: replacement units vs paid units → the rate to provision future liabilities against.
-  def warrantyMetrics: F[Json] =
+  // Cumulative (lifetime-to-date) free-replacement counts. NOT a warranty rate — it conflates warranty/RMA/goodwill/
+  // promo and divides lifelong replacements by paid-units-to-date. A real warranty rate is a per-serial lifecycle
+  // measure (activation cohort × elapsed-warranty-years, confirmed warranty replacements only), which needs the
+  // RMA-ticket linkage (which unit replaced which). This endpoint reports the raw cumulative basis only.
+  def replacementMetrics: F[Json] =
     (
-      sql"SELECT count(*), round(COALESCE(sum(cogs),0),2) FROM free_shipment WHERE category = 'warranty_or_rma_replacement'"
+      sql"SELECT count(*), round(COALESCE(sum(cogs),0),2) FROM free_shipment WHERE category = 'free_replacement_to_customer'"
         .query[(Int, BigDecimal)]
         .unique,
       sql"SELECT count(*) FROM revenue_recognition WHERE revenue_ex_vat > 0".query[Int].unique
     ).tupled.transact(xa).map {
       case ((replacements, cogs), paidUnits) =>
-        val rate =
-          if (paidUnits > 0)
-            (BigDecimal(replacements) / BigDecimal(paidUnits) * 100).setScale(2, BigDecimal.RoundingMode.HALF_UP)
-          else BigDecimal(0)
         Json.obj(
-          "warranty_rma_replacements" -> replacements.asJson,
-          "replacement_cogs"          -> cogs.asJson,
-          "paid_units"                -> paidUnits.asJson,
-          "replacement_rate_pct"      -> rate.asJson,
+          "free_replacements_to_customers" -> replacements.asJson,
+          "replacement_cogs"               -> cogs.asJson,
+          "paid_units_to_date"             -> paidUnits.asJson,
           "avg_replacement_cost" -> (if (replacements > 0)
                                        (cogs / replacements).setScale(2, BigDecimal.RoundingMode.HALF_UP)
-                                     else BigDecimal(0)).asJson
+                                     else BigDecimal(0)).asJson,
+          "caveat" -> "cumulative lifetime-to-date; not a warranty rate — needs per-serial lifecycle + RMA-ticket linkage".asJson
         )
     }
 

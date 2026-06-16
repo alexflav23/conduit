@@ -56,15 +56,15 @@ final class FreeShipmentRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService
           }
       )
 
-  private val warranty =
+  private val replacement =
     base.get
-      .in("api" / "v1" / "free-shipments" / "warranty-metrics")
+      .in("api" / "v1" / "free-shipments" / "replacement-metrics")
       .out(jsonBody[Json])
       .serverLogic(p =>
         _ =>
           forbid(p, Action.View) match {
             case Some(e) => Async[F].pure(Left(e))
-            case None    => svc.warrantyMetrics.map(j => Right(j))
+            case None    => svc.replacementMetrics.map(j => Right(j))
           }
       )
 
@@ -105,5 +105,5 @@ final class FreeShipmentRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService
 
   val routes: HttpRoutes[F] =
     Http4sServerInterpreter[F](ApiMetrics.serverOptions[F])
-      .toRoutes(List(summary, trend, warranty, rebuild, reclassify))
+      .toRoutes(List(summary, trend, replacement, rebuild, reclassify))
 }
