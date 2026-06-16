@@ -68,7 +68,8 @@
           "value": "conduit",
           "temporary": false
         }
-      ]
+      ],
+      "requiredActions": []
     },
     {
       "username": "finance",
@@ -81,7 +82,8 @@
           "value": "conduit",
           "temporary": false
         }
-      ]
+      ],
+      "requiredActions": []
     },
     {
       "username": "admin",
@@ -94,7 +96,8 @@
           "value": "conduit",
           "temporary": false
         }
-      ]
+      ],
+      "requiredActions": []
     }
   ]
 }
