@@ -23,6 +23,7 @@ import { Finance } from './Finance';
 import { Commission } from './Commission';
 import { Documents } from './Documents';
 import { Lifecycle } from './Lifecycle';
+import { Warranty } from './Warranty';
 import { Tax } from './Tax';
 import { Intercompany } from './Intercompany';
 import { Procurement } from './Procurement';
@@ -50,7 +51,7 @@ import { queryClient } from './lib/query';
 type TabId =
   | 'order' | 'dealdesk' | 'returns' | 'crm' | 'reseller'
   | 'h6q' | 'flow' | 'supply' | 'shelf' | 'engine' | 'runs'
-  | 'inventory' | 'purchasing' | 'batch' | 'activation'
+  | 'inventory' | 'purchasing' | 'batch' | 'activation' | 'warranty'
   | 'finance' | 'commission' | 'docs' | 'lifecycle' | 'tax'
   | 'intercompany' | 'procurement' | 'treasury'
   | 'audit' | 'period' | 'sync' | 'proof' | 'access' | 'notifications';
@@ -78,6 +79,7 @@ const GROUPS: { sec: string; items: NavItem[] }[] = [
     { id: 'purchasing', label: 'Purchasing', icon: 'download' },
     { id: 'batch', label: 'Batch & Genealogy', icon: 'map' },
     { id: 'activation', label: 'Activations', icon: 'wifi' },
+    { id: 'warranty', label: 'Warranty & RMA', icon: 'shield' },
   ]},
   { sec: 'Finance', items: [
     { id: 'finance', label: 'Finance', icon: 'sessions' },
@@ -108,7 +110,7 @@ const PAGES: Record<TabId, React.ComponentType<any>> = {
   order: OrderDesk, dealdesk: DealDesk, returns: Returns, crm: CRM, reseller: Reseller,
   h6q: H6Q, flow: Flow, supply: SupplyWindow, shelf: Shelf, engine: Forecasting, runs: ForecastRuns,
   inventory: Inventory, purchasing: Purchasing, batch: BatchGenealogy, activation: Activation,
-  finance: Finance, commission: Commission, docs: Documents, lifecycle: Lifecycle, tax: Tax,
+  finance: Finance, commission: Commission, docs: Documents, lifecycle: Lifecycle, warranty: Warranty, tax: Tax,
   intercompany: Intercompany, procurement: Procurement, treasury: Treasury,
   audit: Auditability, period: Period, sync: Sync, proof: Proof, access: Access, notifications: Notifications,
 };
