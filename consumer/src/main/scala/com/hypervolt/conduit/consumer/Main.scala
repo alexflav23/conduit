@@ -114,6 +114,8 @@ object Main extends IOApp.Simple {
             )
           val returnConsumer =
             new ReturnConsumer[IO](pulsar, new com.hypervolt.conduit.returns.ReturnService[IO](xa, ledger))
+          val openingInvConsumer =
+            new OpeningInventoryConsumer[IO](pulsar, xa, new com.hypervolt.conduit.migration.MigrationService[IO](xa, ledger))
           // P2.6: the notification delivery relay — routes pending external notifications through the channel
           // (logging stand-in until SES/FCM creds land), shadow-aware (email/push muted in the dual-run).
           val notifyDelivery =
@@ -149,6 +151,7 @@ object Main extends IOApp.Simple {
                 Supervised("rebate-accrual", rebateAccrualConsumer.runForever),
                 Supervised("placement", placementConsumer.runForever),
                 Supervised("return-effector", returnConsumer.runForever),
+                Supervised("opening-inventory", openingInvConsumer.runForever),
                 Supervised("notification-delivery", notifyLoop),
                 Supervised("forecast-cycle", forecastLoop)
               ).parSequence_

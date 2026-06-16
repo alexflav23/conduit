@@ -30,9 +30,12 @@ final class IgnitionService[F[_]: Async](xa: Transactor[F]) {
             lots    <- createCostedLots
             linked  <- linkSerials
             periods <- openPeriods(eid)
+            _       <- ensureLocation(eid)
+            stock   <- createStockItems(eid)
             exp     <- HedgeProgramRepo.rebuildExposureForecast(eid, transition)
             emitted <- emitRecognitionEvents
-          } yield s"stamped=$stamped lots=$lots serials_linked=$linked periods=$periods exposure_rows=$exp recognition_events=$emitted"
+            invOpen <- emitOpeningInventory(eid)
+          } yield s"stamped=$stamped lots=$lots serials_linked=$linked periods=$periods stock_items=$stock exposure_rows=$exp recognition_events=$emitted opening_inv_event=$invOpen"
       }
       .transact(xa)
 
@@ -67,6 +70,30 @@ final class IgnitionService[F[_]: Async](xa: Transactor[F]) {
           SELECT $eid, 'statutory', to_char(d, 'YYYY-MM'), 'Europe/London', 'open'
           FROM generate_series(DATE '2023-10-01', DATE '2026-12-01', INTERVAL '1 month') d
           ON CONFLICT (entity_id, scope, period_key) DO NOTHING""".update.run
+
+  // A stock location for the on-hand balance (the inventory↔count physical side).
+  private def ensureLocation(eid: UUID): ConnectionIO[Int] =
+    sql"""INSERT INTO location (entity_id, code, name, type)
+          SELECT $eid, 'UK-MAIN', 'UK Warehouse', 'warehouse' WHERE NOT EXISTS (SELECT 1 FROM location WHERE code = 'UK-MAIN')""".update.run
+
+  // On-hand = costed serials not yet dispatched (the COGS-relieved ones leave the ledger via recognition). So
+  // INV ledger net (opening − COGS) ties to physical (on-hand × landed cost). Idempotent per (entity, variant, loc).
+  private def createStockItems(eid: UUID): ConnectionIO[Int] =
+    sql"""INSERT INTO stock_item (entity_id, product_variant_id, location_id, qty_on_hand)
+          SELECT $eid, v.id, (SELECT id FROM location WHERE code = 'UK-MAIN'),
+                 (SELECT count(*) FROM serial_unit s WHERE s.product_variant_id = v.id AND s.lot_batch_id IS NOT NULL AND s.dispatch_id IS NULL)
+          FROM product_variant v
+          WHERE EXISTS (SELECT 1 FROM serial_unit s WHERE s.product_variant_id = v.id AND s.lot_batch_id IS NOT NULL AND s.dispatch_id IS NULL)
+            AND NOT EXISTS (SELECT 1 FROM stock_item si WHERE si.entity_id = $eid AND si.product_variant_id = v.id
+                              AND si.location_id = (SELECT id FROM location WHERE code = 'UK-MAIN'))""".update.run
+
+  // Emit inventory.opening (→ conduit.inventory → OpeningInventoryConsumer posts DR INV / CR opening-equity at the
+  // total lot value). Once per entity (idempotent).
+  private def emitOpeningInventory(eid: UUID): ConnectionIO[Int] =
+    sql"""INSERT INTO outbox_event (event_id, event_type, schema_version, aggregate_type, aggregate_id, partition_key, payload, occurred_at, status)
+          SELECT gen_random_uuid(), 'inventory.opening', 1, 'inventory', $eid, $eid::text,
+                 jsonb_build_object('entity_id', $eid::text), now(), 'pending'
+          WHERE NOT EXISTS (SELECT 1 FROM outbox_event o WHERE o.event_type = 'inventory.opening' AND o.aggregate_id = $eid)""".update.run
 
   // Emit dispatch.created for each costed, not-yet-recognised dispatch with no in-flight event — the relay
   // publishes to conduit.orders and the consumer recognises (AR/Revenue/VAT/COGS → TigerBeetle). Idempotent.
