@@ -391,6 +391,12 @@ function dowAverage(daily: ActSeriesPoint[]): { dow: string; avg: number }[] {
   return DOW.map((dow, i) => ({ dow, avg: cnt[i] ? Math.round(sum[i] / cnt[i]) : 0 }));
 }
 
+const addDays = (d: string, n: number): string => {
+  const dt = new Date(d + 'T00:00:00Z');
+  dt.setUTCDate(dt.getUTCDate() + n);
+  return dt.toISOString().slice(0, 10);
+};
+
 function humanEvery(sec: number): string {
   if (!Number.isFinite(sec) || sec <= 0) return '—';
   if (sec < 90) return `${Math.round(sec)}s`;
@@ -421,6 +427,11 @@ export function Activation({ role, ctx, toast, token, sub }: ActivationProps) {
   const navigate = useNavigate();
   const view = sub === 'live' ? 'live' : sub === 'analytics' ? 'analytics' : 'capacity';
   const stream = useActivationStream(token, view === 'live');
+  const [day, setDay] = useState<string | null>(null); // null = live; else browsing a past day
+  const dayApi = useApi<{ rows: StreamRow[]; count?: number }>(['act-byday', day ?? ''], `/api/v1/activations/by-date?date=${day ?? '2000-01-01'}`, { enabled: !!day && view === 'live' });
+  const live = day == null;
+  const latestDay = (stream.rows[0]?.activated_at ?? '').slice(0, 10) || new Date().toISOString().slice(0, 10);
+  const feedRows: StreamRow[] = live ? stream.rows : (dayApi.data?.rows ?? []).map((r) => ({ ...r, _t: 0 }));
   const layers = role?.layers ?? [];
   const canSeeProvision = layers.length === 0 || layers.indexOf('profitability') >= 0;
 
@@ -554,12 +565,27 @@ export function Activation({ role, ctx, toast, token, sub }: ActivationProps) {
           </div>
           <Card title="Live activations" icon={I.wifi} aux="real-time SSE · placement stream" style={{ padding: 0 }} className="tablewrap">
             <LoadBar>
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 'var(--fs-small)', fontWeight: 600 }}>
-                <span style={{ width: 8, height: 8, borderRadius: 8, background: stream.connected ? 'var(--ok)' : 'var(--faint)', boxShadow: stream.connected ? '0 0 7px var(--ok)' : 'none' }} />
-                {stream.connected ? 'live' : 'connecting…'}
-              </span>
+              {live ? (
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 'var(--fs-small)', fontWeight: 600 }}>
+                  <span style={{ width: 8, height: 8, borderRadius: 8, background: stream.connected ? 'var(--ok)' : 'var(--faint)', boxShadow: stream.connected ? '0 0 7px var(--ok)' : 'none' }} />
+                  {stream.connected ? 'live' : 'connecting…'}
+                </span>
+              ) : (
+                <div className="seg">
+                  <button onClick={() => setDay(addDays(day!, -1))} title="previous day">◀</button>
+                  <button className="on" style={{ minWidth: 96 }}>{day}</button>
+                  <button onClick={() => setDay(addDays(day!, 1) > latestDay ? null : addDays(day!, 1))} title="next day">▶</button>
+                </div>
+              )}
               <div style={{ flex: 1 }} />
-              <span className="dim" style={{ fontSize: 'var(--fs-small)' }}>{num(feedTotal)} total · {num(stream.rows.length)} streamed</span>
+              {live ? (
+                <button className="seg" onClick={() => setDay(latestDay)} style={{ fontSize: 'var(--fs-small)' }}>◀ browse days</button>
+              ) : (
+                <button className="seg" onClick={() => setDay(null)} style={{ fontSize: 'var(--fs-small)' }}>● Go live</button>
+              )}
+              <span className="dim" style={{ fontSize: 'var(--fs-small)', marginLeft: 10 }}>
+                {live ? `${num(feedTotal)} total · ${num(stream.rows.length)} streamed` : `${num(feedRows.length)} on ${day}`}
+              </span>
             </LoadBar>
             {feedForbidden ? (
               <div style={{ padding: 16 }}><LayerNote>Activation feed hidden — requires the <b>volume</b> layer (<code>view:activation</code>).</LayerNote></div>
@@ -568,9 +594,9 @@ export function Activation({ role, ctx, toast, token, sub }: ActivationProps) {
                 <table className="tbl">
                   <thead><tr><th>Serial</th><th>Activated</th><th>Owner</th><th>Mkt</th></tr></thead>
                   <tbody>
-                    {stream.rows.length === 0 && !stream.connected && <SkeletonRow cols={4} />}
-                    {stream.rows.map((r, i) => {
-                      const fresh = Date.now() - r._t < 6000;
+                    {feedRows.length === 0 && ((live && !stream.connected) || (!live && dayApi.isLoading)) && <SkeletonRow cols={4} />}
+                    {feedRows.map((r, i) => {
+                      const fresh = live && Date.now() - r._t < 6000;
                       return (
                         <tr
                           key={r.serial + '|' + i}
@@ -584,13 +610,15 @@ export function Activation({ role, ctx, toast, token, sub }: ActivationProps) {
                         </tr>
                       );
                     })}
-                    {stream.rows.length === 0 && stream.connected && <EmptyRow cols={4}>No recent activations on the stream.</EmptyRow>}
+                    {feedRows.length === 0 && ((live && stream.connected) || (!live && !dayApi.isLoading)) && (
+                      <EmptyRow cols={4}>{live ? 'No recent activations on the stream.' : `No activations on ${day}.`}</EmptyRow>
+                    )}
                   </tbody>
                 </table>
               </div>
             )}
             <div className="layer-note" style={{ padding: '10px 16px' }}>
-              <I.wifi />Newest-first off the placement stream, auto-refreshing every 15s. True server-push (SSE) is the next slice — in prod this streams live from the Athena placement topic.
+              <I.wifi />Live server-push (SSE) off the placement stream — newest-first, with day navigation to browse history and a serial→account deep-link (↗). In prod, new activations stream straight from the Athena placement topic.
             </div>
           </Card>
         </>

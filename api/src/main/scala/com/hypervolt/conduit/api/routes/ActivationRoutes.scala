@@ -9,6 +9,7 @@ import com.hypervolt.conduit.api.auth.AuthService
 import com.hypervolt.conduit.api.auth.Secured
 import com.hypervolt.conduit.supply.ActivationCapacityRepo
 import com.hypervolt.conduit.supply.ActivationStatsRepo
+import com.hypervolt.conduit.supply.ActivationStreamRepo
 import com.hypervolt.conduit.supply.SerialShelfRepo
 import doobie.implicits._
 import doobie.util.transactor.Transactor
@@ -98,6 +99,38 @@ final class ActivationRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F
           else ActivationStatsRepo.kpis.transact(xa).map(Right(_))
       )
 
+  // Day-navigation: all activations on a given date (for browsing past days in the Live feed).
+  private val byDate =
+    base.get
+      .in("api" / "v1" / "activations" / "by-date")
+      .in(query[String]("date"))
+      .out(jsonBody[Json])
+      .serverLogic(p =>
+        date =>
+          if (!gate(p)) Async[F].pure(Left(denied))
+          else
+            scala.util.Try(java.time.LocalDate.parse(date)).toOption match {
+              case None => Async[F].pure(Left((StatusCode.BadRequest, ApiError("bad_request", s"invalid date: $date"))))
+              case Some(d) =>
+                ActivationStreamRepo.byDate(d, 1000).transact(xa).map { rows =>
+                  Right(
+                    Json.obj(
+                      "date"  -> date.asJson,
+                      "count" -> rows.size.asJson,
+                      "rows" -> Json.fromValues(rows.map(e =>
+                        Json.obj(
+                          "serial"       -> e.serial.asJson,
+                          "activated_at" -> e.activatedAt.toString.asJson,
+                          "owner"        -> e.owner.asJson,
+                          "owner_id"     -> e.ownerId.map(_.toString).asJson
+                        )
+                      ))
+                    )
+                  )
+                }
+            }
+      )
+
   val routes: HttpRoutes[F] =
-    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(List(feed, capacity, series, kpis))
+    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(List(feed, capacity, series, kpis, byDate))
 }

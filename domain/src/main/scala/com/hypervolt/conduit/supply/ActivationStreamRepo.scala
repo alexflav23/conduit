@@ -4,6 +4,7 @@ import doobie._
 import doobie.implicits._
 import doobie.postgres.implicits._
 import java.time.Instant
+import java.time.LocalDate
 import java.util.UUID
 
 // Source for the live activation SSE stream (/activations Live feed): a recent backlog on connect, then anything
@@ -29,6 +30,13 @@ object ActivationStreamRepo {
   // Anything newer than the cursor (the live tail), oldest-first.
   def since(cursor: Instant, limit: Int): ConnectionIO[List[ActivationEvent]] =
     (base ++ fr"AND s.activated_at > $cursor ORDER BY s.activated_at ASC LIMIT ${limit.toLong}")
+      .query[(String, Instant, Option[String], Option[UUID])]
+      .to[List]
+      .map(_.map { case (sn, at, o, id) => ActivationEvent(sn, at, o, id) })
+
+  // All activations on a given UTC date (newest-first) — the day-navigation view.
+  def byDate(date: LocalDate, limit: Int): ConnectionIO[List[ActivationEvent]] =
+    (base ++ fr"AND (s.activated_at AT TIME ZONE 'UTC')::date = $date ORDER BY s.activated_at DESC LIMIT ${limit.toLong}")
       .query[(String, Instant, Option[String], Option[UUID])]
       .to[List]
       .map(_.map { case (sn, at, o, id) => ActivationEvent(sn, at, o, id) })
