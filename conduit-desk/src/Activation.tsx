@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useApi } from './lib/query';
 import { marketId } from './api';
 import { PageHead, Card, Chip, Money, LayerNote, AuditRef, EmptyRow, LoadBar, SkeletonRow, num, gbp } from './kit/kit';
@@ -22,6 +23,16 @@ interface ActivationProps {
   role: AnyRole;
   ctx: { market?: string; entity?: string; period?: string; scenario?: string };
   toast: (m: string, k?: string) => void;
+  sub?: string; // subroute: 'capacity' (default) | 'live'
+}
+
+function StatCard({ label, value, tone }: { label: string; value: string; tone?: string }) {
+  return (
+    <Card>
+      <div className="muted" style={{ fontSize: 'var(--fs-small)' }}>{label}</div>
+      <div style={{ fontFamily: 'var(--font-disp)', fontSize: 26, fontWeight: 600, marginTop: 3, color: tone }}>{value}</div>
+    </Card>
+  );
 }
 
 interface ActivationRow {
@@ -288,7 +299,9 @@ function DataCentreCompare({ fm, loading }: { fm: ReturnType<typeof forecastMode
   );
 }
 
-export function Activation({ role, ctx, toast }: ActivationProps) {
+export function Activation({ role, ctx, toast, sub }: ActivationProps) {
+  const navigate = useNavigate();
+  const view = sub === 'live' ? 'live' : 'capacity';
   const layers = role?.layers ?? [];
   const canSeeProvision = layers.length === 0 || layers.indexOf('profitability') >= 0;
 
@@ -353,6 +366,12 @@ export function Activation({ role, ctx, toast }: ActivationProps) {
         }
       />
 
+      <div className="seg" style={{ marginBottom: 14 }} data-testid="activation-subnav">
+        <button className={view === 'capacity' ? 'on' : ''} onClick={() => navigate('/activation/capacity')}>Capacity</button>
+        <button className={view === 'live' ? 'on' : ''} onClick={() => navigate('/activation/live')}>Live feed</button>
+      </div>
+
+      {view === 'capacity' && (<>
       {/* Capacity connected — the smoothed daily MW run-rate over the cumulative fleet MW online */}
       <Card style={{ marginBottom: 14, padding: 0 }} className="tablewrap">
         <div className="row g12" style={{ padding: '14px 18px 6px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
@@ -391,6 +410,55 @@ export function Activation({ role, ctx, toast }: ActivationProps) {
 
       {/* AI-data-centre comparison — "at current speed, how long to connect that much power?" */}
       <DataCentreCompare fm={fm} loading={capApi.isLoading} />
+      </>)}
+
+      {view === 'live' && (
+        <>
+          <div className="grid" style={{ gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 14 }}>
+            <StatCard label="Activated (sell-through)" value={activated != null ? num(activated) : '—'} tone="var(--ok)" />
+            <StatCard label="Dispatched (sell-in)" value={dispatched != null ? num(dispatched) : '—'} />
+            <StatCard label="Sell-through" value={`${fmtPct(throughPct)}%`} />
+            <StatCard label="Capacity online" value={`${num(Math.round(capH?.total_mw ?? 0))} MW`} tone={V2G} />
+          </div>
+          <Card title="Live activations" icon={I.wifi} aux="newest first · placement stream (Pulsar)" style={{ padding: 0 }} className="tablewrap">
+            <LoadBar>
+              <div className="seg">
+                {['all', 'UK', 'IE'].map((m) => (
+                  <button key={m} className={market === m ? 'on' : ''} onClick={() => setMarket(m)}>{m === 'all' ? 'All' : m}</button>
+                ))}
+              </div>
+              <div style={{ flex: 1 }} />
+              <span className="dim" style={{ fontSize: 'var(--fs-small)' }}>{feedReady ? `${num(feedTotal)} activations` : feedApi.isLoading ? 'loading…' : ''}</span>
+            </LoadBar>
+            {feedNotImpl ? (
+              <div style={{ padding: 16 }}><NotAvailable which="activation feed" /></div>
+            ) : (
+              <div style={{ maxHeight: 560, overflowY: 'auto' }}>
+                <table className="tbl">
+                  <thead><tr><th>Serial</th><th>Activated</th><th>Owner</th><th>Mkt</th></tr></thead>
+                  <tbody>
+                    {feedApi.isLoading && <SkeletonRow cols={4} />}
+                    {feedForbidden && (<tr><td colSpan={4}><LayerNote>Activation feed hidden — requires the <b>volume</b> layer (<code>view:activation</code>).</LayerNote></td></tr>)}
+                    {feedOther && (<tr><td colSpan={4}><div className="banner danger">Could not load activations ({feedErr?.status}).</div></td></tr>)}
+                    {feedReady && acts.map((a, i) => (
+                      <tr key={a.sn ?? a.serial ?? i}>
+                        <td className="mono">{a.sn ?? a.serial}</td>
+                        <td className="dim">{a.activated_at ?? a.activatedAt}</td>
+                        <td className="dim">{a.owner}</td>
+                        <td><Chip s="neutral">{a.market ?? 'UK'}</Chip></td>
+                      </tr>
+                    ))}
+                    {feedReady && acts.length === 0 && <EmptyRow cols={4}>No activations in this market yet.</EmptyRow>}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            <div className="layer-note" style={{ padding: '10px 16px' }}>
+              <I.wifi />Newest-first off the placement stream. Real-time push (SSE) is the next slice — this shows the latest ingested activations.
+            </div>
+          </Card>
+        </>
+      )}
 
       {SHOW_LEGACY_SECTIONS && (<>
       {/* sell-in → sell-through hero + provision summary */}

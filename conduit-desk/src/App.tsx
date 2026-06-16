@@ -113,10 +113,10 @@ const PAGES: Record<TabId, React.ComponentType<any>> = {
 
 // Renders the feature page for the /:tab route; an unknown tab falls back to the Order Desk.
 function TabView(props: ViewProps) {
-  const { tab } = useParams();
+  const { tab, sub } = useParams();
   const Page = tab ? PAGES[tab as TabId] : undefined;
   if (!Page) return <Navigate to="/order" replace />;
-  return <Page key={tab + '|' + props.token} {...props} />;
+  return <Page key={tab + '|' + props.token} sub={sub} {...props} />;
 }
 
 // The viewer's identity + data-layer grant. The bearer (set by SignIn) is the server-side projection key; the
@@ -380,6 +380,7 @@ export function App() {
             <Route path="/" element={<Navigate to="/order" replace />} />
             <Route path="/account/:id" element={<AccountPage key={'account|' + token} token={token} role={role} ctx={ctx} toast={toast} />} />
             <Route path="/:tab" element={<TabView token={token} role={role} ctx={ctx} toast={toast} />} />
+            <Route path="/:tab/:sub" element={<TabView token={token} role={role} ctx={ctx} toast={toast} />} />
           </Routes>
         </div>
       </div>
