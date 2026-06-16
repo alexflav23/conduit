@@ -156,6 +156,15 @@ final class IgnitionService[F[_]: Async](xa: Transactor[F]) {
             WHERE r.id = t.replacement_serial_unit_id AND t.original_serial_unit_id IS NOT NULL
               AND r.id <> t.original_serial_unit_id
               AND r.replaces_serial_unit_id IS DISTINCT FROM t.original_serial_unit_id""".update.run *>
+      // 4. Warranty start for the faulty unit = the real install date from the ticket (V2s have no activation in any
+      //    source; the install date IS the warranty start). warranty_end = install + 36mo. Units without an install
+      //    date stay NULL (out of warranty by V2 vintage). The recursive step then flows this to its replacements.
+      sql"""UPDATE serial_unit s
+            SET activated_at = COALESCE(s.activated_at, ((t.payload->>'installation_date') || 'T00:00:00Z')::timestamptz),
+                warranty_end = ((t.payload->>'installation_date')::date + interval '36 months')::date
+            FROM rma_ticket t
+            WHERE s.id = t.original_serial_unit_id AND s.warranty_end IS NULL
+              AND t.payload->>'installation_date' IS NOT NULL AND t.payload->>'installation_date' <> 'null'""".update.run *>
       sql"""WITH RECURSIVE chain AS (
               SELECT id, warranty_end FROM serial_unit WHERE replaces_serial_unit_id IS NULL
               UNION ALL
