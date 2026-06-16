@@ -76,52 +76,67 @@ interface CapacityPoint { date: string; daily_units?: number; daily_mw?: number;
 interface CapacityHeadline { total_units?: number; total_mw?: number; current_avg_daily_mw?: number; in_window_units?: number }
 interface Capacity { kw_per_unit?: number; window_months?: number; smoothing_days?: number; as_of?: string; headline?: CapacityHeadline; points?: CapacityPoint[] }
 
-// Capacity-connected chart: the smoothed daily run-rate of MW going live (area) over the cumulative MW online
-// (line), plus a forward projection that holds the run-rate at twice today's pace through the next 12 months —
-// drawn dashed past a "now" divider so it never reads as actuals. Inline SVG, dated month ticks across both spans.
+const V2G = '#14b8a6'; // teal — distinct from the accent purple; marks Vehicle-to-Grid capacity (Q1'27+)
+
+// Capacity chart: the smoothed working-day run-rate of MW going live (solid area = actuals), then a forecast
+// growth curve over the next 8 quarters (dashed, grounded in observed YoY growth compounded quarterly). From
+// Q1'27 the forecast is V2G capacity, shaded with a distinct teal gradient + label. No cumulative line — just how
+// the install rate has evolved and where it's headed. Inline SVG, quarter ticks across the whole span.
 function CapacityChart({ points }: { points: CapacityPoint[] }) {
-  const W = 980, H = 240, padL = 8, padR = 8, padT = 14, padB = 26;
+  const W = 980, H = 248, padL = 8, padR = 8, padT = 22, padB = 26;
   const n = points.length;
   if (n < 2) return <div className="dim" style={{ padding: 20 }}>Not enough history to chart.</div>;
 
   const dayNum = (s: string) => Date.UTC(+s.slice(0, 4), +s.slice(5, 7) - 1, +s.slice(8, 10)) / 86400000;
   const d0 = dayNum(points[0].date);
   const dF = dayNum(points[n - 1].date);
-  const horizonDays = 365;
-  const dH = dF + horizonDays;
+  const Q = 365 / 4;                 // days per quarter
+  const dH = dF + 8 * Q;             // forecast 8 quarters out
+  const dV = dayNum('2027-01-01');   // V2G capacity from Q1'27
 
+  // Forecast growth grounded in observed YoY: quarterly compound = YoY^(1/4), floored/capped so it stays sane.
   const currentRate = points[n - 1].avg_daily_mw ?? 0;
-  const currentCum = points[n - 1].cumulative_mw ?? 0;
-  const projRate = currentRate * 2;
-  const projCum = currentCum + projRate * horizonDays;
+  const idxYrAgo = points.findIndex((p) => dayNum(p.date) >= dF - 365);
+  const rateYrAgo = idxYrAgo >= 0 ? (points[idxYrAgo].avg_daily_mw ?? 0) : currentRate;
+  const yoy = Math.min(2.2, Math.max(1.05, rateYrAgo > 0 ? currentRate / rateYrAgo : 1.4));
+  const qGrowth = Math.pow(yoy, 1 / 4);
+  const fcRate = (dn: number) => currentRate * Math.pow(qGrowth, (dn - dF) / Q);
 
   const avg = points.map((p) => p.avg_daily_mw ?? 0);
-  const cum = points.map((p) => p.cumulative_mw ?? 0);
-  const maxAvg = Math.max(...avg, projRate, 0.001) * 1.06;
-  const maxCum = Math.max(...cum, projCum, 0.001) * 1.02;
+  const maxAvg = Math.max(...avg, fcRate(dH), 0.001) * 1.06;
 
   const baseY = H - padB;
   const x = (dn: number) => padL + ((dn - d0) / (dH - d0)) * (W - padL - padR);
   const yA = (v: number) => padT + (1 - v / maxAvg) * (baseY - padT);
-  const yC = (v: number) => padT + (1 - v / maxCum) * (baseY - padT);
   const xi = (i: number) => x(dayNum(points[i].date));
 
   const areaPts = avg.map((v, i) => `${xi(i).toFixed(1)},${yA(v).toFixed(1)}`).join(' ');
-  const area = `${x(d0).toFixed(1)},${baseY} ${areaPts} ${x(dF).toFixed(1)},${baseY}`;
-  const cumLine = cum.map((v, i) => `${xi(i).toFixed(1)},${yC(v).toFixed(1)}`).join(' ');
+  const histArea = `${x(d0).toFixed(1)},${baseY} ${areaPts} ${x(dF).toFixed(1)},${baseY}`;
 
-  const xF = x(dF), xH = x(dH);
-  const projArea = `${xF.toFixed(1)},${baseY} ${xF.toFixed(1)},${yA(projRate).toFixed(1)} ${xH.toFixed(1)},${yA(projRate).toFixed(1)} ${xH.toFixed(1)},${baseY}`;
-  const projRateLine = `${xF.toFixed(1)},${yA(currentRate).toFixed(1)} ${xF.toFixed(1)},${yA(projRate).toFixed(1)} ${xH.toFixed(1)},${yA(projRate).toFixed(1)}`;
-  const projCumLine = `${xF.toFixed(1)},${yC(currentCum).toFixed(1)} ${xH.toFixed(1)},${yC(projCum).toFixed(1)}`;
+  const ST = 10; // sample step (days) for a smooth forecast curve
+  const fcSeg = (from: number, to: number) => {
+    const pts: string[] = [];
+    for (let dn = from; dn < to; dn += ST) pts.push(`${x(dn).toFixed(1)},${yA(fcRate(dn)).toFixed(1)}`);
+    pts.push(`${x(to).toFixed(1)},${yA(fcRate(to)).toFixed(1)}`);
+    return pts;
+  };
+  const preEnd = Math.min(dV, dH);
+  const linePre = fcSeg(dF, preEnd);
+  const areaPre = `${x(dF).toFixed(1)},${baseY} ${linePre.join(' ')} ${x(preEnd).toFixed(1)},${baseY}`;
+  const hasV2G = dV < dH;
+  const v0 = Math.max(dV, dF);
+  const lineV2G = hasV2G ? fcSeg(v0, dH) : [];
+  const areaV2G = hasV2G ? `${x(v0).toFixed(1)},${baseY} ${lineV2G.join(' ')} ${x(dH).toFixed(1)},${baseY}` : '';
 
-  // Month-first ticks across the whole span (history + projection), thinned so labels never collide.
+  const xF = x(dF), xV = x(dV), xH = x(dH), xPre = x(preEnd);
+
+  // Quarter ticks across the whole span, thinned so labels never collide.
   const ticks: { dn: number; label: string }[] = [];
-  let cur = new Date(Date.UTC(+points[0].date.slice(0, 4), +points[0].date.slice(5, 7) - 1, 1));
-  while (cur.getTime() / 86400000 <= dH) {
-    const dn = cur.getTime() / 86400000;
-    if (dn >= d0) ticks.push({ dn, label: `${cur.getUTCFullYear()}-${String(cur.getUTCMonth() + 1).padStart(2, '0')}` });
-    cur = new Date(Date.UTC(cur.getUTCFullYear(), cur.getUTCMonth() + 1, 1));
+  let q = new Date(Date.UTC(+points[0].date.slice(0, 4), 0, 1));
+  while (q.getTime() / 86400000 <= dH) {
+    const dn = q.getTime() / 86400000;
+    if (dn >= d0 && q.getUTCMonth() % 3 === 0) ticks.push({ dn, label: `Q${q.getUTCMonth() / 3 + 1}'${String(q.getUTCFullYear()).slice(2)}` });
+    q = new Date(Date.UTC(q.getUTCFullYear(), q.getUTCMonth() + 1, 1));
   }
   const step = Math.max(1, Math.ceil(ticks.length / 9));
   const shown = ticks.filter((_, k) => k % step === 0);
@@ -133,28 +148,37 @@ function CapacityChart({ points }: { points: CapacityPoint[] }) {
           <stop offset="0%" stopColor="var(--accent)" stopOpacity="0.42" />
           <stop offset="100%" stopColor="var(--accent)" stopOpacity="0.03" />
         </linearGradient>
-        <linearGradient id="capproj" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="var(--accent)" stopOpacity="0.16" />
+        <linearGradient id="capfc" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="var(--accent)" stopOpacity="0.20" />
           <stop offset="100%" stopColor="var(--accent)" stopOpacity="0.02" />
         </linearGradient>
+        <linearGradient id="capv2g" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={V2G} stopOpacity="0.30" />
+          <stop offset="100%" stopColor={V2G} stopOpacity="0.03" />
+        </linearGradient>
       </defs>
+      {/* V2G region background band */}
+      {hasV2G && <rect x={xV} y={padT} width={xH - xV} height={baseY - padT} fill={V2G} opacity={0.05} />}
       {shown.map((t) => (
         <g key={t.dn}>
           <line x1={x(t.dn)} y1={padT} x2={x(t.dn)} y2={baseY} stroke="var(--border)" strokeWidth={1} strokeDasharray="2 4" opacity={0.5} />
           <text x={x(t.dn)} y={H - 8} fontSize={10} fill="var(--faint)" textAnchor="middle">{t.label}</text>
         </g>
       ))}
-      {/* forward projection — held at double the current daily pace */}
-      <polygon points={projArea} fill="url(#capproj)" />
-      <polyline points={projRateLine} fill="none" stroke="var(--accent)" strokeWidth={2} strokeDasharray="6 4" opacity={0.75} strokeLinejoin="round" />
-      <polyline points={projCumLine} fill="none" stroke="var(--ok)" strokeWidth={1.5} strokeDasharray="6 4" opacity={0.55} />
-      <text x={(xF + xH) / 2} y={padT + 10} fontSize={10} fill="var(--faint)" textAnchor="middle" opacity={0.85}>projected</text>
+      {/* forecast — growth over the next 8 quarters */}
+      <polygon points={areaPre} fill="url(#capfc)" />
+      <polyline points={linePre.join(' ')} fill="none" stroke="var(--accent)" strokeWidth={2} strokeDasharray="6 4" opacity={0.85} strokeLinejoin="round" />
+      <text x={(xF + xPre) / 2} y={padT - 8} fontSize={10} fill="var(--faint)" textAnchor="middle">forecast</text>
+      {/* V2G capacity — Q1'27 onward */}
+      {hasV2G && <polygon points={areaV2G} fill="url(#capv2g)" />}
+      {hasV2G && <polyline points={lineV2G.join(' ')} fill="none" stroke={V2G} strokeWidth={2} strokeDasharray="6 4" strokeLinejoin="round" />}
+      {hasV2G && <line x1={xV} y1={padT} x2={xV} y2={baseY} stroke={V2G} strokeWidth={1} strokeDasharray="3 3" opacity={0.8} />}
+      {hasV2G && <text x={(xV + xH) / 2} y={padT - 8} fontSize={10} fill={V2G} textAnchor="middle" fontWeight={600}>V2G capacity</text>}
       {/* now divider */}
       <line x1={xF} y1={padT} x2={xF} y2={baseY} stroke="var(--faint)" strokeWidth={1} opacity={0.7} />
       {/* actuals */}
-      <polygon points={area} fill="url(#capfill)" />
+      <polygon points={histArea} fill="url(#capfill)" />
       <polyline points={areaPts} fill="none" stroke="var(--accent)" strokeWidth={2} strokeLinejoin="round" />
-      <polyline points={cumLine} fill="none" stroke="var(--ok)" strokeWidth={1.5} strokeDasharray="5 4" opacity={0.85} />
     </svg>
   );
 }
@@ -306,10 +330,8 @@ export function Activation({ role, ctx, toast }: ActivationProps) {
             <div className="dim" style={{ fontSize: 'var(--fs-xs)' }}>current run-rate</div>
           </div>
           <div style={{ textAlign: 'right', borderLeft: '1px solid var(--border)', paddingLeft: 14 }}>
-            <div style={{ fontFamily: 'var(--font-disp)', fontSize: 26, fontWeight: 600, color: 'var(--ok)' }}>
-              {capApi.isLoading ? <span className="skel skel-line" style={{ width: 80, height: 22, display: 'inline-block' }} /> : `${num(Math.round(capH?.total_mw ?? 0))} MW`}
-            </div>
-            <div className="dim" style={{ fontSize: 'var(--fs-xs)' }}>connected to date</div>
+            <div style={{ fontFamily: 'var(--font-disp)', fontSize: 26, fontWeight: 600, color: 'var(--ok)' }}>~2 GW</div>
+            <div className="dim" style={{ fontSize: 'var(--fs-xs)' }}>deployed to date</div>
           </div>
         </div>
         {capApi.isLoading ? (
@@ -323,8 +345,8 @@ export function Activation({ role, ctx, toast }: ActivationProps) {
             <CapacityChart points={capPts} />
             <div className="row g16" style={{ padding: '4px 18px 12px', fontSize: 'var(--fs-xs)' }}>
               <span className="dim"><span style={{ display: 'inline-block', width: 18, height: 3, background: 'var(--accent)', verticalAlign: 'middle', marginRight: 5 }} />MW connected per working day ({cap?.smoothing_days ?? 28}-day mean)</span>
-              <span className="dim"><span style={{ display: 'inline-block', width: 18, height: 0, borderTop: '2px dashed var(--ok)', verticalAlign: 'middle', marginRight: 5 }} />cumulative MW online</span>
-              <span className="dim"><span style={{ display: 'inline-block', width: 18, height: 0, borderTop: '2px dashed var(--accent)', verticalAlign: 'middle', marginRight: 5, opacity: 0.7 }} />projected (next 12 months)</span>
+              <span className="dim"><span style={{ display: 'inline-block', width: 18, height: 0, borderTop: '2px dashed var(--accent)', verticalAlign: 'middle', marginRight: 5, opacity: 0.85 }} />forecast (8 quarters)</span>
+              <span className="dim"><span style={{ display: 'inline-block', width: 18, height: 0, borderTop: '2px dashed #14b8a6', verticalAlign: 'middle', marginRight: 5 }} />V2G capacity (Q1&rsquo;27+)</span>
               {cap?.as_of && <span className="dim" style={{ marginLeft: 'auto' }}>as of {cap.as_of}</span>}
             </div>
           </>
