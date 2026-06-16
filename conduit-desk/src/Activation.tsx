@@ -343,7 +343,7 @@ export function Activation({ role, ctx, toast }: ActivationProps) {
     <div className="page" style={{ maxWidth: 1320 }}>
       <PageHead
         crumb="Sell-through & after-sales · doc 07 M8"
-        title="Activation & Warranty"
+        title="Activations"
         sub={
           <span style={{ display: 'block', maxWidth: 820 }}>
             Activations are the real sale signal — a unit went live at a customer — ingested first-write-wins from

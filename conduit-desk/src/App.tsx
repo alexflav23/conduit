@@ -76,7 +76,7 @@ const GROUPS: { sec: string; items: NavItem[] }[] = [
     { id: 'inventory', label: 'Inventory', icon: 'grid' },
     { id: 'purchasing', label: 'Purchasing', icon: 'download' },
     { id: 'batch', label: 'Batch & Genealogy', icon: 'map' },
-    { id: 'activation', label: 'Activation', icon: 'wifi' },
+    { id: 'activation', label: 'Activations', icon: 'wifi' },
   ]},
   { sec: 'Finance', items: [
     { id: 'finance', label: 'Finance', icon: 'sessions' },
