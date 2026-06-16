@@ -182,6 +182,7 @@ lazy val domain = (project in file("domain"))
       "org.http4s"                  %% "http4s-ember-server"          % Versions.http4s,
       "org.http4s"                  %% "http4s-ember-client"          % Versions.http4s,
       "org.http4s"                  %% "http4s-circe"                 % Versions.http4s,
+      "org.http4s"                  %% "http4s-dsl"                   % Versions.http4s,
       "org.postgresql"               % "postgresql"                   % Versions.postgres,
       "org.tpolecat"                %% "doobie-core"                  % Versions.doobie,
       "org.tpolecat"                %% "doobie-postgres"              % Versions.doobie,
