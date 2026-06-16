@@ -88,7 +88,7 @@ final class ShadowValidationService[F[_]: Async](xa: Transactor[F]) {
 
   private val onConflict =
     fr"""ON CONFLICT (check_code, scope_type, scope_id) DO UPDATE SET
-         expected = EXCLUDED.expected, actual = EXCLUDED.actual, variance = EXCLUDED.variance,
+         severity = EXCLUDED.severity, expected = EXCLUDED.expected, actual = EXCLUDED.actual, variance = EXCLUDED.variance,
          detail = EXCLUDED.detail, currency = EXCLUDED.currency, entity_id = EXCLUDED.entity_id,
          run_id = EXCLUDED.run_id, updated_at = now(),
          status = CASE WHEN shadow_finding.status = 'resolved' THEN 'open' ELSE shadow_finding.status END"""
