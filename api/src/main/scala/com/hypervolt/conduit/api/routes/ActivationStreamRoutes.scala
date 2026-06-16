@@ -31,7 +31,14 @@ final class ActivationStreamRoutes[F[_]: Async](xa: Transactor[F], auth: AuthSer
   private def sse(e: ActivationEvent): ServerSentEvent =
     ServerSentEvent(
       data = Some(
-        Json.obj("serial" -> e.serial.asJson, "activated_at" -> e.activatedAt.toString.asJson, "owner" -> e.owner.asJson).noSpaces
+        Json
+          .obj(
+            "serial"       -> e.serial.asJson,
+            "activated_at" -> e.activatedAt.toString.asJson,
+            "owner"        -> e.owner.asJson,
+            "owner_id"     -> e.ownerId.map(_.toString).asJson
+          )
+          .noSpaces
       ),
       eventType = Some("activation")
     )

@@ -27,7 +27,7 @@ interface ActivationProps {
   sub?: string; // subroute: 'capacity' (default) | 'live' | 'analytics'
 }
 
-interface StreamRow { serial: string; activated_at: string; owner?: string; _t: number }
+interface StreamRow { serial: string; activated_at: string; owner?: string; owner_id?: string; _t: number }
 
 // Live activation stream via SSE (EventSource). On connect the server replays a recent backlog, then pushes new
 // activations as they arrive; the token rides as a query param (EventSource can't set headers). Newest-first.
@@ -47,7 +47,7 @@ function useActivationStream(token: string, enabled: boolean): { rows: StreamRow
     es.addEventListener('activation', (e) => {
       try {
         const d = JSON.parse((e as MessageEvent).data);
-        setRows((prev) => [{ serial: d.serial, activated_at: d.activated_at, owner: d.owner, _t: Date.now() }, ...prev].slice(0, 200));
+        setRows((prev) => [{ serial: d.serial, activated_at: d.activated_at, owner: d.owner, owner_id: d.owner_id, _t: Date.now() }, ...prev].slice(0, 200));
       } catch {
         /* ignore malformed frame */
       }
@@ -572,10 +572,14 @@ export function Activation({ role, ctx, toast, token, sub }: ActivationProps) {
                     {stream.rows.map((r, i) => {
                       const fresh = Date.now() - r._t < 6000;
                       return (
-                        <tr key={r.serial + '|' + i} style={fresh ? { background: 'color-mix(in srgb, var(--accent) 14%, transparent)', transition: 'background 1.5s' } : { transition: 'background 1.5s' }}>
+                        <tr
+                          key={r.serial + '|' + i}
+                          onClick={r.owner_id ? () => navigate(`/account/${r.owner_id}`) : undefined}
+                          style={{ transition: 'background 1.5s', cursor: r.owner_id ? 'pointer' : 'default', ...(fresh ? { background: 'color-mix(in srgb, var(--accent) 14%, transparent)' } : {}) }}
+                        >
                           <td className="mono">{r.serial}</td>
                           <td className="dim">{new Date(r.activated_at).toLocaleString()}</td>
-                          <td className="dim">{r.owner}</td>
+                          <td className="dim">{r.owner}{r.owner_id ? <span style={{ color: 'var(--accent)', marginLeft: 6 }}>↗</span> : null}</td>
                           <td><Chip s="neutral">UK</Chip></td>
                         </tr>
                       );
