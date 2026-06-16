@@ -21,13 +21,21 @@ final class ShadowValidationService[F[_]: Async](xa: Transactor[F]) {
   // Each check: (code, body(runId) → the SELECT feeding the upsert).
   // expected = source-stated / invariant-expected ; actual = Conduit-computed ; variance = actual − expected.
   private val checks: List[(String, UUID => Fragment)] = List(
-    // Margin integrity: COGS relieved with zero recognised revenue (a cost with no sale).
+    // Margin integrity: COGS relieved with zero recognised revenue. Graded by the SOURCE header: a header value
+    // means the import dropped the line price (HIGH — understated revenue to fix); a £0 header means a genuinely
+    // free shipment (LOW — warranty/replacement/sample, COGS correctly absorbed). expected = source revenue.
     (
       "cogs_without_revenue",
-      (runId: UUID) => fr"""SELECT 'cogs_without_revenue', 'high', 'recognition', rr.dispatch_id::text, rr.entity_id,
-                      0::numeric, rr.cogs, rr.cogs, rr.currency,
-                      jsonb_build_object('order_id', rr.order_id::text, 'cogs', rr.cogs), $runId, 'open'
-                    FROM revenue_recognition rr WHERE rr.cogs > 0 AND rr.revenue_ex_vat = 0"""
+      (runId: UUID) => fr"""SELECT 'cogs_without_revenue',
+                      CASE WHEN o.subtotal_ex_vat > 0 THEN 'high' ELSE 'low' END,
+                      'recognition', rr.dispatch_id::text, rr.entity_id,
+                      o.subtotal_ex_vat, rr.revenue_ex_vat, rr.revenue_ex_vat - o.subtotal_ex_vat, rr.currency,
+                      jsonb_build_object('order_id', rr.order_id::text, 'order_no', o.order_no, 'cogs', rr.cogs,
+                        'source_header_ex_vat', o.subtotal_ex_vat,
+                        'classification', CASE WHEN o.subtotal_ex_vat > 0 THEN 'price_lost_in_import' ELSE 'genuinely_free' END),
+                      $runId, 'open'
+                    FROM revenue_recognition rr JOIN "order" o ON o.id = rr.order_id
+                    WHERE rr.cogs > 0 AND rr.revenue_ex_vat = 0"""
     ),
     // Data fidelity: the source order header (ex-VAT) must reconcile to Conduit's line-derived value.
     (
