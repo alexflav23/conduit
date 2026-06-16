@@ -9,11 +9,9 @@ import { I } from './kit/icons';
 // "a unit went live at a customer", distinct from sell-in / dispatch), and the WARRANTY PROVISION each
 // activation opens, releasing straight-line over the term from the activation date (not dispatch).
 //
-// Backend: M8 (Phase 2) — there is NO activation/warranty route in this deployment (no ActivationRoutes; the
-// "activation" mentions under PricingRoutes/IntercompanyRoutes are maker-checker POLICY activation, unrelated).
-// Both reads go through React Query against the paths these endpoints will land on; a 404 (notImplemented)
-// renders the honest "Not available in this environment yet" panel — never a stuck skeleton, never a guessed
-// call. 401/403 (forbidden) renders the layer wall. The screen is correct the moment the routes ship.
+// Backend: the activation feed + capacity-connected trend are live (ActivationRoutes, off the serial register).
+// The warranty provision register is still M8/Phase-2 (no route yet) — its read 404s and renders the honest "Not
+// available in this environment yet" panel, never a stuck skeleton. 401/403 (forbidden) renders the layer wall.
 //
 // Re-fetches on a context-market switch and on the in-page market filter (both feed the query key). Activation
 // identity is the `volume` layer; warranty provision money is `profitability` and COLLAPSES (never £0).
@@ -74,6 +72,51 @@ interface WarrantyRegister {
 
 const fmtPct = (n: number) => (Number.isFinite(n) ? n : 0).toFixed(0);
 
+interface CapacityPoint { date: string; daily_units?: number; daily_mw?: number; avg_daily_mw?: number; cumulative_mw?: number }
+interface CapacityHeadline { total_units?: number; total_mw?: number; current_avg_daily_mw?: number; in_window_units?: number }
+interface Capacity { kw_per_unit?: number; window_months?: number; smoothing_days?: number; as_of?: string; headline?: CapacityHeadline; points?: CapacityPoint[] }
+
+// Capacity-connected chart: the smoothed daily run-rate of MW going live (area) over the cumulative MW online
+// (right-axis line). Inline SVG — no chart lib, matching the rest of the desk. X-axis carries dated month ticks.
+function CapacityChart({ points }: { points: CapacityPoint[] }) {
+  const W = 980, H = 240, padL = 8, padR = 8, padT = 14, padB = 26;
+  const n = points.length;
+  if (n < 2) return <div className="dim" style={{ padding: 20 }}>Not enough history to chart.</div>;
+  const avg = points.map((p) => p.avg_daily_mw ?? 0);
+  const cum = points.map((p) => p.cumulative_mw ?? 0);
+  const maxAvg = Math.max(...avg, 0.001);
+  const maxCum = Math.max(...cum, 0.001);
+  const x = (i: number) => padL + (i / (n - 1)) * (W - padL - padR);
+  const yA = (v: number) => padT + (1 - v / maxAvg) * (H - padT - padB);
+  const yC = (v: number) => padT + (1 - v / maxCum) * (H - padT - padB);
+  const areaPts = avg.map((v, i) => `${x(i).toFixed(1)},${yA(v).toFixed(1)}`).join(' ');
+  const area = `${padL},${(H - padB).toFixed(1)} ${areaPts} ${x(n - 1).toFixed(1)},${(H - padB).toFixed(1)}`;
+  const cumLine = cum.map((v, i) => `${x(i).toFixed(1)},${yC(v).toFixed(1)}`).join(' ');
+  // Month-boundary ticks (1st of each month present), thinned so labels never collide.
+  const firsts = points.map((p, i) => ({ i, d: p.date })).filter((p) => p.d.slice(8, 10) === '01');
+  const step = Math.ceil(firsts.length / 8);
+  const ticks = firsts.filter((_, k) => k % step === 0);
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: 'block' }} preserveAspectRatio="none">
+      <defs>
+        <linearGradient id="capfill" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="var(--accent)" stopOpacity="0.42" />
+          <stop offset="100%" stopColor="var(--accent)" stopOpacity="0.03" />
+        </linearGradient>
+      </defs>
+      {ticks.map((t) => (
+        <g key={t.i}>
+          <line x1={x(t.i)} y1={padT} x2={x(t.i)} y2={H - padB} stroke="var(--border)" strokeWidth={1} strokeDasharray="2 4" opacity={0.5} />
+          <text x={x(t.i)} y={H - 8} fontSize={10} fill="var(--faint)" textAnchor="middle">{t.d.slice(0, 7)}</text>
+        </g>
+      ))}
+      <polygon points={area} fill="url(#capfill)" />
+      <polyline points={areaPts} fill="none" stroke="var(--accent)" strokeWidth={2} strokeLinejoin="round" />
+      <polyline points={cumLine} fill="none" stroke="var(--ok)" strokeWidth={1.5} strokeDasharray="5 4" opacity={0.85} />
+    </svg>
+  );
+}
+
 // An honest "endpoint not built" panel (404). Distinct from a stuck skeleton or a £0.
 function NotAvailable({ which }: { which: string }) {
   return (
@@ -102,6 +145,10 @@ export function Activation({ role, ctx, toast }: ActivationProps) {
 
   const feedApi = useApi<ActivationFeed>(['activations', market, ctx?.market], `/api/v1/activations${feedQ}`);
   const warrApi = useApi<WarrantyRegister>(['warranty-provisions', ctx?.market], '/api/v1/warranty/provisions');
+  const capApi = useApi<Capacity>(['activation-capacity'], '/api/v1/activations/capacity?months=24&smoothing=28');
+  const cap = capApi.data ?? null;
+  const capPts: CapacityPoint[] = Array.isArray(cap?.points) ? cap!.points! : [];
+  const capH = cap?.headline ?? null;
 
   const feedErr = feedApi.error;
   const feedForbidden = feedErr?.forbidden ?? false;
@@ -146,6 +193,47 @@ export function Activation({ role, ctx, toast }: ActivationProps) {
           </span>
         }
       />
+
+      {/* Capacity connected — the smoothed daily MW run-rate over the cumulative fleet MW online */}
+      <Card style={{ marginBottom: 14, padding: 0 }} className="tablewrap">
+        <div className="row g12" style={{ padding: '14px 18px 6px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+          <div style={{ flex: 1, minWidth: 200 }}>
+            <div className="muted" style={{ fontSize: 'var(--fs-small)' }}>Capacity connected</div>
+            <div className="dim" style={{ fontSize: 'var(--fs-xs)', marginTop: 2 }}>
+              How much EV-charging capacity we're actually bringing online — each activated charger is a single-phase
+              32&nbsp;A install ({cap?.kw_per_unit ?? 7.4}&nbsp;kW). Daily run-rate is a {cap?.smoothing_days ?? 28}-day trailing mean.
+            </div>
+          </div>
+          <div style={{ textAlign: 'right' }}>
+            <div style={{ fontFamily: 'var(--font-disp)', fontSize: 26, fontWeight: 600, color: 'var(--accent)' }}>
+              {capApi.isLoading ? <span className="skel skel-line" style={{ width: 80, height: 22, display: 'inline-block' }} /> : `${(capH?.current_avg_daily_mw ?? 0).toFixed(2)} MW/day`}
+            </div>
+            <div className="dim" style={{ fontSize: 'var(--fs-xs)' }}>current run-rate</div>
+          </div>
+          <div style={{ textAlign: 'right', borderLeft: '1px solid var(--border)', paddingLeft: 14 }}>
+            <div style={{ fontFamily: 'var(--font-disp)', fontSize: 26, fontWeight: 600, color: 'var(--ok)' }}>
+              {capApi.isLoading ? <span className="skel skel-line" style={{ width: 80, height: 22, display: 'inline-block' }} /> : `${num(Math.round(capH?.total_mw ?? 0))} MW`}
+            </div>
+            <div className="dim" style={{ fontSize: 'var(--fs-xs)' }}>{num(capH?.total_units ?? 0)} chargers online</div>
+          </div>
+        </div>
+        {capApi.isLoading ? (
+          <div className="skel skel-line" style={{ height: 200, margin: '8px 18px 18px', borderRadius: 8 }} />
+        ) : capApi.error ? (
+          <div className="dim" style={{ padding: '0 18px 18px', fontSize: 'var(--fs-xs)' }}>
+            {capApi.error.notImplemented ? 'Capacity trend not available in this environment yet.' : capApi.error.forbidden ? 'Requires the volume layer.' : `Could not load the capacity trend (${capApi.error.status}).`}
+          </div>
+        ) : (
+          <>
+            <CapacityChart points={capPts} />
+            <div className="row g16" style={{ padding: '4px 18px 12px', fontSize: 'var(--fs-xs)' }}>
+              <span className="dim"><span style={{ display: 'inline-block', width: 18, height: 3, background: 'var(--accent)', verticalAlign: 'middle', marginRight: 5 }} />MW connected per day ({cap?.smoothing_days ?? 28}-day mean)</span>
+              <span className="dim"><span style={{ display: 'inline-block', width: 18, height: 0, borderTop: '2px dashed var(--ok)', verticalAlign: 'middle', marginRight: 5 }} />cumulative MW online</span>
+              {cap?.as_of && <span className="dim" style={{ marginLeft: 'auto' }}>as of {cap.as_of}</span>}
+            </div>
+          </>
+        )}
+      </Card>
 
       {/* sell-in → sell-through hero + provision summary */}
       <div className="grid" style={{ gridTemplateColumns: '1.6fr 1fr 1fr', marginBottom: 14, alignItems: 'stretch' }}>

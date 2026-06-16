@@ -7,6 +7,7 @@ import com.hypervolt.conduit.api.ApiMetrics
 import com.hypervolt.conduit.api.auth.ApiError
 import com.hypervolt.conduit.api.auth.AuthService
 import com.hypervolt.conduit.api.auth.Secured
+import com.hypervolt.conduit.supply.ActivationCapacityRepo
 import com.hypervolt.conduit.supply.SerialShelfRepo
 import doobie.implicits._
 import doobie.util.transactor.Transactor
@@ -40,21 +41,38 @@ final class ActivationRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F
           if (!gate(p)) Async[F].pure(Left(denied))
           else {
             val cap = limit.getOrElse(60).min(500).max(1)
-            (SerialShelfRepo.activationFeed(cap), SerialShelfRepo.sellInVsThrough, SerialShelfRepo.activatedCount).tupled
+            (
+              SerialShelfRepo.activationFeed(cap),
+              SerialShelfRepo.sellInVsThrough,
+              SerialShelfRepo.activatedCount
+            ).tupled
               .transact(xa)
               .map {
                 case (rows, sellThrough, total) =>
                   Right(
                     Json.obj(
-                      "rows"                -> Json.fromValues(rows),
-                      "total"               -> total.asJson,
-                      "sell_in_vs_through"  -> sellThrough
+                      "rows"               -> Json.fromValues(rows),
+                      "total"              -> total.asJson,
+                      "sell_in_vs_through" -> sellThrough
                     )
                   )
               }
           }
       })
 
+  // Capacity-connected trend: smoothed daily MW (default 28-day trailing mean over 24 months) + cumulative MW online.
+  private val capacity =
+    base.get
+      .in("api" / "v1" / "activations" / "capacity")
+      .in(query[Option[Int]]("months"))
+      .in(query[Option[Int]]("smoothing"))
+      .out(jsonBody[Json])
+      .serverLogic(p => {
+        case (months, smoothing) =>
+          if (!gate(p)) Async[F].pure(Left(denied))
+          else ActivationCapacityRepo.capacity(months.getOrElse(24), smoothing.getOrElse(28)).transact(xa).map(Right(_))
+      })
+
   val routes: HttpRoutes[F] =
-    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(List(feed))
+    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(List(feed, capacity))
 }
