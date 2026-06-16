@@ -209,12 +209,31 @@ function NotAvailable({ which }: { which: string }) {
 // the capacity story. Flip to true to bring them back.
 const SHOW_LEGACY_SECTIONS = false;
 
-const DATA_CENTRES: { name: string; power: number; note: string }[] = [
-  { name: 'Typical hyperscale data centre', power: 100, note: '≈100 MW' },
-  { name: 'xAI · Colossus (Memphis)', power: 300, note: '≈300 MW reported' },
-  { name: 'OpenAI · Stargate (Abilene)', power: 1000, note: '≈1 GW, first phase' },
-  { name: 'Meta · Hyperion', power: 5000, note: '≈5 GW planned' },
+interface DcRef { name: string; power: number; note: string; slug: string; mono: string; tint: string }
+const DATA_CENTRES: DcRef[] = [
+  { name: 'Typical hyperscale data centre', power: 100, note: '≈100 MW', slug: '', mono: 'DC', tint: '#6b7280' },
+  { name: 'xAI · Colossus (Memphis)', power: 300, note: '≈300 MW reported', slug: '', mono: 'xAI', tint: '#111827' },
+  { name: 'Meta · Prometheus', power: 1000, note: '≈1 GW · online 2026', slug: 'meta', mono: 'M', tint: '#0866FF' },
+  { name: 'OpenAI · Stargate (Abilene)', power: 1200, note: '≈1.2 GW · phase 1', slug: 'openai', mono: 'AI', tint: '#10A37F' },
+  { name: 'Amazon · Project Rainier', power: 2200, note: '≈2.2 GW · for Anthropic', slug: 'amazonwebservices', mono: 'AWS', tint: '#FF9900' },
+  { name: 'Meta · Hyperion (Louisiana)', power: 5000, note: '≈5 GW planned', slug: 'meta', mono: 'M', tint: '#0866FF' },
+  { name: 'OpenAI · Stargate (full programme)', power: 10000, note: '≈10 GW planned', slug: 'openai', mono: 'AI', tint: '#10A37F' },
 ];
+
+// Brand logo via the Simple Icons CDN (white glyph on a dark badge); falls back to a brand-coloured monogram if the
+// slug is missing or the image fails — so a screenshot never shows a broken image.
+function LogoBadge({ slug, mono, tint, alt }: { slug: string; mono: string; tint: string; alt: string }) {
+  const [err, setErr] = useState(false);
+  if (slug && !err)
+    return (
+      <div style={{ width: 44, height: 44, borderRadius: 10, background: 'var(--surface3)', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <img src={`https://cdn.simpleicons.org/${slug}/white`} width={26} height={26} alt={alt} onError={() => setErr(true)} style={{ objectFit: 'contain', opacity: 0.95 }} />
+      </div>
+    );
+  return (
+    <div style={{ width: 44, height: 44, borderRadius: 10, background: tint, color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 14, letterSpacing: '-0.02em', border: '1px solid var(--border)' }}>{mono}</div>
+  );
+}
 
 const fmtPower = (mw: number) => (mw >= 1000 ? `${(mw / 1000).toFixed(mw % 1000 === 0 ? 0 : 1)} GW` : `${mw} MW`);
 const fmtSpan = (years: number) =>
@@ -246,8 +265,9 @@ function DataCentreCompare({ fm, loading }: { fm: ReturnType<typeof forecastMode
       </div>
       <div style={{ flex: 1, padding: '8px 32px', display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 4 }}>
         {spans.map((s) => (
-          <div key={s.name} className="row" style={{ alignItems: 'center', gap: 20, padding: '22px 0', borderBottom: '1px solid var(--border)' }}>
-            <div style={{ width: 300, minWidth: 300 }}>
+          <div key={s.name} className="row" style={{ alignItems: 'center', gap: 18, padding: '22px 0', borderBottom: '1px solid var(--border)' }}>
+            <LogoBadge slug={s.slug} mono={s.mono} tint={s.tint} alt={s.name} />
+            <div style={{ width: 280, minWidth: 280 }}>
               <div style={{ fontSize: 19, fontWeight: 600 }}>{s.name}</div>
               <div className="dim" style={{ fontSize: 13, marginTop: 2 }}>{s.note}</div>
             </div>
@@ -340,7 +360,7 @@ export function Activation({ role, ctx, toast }: ActivationProps) {
             <div className="muted" style={{ fontSize: 'var(--fs-small)' }}>Capacity connected</div>
             <div className="dim" style={{ fontSize: 'var(--fs-xs)', marginTop: 2 }}>
               How much EV-charging capacity we're actually bringing online — each activated charger is a single-phase
-              32&nbsp;A install ({cap?.kw_per_unit ?? 7.4}&nbsp;kW). Daily run-rate is a {cap?.smoothing_days ?? 28}-day trailing mean over working days (weekends excluded).
+              32&nbsp;A install ({cap?.kw_per_unit ?? 7.4}&nbsp;kW). Daily run-rate is a {cap?.smoothing_days ?? 28}-day trailing mean.
             </div>
           </div>
           <div style={{ textAlign: 'right' }}>
@@ -360,7 +380,7 @@ export function Activation({ role, ctx, toast }: ActivationProps) {
           <>
             <CapacityChart points={capPts} />
             <div className="row g16" style={{ padding: '4px 18px 12px', fontSize: 'var(--fs-xs)' }}>
-              <span className="dim"><span style={{ display: 'inline-block', width: 18, height: 3, background: 'var(--accent)', verticalAlign: 'middle', marginRight: 5 }} />MW connected per working day ({cap?.smoothing_days ?? 28}-day mean)</span>
+              <span className="dim"><span style={{ display: 'inline-block', width: 18, height: 3, background: 'var(--accent)', verticalAlign: 'middle', marginRight: 5 }} />MW connected per day ({cap?.smoothing_days ?? 28}-day mean)</span>
               <span className="dim"><span style={{ display: 'inline-block', width: 18, height: 0, borderTop: '2px dashed var(--accent)', verticalAlign: 'middle', marginRight: 5, opacity: 0.85 }} />forecast (8 quarters)</span>
               <span className="dim"><span style={{ display: 'inline-block', width: 18, height: 0, borderTop: '2px dashed #14b8a6', verticalAlign: 'middle', marginRight: 5 }} />V2G capacity (Q1&rsquo;27+)</span>
               {cap?.as_of && <span className="dim" style={{ marginLeft: 'auto' }}>as of {cap.as_of}</span>}
