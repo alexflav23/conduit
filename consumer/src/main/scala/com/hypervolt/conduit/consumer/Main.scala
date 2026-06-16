@@ -143,8 +143,10 @@ object Main extends IOApp.Simple {
           // Shadow-validation harness (doc 33 §5): re-run the discrepancy battery on a cycle so the triage queue
           // tracks live state. The cutover gate is a sustained window with zero open money/unit findings.
           val shadowValidation = new com.hypervolt.conduit.shadow.ShadowValidationService[IO](xa)
+          val freeShipments    = new com.hypervolt.conduit.shadow.FreeShipmentService[IO](xa)
           val shadowLoop: IO[Unit] =
-            (shadowValidation.runAll(None, cfg.shadow).attempt.void *> IO.sleep(6.hours)).foreverM
+            (shadowValidation.runAll(None, cfg.shadow).attempt.void *>
+              freeShipments.rebuild.attempt.void *> IO.sleep(6.hours)).foreverM
           val forecastCycle = new com.hypervolt.conduit.forecast.ForecastCycle[IO](xa)
           val forecastLoop: IO[Unit] =
             (IO(java.time.LocalDate.now()).flatMap(forecastCycle.runOnce).attempt.void *> IO.sleep(6.hours)).foreverM
