@@ -55,49 +55,5 @@
         "syncMode": "FORCE"
       }
     }
-  ],
-  "users": [
-    {
-      "username": "ceo",
-      "email": "ceo@demo.hypervolt.local",
-      "enabled": true,
-      "emailVerified": true,
-      "credentials": [
-        {
-          "type": "password",
-          "value": "conduit",
-          "temporary": false
-        }
-      ],
-      "requiredActions": []
-    },
-    {
-      "username": "finance",
-      "email": "finance@demo.hypervolt.local",
-      "enabled": true,
-      "emailVerified": true,
-      "credentials": [
-        {
-          "type": "password",
-          "value": "conduit",
-          "temporary": false
-        }
-      ],
-      "requiredActions": []
-    },
-    {
-      "username": "admin",
-      "email": "admin@demo.hypervolt.local",
-      "enabled": true,
-      "emailVerified": true,
-      "credentials": [
-        {
-          "type": "password",
-          "value": "conduit",
-          "temporary": false
-        }
-      ],
-      "requiredActions": []
-    }
   ]
 }
