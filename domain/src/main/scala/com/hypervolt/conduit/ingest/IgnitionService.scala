@@ -129,30 +129,32 @@ final class IgnitionService[F[_]: Async](xa: Transactor[F]) {
   // propagate the ROOT original's warranty_end down each replacement chain (a replacement always inherits the
   // original's warranty — the clock never resets, transitively). Idempotent; a no-op until real tickets land.
   private def applyRmaTickets: ConnectionIO[Int] =
-    // 1. Resolve the faulty (original) unit — HubSpot charger_id is messy (spaces, case), so match normalized.
-    sql"""UPDATE rma_ticket t SET original_serial_unit_id = s.id
-          FROM serial_unit s
-          WHERE t.original_serial_unit_id IS NULL
-            AND lower(regexp_replace(t.original_serial, '[^0-9A-Za-z]', '', 'g')) = lower(s.serial_no)""".update.run *>
-      // 2. HubSpot records only that a replacement WAS sent, not which serial. Infer it from the real shipment: a
-      // free charger to the faulty unit's owner within 180 days after the RMA — earliest such shipment wins.
-      sql"""UPDATE rma_ticket t SET replacement_serial_unit_id = m.repl_id
-            FROM (
-              SELECT DISTINCT ON (t2.ticket_ref) t2.ticket_ref, repl.id AS repl_id
-              FROM rma_ticket t2
-              JOIN serial_unit orig ON orig.id = t2.original_serial_unit_id
-              JOIN free_shipment fs ON fs.party_id = orig.company_id
-              JOIN serial_unit repl ON repl.dispatch_id = fs.dispatch_id AND repl.id <> orig.id
-              WHERE (t2.payload->>'replacement_sent') = 'true' AND t2.original_serial_unit_id IS NOT NULL
-                AND t2.opened_at IS NOT NULL
-                AND fs.occurred_at >= t2.opened_at AND fs.occurred_at < t2.opened_at + interval '180 days'
-              ORDER BY t2.ticket_ref, fs.occurred_at
-            ) m
-            WHERE t.ticket_ref = m.ticket_ref AND t.replacement_serial_unit_id IS NULL""".update.run *>
-      // 3. Set the genealogy pointer: the replacement unit replaces the faulty one.
+    // 1. Materialise the RMA units the ledger never had (V2 originals + replacement stock) — real serials from real
+    //    tickets, classified V3 (0301-hex) / V2 (long decimal MAC or HYPV2 code), provenance 'hubspot_rma'.
+    sql"""INSERT INTO serial_unit (serial_no, generation, product_variant_id, status, source)
+          SELECT DISTINCT ns,
+            CASE WHEN ns ~ '^0301[0-9a-f]{12}$$' THEN 'v3' ELSE 'v2' END,
+            CASE WHEN ns ~ '^0301[0-9a-f]{12}$$' THEN (SELECT id FROM product_variant WHERE sku = 'HV3-RMA-UNSPECIFIED')
+                 ELSE (SELECT id FROM product_variant WHERE sku = 'hv-2.0-uwt-t2') END,
+            'rma_unit', 'hubspot_rma'
+          FROM (
+            SELECT lower(regexp_replace(original_serial, '[^0-9A-Za-z]', '', 'g')) AS ns FROM rma_ticket WHERE original_serial IS NOT NULL
+            UNION
+            SELECT lower(regexp_replace(replacement_serial, '[^0-9A-Za-z]', '', 'g')) FROM rma_ticket WHERE replacement_serial IS NOT NULL
+          ) cand
+          WHERE (ns ~ '^0301[0-9a-f]{12}$$' OR ns ~ '^[0-9]{11,}$$' OR ns ~ '^hypv2')
+            AND NOT EXISTS (SELECT 1 FROM serial_unit s WHERE s.serial_no = ns)""".update.run *>
+      // 2. Resolve faulty + replacement to serial ids (normalized — charger_id is raw). HubSpot's
+      //    rma_serial_number__s_n_ gives the EXACT replacement serial (no inference needed).
+      sql"""UPDATE rma_ticket t SET
+              original_serial_unit_id = (SELECT id FROM serial_unit s WHERE s.serial_no = lower(regexp_replace(t.original_serial, '[^0-9A-Za-z]', '', 'g'))),
+              replacement_serial_unit_id = (SELECT id FROM serial_unit s WHERE s.serial_no = lower(regexp_replace(t.replacement_serial, '[^0-9A-Za-z]', '', 'g')))
+            WHERE t.original_serial IS NOT NULL OR t.replacement_serial IS NOT NULL""".update.run *>
+      // 3. Genealogy: the replacement unit replaces the faulty one (exact, from the ticket's two serials).
       sql"""UPDATE serial_unit r SET replaces_serial_unit_id = t.original_serial_unit_id
             FROM rma_ticket t
             WHERE r.id = t.replacement_serial_unit_id AND t.original_serial_unit_id IS NOT NULL
+              AND r.id <> t.original_serial_unit_id
               AND r.replaces_serial_unit_id IS DISTINCT FROM t.original_serial_unit_id""".update.run *>
       sql"""WITH RECURSIVE chain AS (
               SELECT id, warranty_end FROM serial_unit WHERE replaces_serial_unit_id IS NULL

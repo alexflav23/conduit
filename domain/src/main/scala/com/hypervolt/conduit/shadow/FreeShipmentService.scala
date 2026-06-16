@@ -63,6 +63,14 @@ final class FreeShipmentService[F[_]: Async](xa: Transactor[F]) {
       sql"""DELETE FROM free_shipment fs WHERE NOT EXISTS (
               SELECT 1 FROM revenue_recognition rr JOIN "order" o ON o.id = rr.order_id
               WHERE rr.dispatch_id = fs.dispatch_id AND rr.cogs > 0 AND rr.revenue_ex_vat = 0 AND o.subtotal_ex_vat = 0)""".update.run *>
+      // Confirm warranty against the HubSpot RMA tickets: a free unit whose serial IS an RMA replacement serial is a
+      // CONFIRMED warranty/RMA replacement (not a heuristic free_replacement_to_customer). Human overrides preserved.
+      sql"""UPDATE free_shipment fs SET category = 'warranty_replacement_confirmed',
+              basis = 'free unit serial matches a HubSpot RMA replacement (rma_serial_number)'
+            WHERE fs.override_by IS NULL AND EXISTS (
+              SELECT 1 FROM serial_unit s JOIN rma_ticket t
+                ON lower(regexp_replace(t.replacement_serial, '[^0-9A-Za-z]', '', 'g')) = s.serial_no
+              WHERE s.dispatch_id = fs.dispatch_id)""".update.run *>
       sql"SELECT count(*) FROM free_shipment".query[Int].unique).transact(xa)
 
   def summary: F[List[Json]] =

@@ -39,6 +39,17 @@ final class UnitLifecycleRoutes[F[_]: Async](xa: Transactor[F], auth: AuthServic
             }
       )
 
+  private val rmaStats =
+    base.get
+      .in("api" / "v1" / "warranty" / "rma-stats")
+      .out(jsonBody[Json])
+      .serverLogic(p =>
+        _ =>
+          if (!PolicyEngine.hasPermission(p, Action.View, "pipeline_coverage"))
+            Async[F].pure(Left((StatusCode.Forbidden, ApiError("forbidden", "requires view:pipeline_coverage"))))
+          else svc.rmaStats.map(Right(_))
+      )
+
   val routes: HttpRoutes[F] =
-    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(List(lifecycle))
+    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(List(lifecycle, rmaStats))
 }

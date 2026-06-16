@@ -45,6 +45,38 @@ final class UnitLifecycleService[F[_]: Async](xa: Transactor[F]) {
         }
     }
 
+  // RMA / warranty-replacement stats from the real HubSpot tickets, by generation of (faulty → replacement). V2→V3
+  // = a V2 unit replaced by the current product under warranty; the user's quality/cost signal.
+  def rmaStats: F[Json] =
+    sql"""SELECT
+            count(*) AS total_tickets,
+            count(*) FILTER (WHERE t.original_serial_unit_id IS NOT NULL) AS matched_faulty,
+            count(*) FILTER (WHERE t.replacement_serial_unit_id IS NOT NULL) AS matched_replacement,
+            count(*) FILTER (WHERE o.generation='v2' AND r.generation='v3') AS v2_to_v3,
+            count(*) FILTER (WHERE o.generation='v3' AND r.generation='v3') AS v3_to_v3,
+            count(*) FILTER (WHERE o.generation='v2' AND r.generation='v2') AS v2_to_v2,
+            count(*) FILTER (WHERE o.generation='v2') AS faulty_v2,
+            count(*) FILTER (WHERE o.generation='v3') AS faulty_v3
+          FROM rma_ticket t
+          LEFT JOIN serial_unit o ON o.id = t.original_serial_unit_id
+          LEFT JOIN serial_unit r ON r.id = t.replacement_serial_unit_id"""
+      .query[(Int, Int, Int, Int, Int, Int, Int, Int)]
+      .unique
+      .transact(xa)
+      .map {
+        case (total, mf, mr, v2v3, v3v3, v2v2, fv2, fv3) =>
+          Json.obj(
+            "total_rma_tickets"     -> total.asJson,
+            "matched_faulty_units"  -> mf.asJson,
+            "matched_replacements"  -> mr.asJson,
+            "v2_to_v3_replacements" -> v2v3.asJson,
+            "v3_to_v3_replacements" -> v3v3.asJson,
+            "v2_to_v2_replacements" -> v2v2.asJson,
+            "faulty_v2"             -> fv2.asJson,
+            "faulty_v3"             -> fv3.asJson
+          )
+      }
+
   // The whole lineage (root → … → latest) of the family this serial belongs to, ordered oldest-first.
   private def timeline(serial: String): F[List[(String, String, Option[Instant], Option[LocalDate], Boolean)]] =
     sql"""WITH RECURSIVE up AS (
