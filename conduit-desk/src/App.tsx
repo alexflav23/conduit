@@ -26,6 +26,7 @@ import { Lifecycle } from './Lifecycle';
 import { Tax } from './Tax';
 import { Intercompany } from './Intercompany';
 import { Procurement } from './Procurement';
+import { Treasury } from './Treasury';
 import { Auditability } from './Auditability';
 import { Period } from './Period';
 import { Sync } from './Sync';
@@ -51,7 +52,7 @@ type TabId =
   | 'h6q' | 'flow' | 'supply' | 'shelf' | 'engine' | 'runs'
   | 'inventory' | 'purchasing' | 'batch' | 'activation'
   | 'finance' | 'commission' | 'docs' | 'lifecycle' | 'tax'
-  | 'intercompany' | 'procurement'
+  | 'intercompany' | 'procurement' | 'treasury'
   | 'audit' | 'period' | 'sync' | 'proof' | 'access' | 'notifications';
 
 interface NavItem { id: TabId; label: string; icon: keyof typeof I }
@@ -88,6 +89,7 @@ const GROUPS: { sec: string; items: NavItem[] }[] = [
   { sec: 'Treasury', items: [
     { id: 'intercompany', label: 'Intercompany', icon: 'grid' },
     { id: 'procurement', label: 'Procurement', icon: 'layers' },
+    { id: 'treasury', label: 'FX Hedging', icon: 'scale' },
   ]},
   { sec: 'Govern', items: [
     { id: 'audit', label: 'Auditability', icon: 'shield' },
@@ -107,7 +109,7 @@ const PAGES: Record<TabId, React.ComponentType<any>> = {
   h6q: H6Q, flow: Flow, supply: SupplyWindow, shelf: Shelf, engine: Forecasting, runs: ForecastRuns,
   inventory: Inventory, purchasing: Purchasing, batch: BatchGenealogy, activation: Activation,
   finance: Finance, commission: Commission, docs: Documents, lifecycle: Lifecycle, tax: Tax,
-  intercompany: Intercompany, procurement: Procurement,
+  intercompany: Intercompany, procurement: Procurement, treasury: Treasury,
   audit: Auditability, period: Period, sync: Sync, proof: Proof, access: Access, notifications: Notifications,
 };
 

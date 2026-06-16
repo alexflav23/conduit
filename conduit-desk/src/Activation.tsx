@@ -299,9 +299,36 @@ function DataCentreCompare({ fm, loading }: { fm: ReturnType<typeof forecastMode
   );
 }
 
+interface ActSeriesPoint { period: string; count: number; mw: number }
+interface ActKpis { total: number; last_7d: number; last_30d: number; total_mw: number; as_of: string }
+
+// Monthly activation bars (count → MW at 7.4 kW). Inline SVG, matching the desk.
+function SeriesBars({ data }: { data: ActSeriesPoint[] }) {
+  const W = 980, H = 220, padL = 8, padR = 8, padT = 14, padB = 26;
+  if (data.length < 1) return <div className="dim" style={{ padding: 20 }}>No activation history.</div>;
+  const max = Math.max(...data.map((d) => d.count), 1);
+  const bw = (W - padL - padR) / data.length;
+  const baseY = H - padB;
+  const step = Math.max(1, Math.ceil(data.length / 8));
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: 'block' }} preserveAspectRatio="none">
+      {data.map((d, i) => {
+        const h = (d.count / max) * (baseY - padT);
+        const x = padL + i * bw;
+        return (
+          <g key={d.period}>
+            <rect x={x + bw * 0.12} y={baseY - h} width={bw * 0.76} height={h} rx={2} fill="var(--accent)" opacity={0.85} />
+            {i % step === 0 && <text x={x + bw / 2} y={H - 8} fontSize={10} fill="var(--faint)" textAnchor="middle">{d.period.slice(0, 7)}</text>}
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
 export function Activation({ role, ctx, toast, sub }: ActivationProps) {
   const navigate = useNavigate();
-  const view = sub === 'live' ? 'live' : 'capacity';
+  const view = sub === 'live' ? 'live' : sub === 'analytics' ? 'analytics' : 'capacity';
   const layers = role?.layers ?? [];
   const canSeeProvision = layers.length === 0 || layers.indexOf('profitability') >= 0;
 
@@ -313,7 +340,9 @@ export function Activation({ role, ctx, toast, sub }: ActivationProps) {
     return q;
   })();
 
-  const feedApi = useApi<ActivationFeed>(['activations', market, ctx?.market], `/api/v1/activations${feedQ}`);
+  const feedApi = useApi<ActivationFeed>(['activations', market, ctx?.market], `/api/v1/activations${feedQ}`, {
+    refetchInterval: view === 'live' ? 15000 : undefined, // live-refresh the feed
+  });
   const warrApi = useApi<WarrantyRegister>(['warranty-provisions', ctx?.market], '/api/v1/warranty/provisions');
   const capApi = useApi<Capacity>(['activation-capacity'], '/api/v1/activations/capacity?months=24&smoothing=28');
   const cap = capApi.data ?? null;
@@ -321,6 +350,12 @@ export function Activation({ role, ctx, toast, sub }: ActivationProps) {
   const capH = cap?.headline ?? null;
   const fm = forecastModel(capPts);
   const v2gRate = fm ? fm.fcRate(fm.dH) : 0; // predicted rate at the end of the forecast horizon (V2G era)
+
+  // Analytics subroute data (count/MW series + KPIs), fetched only when that tab is open.
+  const seriesApi = useApi<ActSeriesPoint[]>(['activation-series'], '/api/v1/activations/series?bucket=month&months=24', { enabled: view === 'analytics' });
+  const kpisApi = useApi<ActKpis>(['activation-kpis'], '/api/v1/activations/kpis', { enabled: view === 'analytics' });
+  const series = seriesApi.data ?? [];
+  const kpis = kpisApi.data ?? null;
 
   const feedErr = feedApi.error;
   const feedForbidden = feedErr?.forbidden ?? false;
@@ -369,6 +404,7 @@ export function Activation({ role, ctx, toast, sub }: ActivationProps) {
       <div className="seg" style={{ marginBottom: 14 }} data-testid="activation-subnav">
         <button className={view === 'capacity' ? 'on' : ''} onClick={() => navigate('/activation/capacity')}>Capacity</button>
         <button className={view === 'live' ? 'on' : ''} onClick={() => navigate('/activation/live')}>Live feed</button>
+        <button className={view === 'analytics' ? 'on' : ''} onClick={() => navigate('/activation/analytics')}>Analytics</button>
       </div>
 
       {view === 'capacity' && (<>
@@ -454,7 +490,28 @@ export function Activation({ role, ctx, toast, sub }: ActivationProps) {
               </div>
             )}
             <div className="layer-note" style={{ padding: '10px 16px' }}>
-              <I.wifi />Newest-first off the placement stream. Real-time push (SSE) is the next slice — this shows the latest ingested activations.
+              <I.wifi />Newest-first off the placement stream, auto-refreshing every 15s. True server-push (SSE) is the next slice — in prod this streams live from the Athena placement topic.
+            </div>
+          </Card>
+        </>
+      )}
+
+      {view === 'analytics' && (
+        <>
+          <div className="grid" style={{ gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 14 }}>
+            <StatCard label="Total activated" value={kpis ? num(kpis.total) : '—'} tone="var(--ok)" />
+            <StatCard label="Last 30 days" value={kpis ? num(kpis.last_30d) : '—'} />
+            <StatCard label="Last 7 days" value={kpis ? num(kpis.last_7d) : '—'} />
+            <StatCard label="Capacity online" value={kpis ? `${num(Math.round(kpis.total_mw))} MW` : '—'} tone={V2G} />
+          </div>
+          <Card title="Activations per month" icon={I.trend} aux="count · last 24 months" style={{ padding: 0 }} className="tablewrap">
+            {seriesApi.isLoading ? (
+              <div className="skel skel-line" style={{ height: 180, margin: 16, borderRadius: 8 }} />
+            ) : (
+              <SeriesBars data={series} />
+            )}
+            <div className="dim" style={{ padding: '4px 18px 12px', fontSize: 'var(--fs-xs)' }}>
+              Each bar is a month of charger activations (× 7.4&nbsp;kW = MW connected).{kpis?.as_of ? ` As of ${kpis.as_of}.` : ''}
             </div>
           </Card>
         </>

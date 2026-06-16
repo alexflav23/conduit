@@ -27,12 +27,13 @@ export const queryClient = new QueryClient({
 export function useApi<T = unknown>(
   key: readonly unknown[],
   path: string,
-  opts: { enabled?: boolean } = {},
+  opts: { enabled?: boolean; refetchInterval?: number } = {},
 ): UseQueryResult<T, ApiError> {
   return useQuery<T, ApiError>({
     queryKey: key,
     queryFn: () => request<T>(path),
     enabled: opts.enabled ?? true,
+    refetchInterval: opts.refetchInterval,
   });
 }
 
