@@ -78,31 +78,35 @@ interface Capacity { kw_per_unit?: number; window_months?: number; smoothing_day
 
 const V2G = '#14b8a6'; // teal — distinct from the accent purple; marks Vehicle-to-Grid capacity (Q1'27+)
 
-// Capacity chart: the smoothed working-day run-rate of MW going live (solid area = actuals), then a forecast
-// growth curve over the next 8 quarters (dashed, grounded in observed YoY growth compounded quarterly). From
-// Q1'27 the forecast is V2G capacity, shaded with a distinct teal gradient + label. No cumulative line — just how
-// the install rate has evolved and where it's headed. Inline SVG, quarter ticks across the whole span.
-function CapacityChart({ points }: { points: CapacityPoint[] }) {
-  const W = 980, H = 248, padL = 8, padR = 8, padT = 22, padB = 26;
+// Forecast model shared by the chart and the headline: working-day run-rate grown over 8 quarters at the observed
+// YoY rate compounded quarterly (capped/floored), with the V2G era starting Q1'27. fcRate(dH) is the predicted
+// rate at the end of the horizon — the V2G rate the headline names.
+function forecastModel(points: CapacityPoint[]) {
   const n = points.length;
-  if (n < 2) return <div className="dim" style={{ padding: 20 }}>Not enough history to chart.</div>;
-
+  if (n < 2) return null;
   const dayNum = (s: string) => Date.UTC(+s.slice(0, 4), +s.slice(5, 7) - 1, +s.slice(8, 10)) / 86400000;
-  const d0 = dayNum(points[0].date);
   const dF = dayNum(points[n - 1].date);
-  const Q = 365 / 4;                 // days per quarter
-  const dH = dF + 8 * Q;             // forecast 8 quarters out
-  const dV = dayNum('2027-01-01');   // V2G capacity from Q1'27
-
-  // Forecast growth grounded in observed YoY: quarterly compound = YoY^(1/4), floored/capped so it stays sane.
+  const Q = 365 / 4;
+  const dH = dF + 8 * Q; // 8 quarters out
+  const dV = dayNum('2027-01-01'); // V2G from Q1'27
   const currentRate = points[n - 1].avg_daily_mw ?? 0;
   const idxYrAgo = points.findIndex((p) => dayNum(p.date) >= dF - 365);
   const rateYrAgo = idxYrAgo >= 0 ? (points[idxYrAgo].avg_daily_mw ?? 0) : currentRate;
   const yoy = Math.min(2.2, Math.max(1.05, rateYrAgo > 0 ? currentRate / rateYrAgo : 1.4));
   const qGrowth = Math.pow(yoy, 1 / 4);
   const fcRate = (dn: number) => currentRate * Math.pow(qGrowth, (dn - dF) / Q);
+  return { dayNum, d0: dayNum(points[0].date), dF, dV, dH, currentRate, qGrowth, fcRate, avg: points.map((p) => p.avg_daily_mw ?? 0) };
+}
 
-  const avg = points.map((p) => p.avg_daily_mw ?? 0);
+// Capacity chart: the smoothed working-day run-rate of MW going live (solid area = actuals), then a forecast
+// growth curve over the next 8 quarters (dashed, grounded in observed YoY growth compounded quarterly). From
+// Q1'27 the forecast is V2G capacity, shaded with a distinct teal gradient + label. No cumulative line — just how
+// the install rate has evolved and where it's headed. Inline SVG, quarter ticks across the whole span.
+function CapacityChart({ points }: { points: CapacityPoint[] }) {
+  const W = 980, H = 372, padL = 8, padR = 8, padT = 22, padB = 26;
+  const m = forecastModel(points);
+  if (!m) return <div className="dim" style={{ padding: 20 }}>Not enough history to chart.</div>;
+  const { dayNum, d0, dF, dV, dH, fcRate, avg } = m;
   const maxAvg = Math.max(...avg, fcRate(dH), 0.001) * 1.06;
 
   const baseY = H - padB;
@@ -201,6 +205,10 @@ function NotAvailable({ which }: { which: string }) {
 // moment. At the current average install rate (MW per working day → ×260 working days ≈ MW/year), how long would
 // it take to connect as much grid power as some of the data centres being built right now? The capacities are
 // approximate ANNOUNCED/PUBLISHED figures — external reference points, clearly not Hypervolt data.
+// Sell-in/through, warranty and the feed/register tables are hidden for now (kept in code) — the page focuses on
+// the capacity story. Flip to true to bring them back.
+const SHOW_LEGACY_SECTIONS = false;
+
 const DATA_CENTRES: { name: string; power: number; note: string }[] = [
   { name: 'Typical hyperscale data centre', power: 100, note: '≈100 MW' },
   { name: 'xAI · Colossus (Memphis)', power: 300, note: '≈300 MW reported' },
@@ -212,18 +220,28 @@ const fmtPower = (mw: number) => (mw >= 1000 ? `${(mw / 1000).toFixed(mw % 1000 
 const fmtSpan = (years: number) =>
   !Number.isFinite(years) || years <= 0 ? '—' : years >= 1.5 ? `${years.toFixed(1)} years` : `${Math.max(1, Math.round(years * 12))} months`;
 
-function DataCentreCompare({ ratePerWorkingDay, loading }: { ratePerWorkingDay: number; loading: boolean }) {
-  const annual = ratePerWorkingDay * 260; // ~260 working days a year ⇒ MW connected per calendar year at this pace
-  const spans = DATA_CENTRES.map((d) => ({ ...d, years: annual > 0 ? d.power / annual : Infinity }));
+function DataCentreCompare({ fm, loading }: { fm: ReturnType<typeof forecastModel>; loading: boolean }) {
+  // Time-to-connect integrates the FORECAST growth curve, not a flat rate: with annual capacity growing at g = YoY,
+  // cumulative over T years = A0·(gᵀ−1)/ln g, so T to reach P MW = ln(1 + P·ln g / A0) / ln g.
+  const A0 = fm ? fm.currentRate * 260 : 0; // MW/year at today's pace (~260 working days)
+  const g = fm ? Math.pow(fm.qGrowth, 4) : 1; // annual growth factor (YoY)
+  const lng = Math.log(g);
+  const yearsTo = (p: number) => {
+    if (A0 <= 0) return Infinity;
+    if (Math.abs(lng) < 1e-6) return p / A0;
+    const inner = 1 + (p * lng) / A0;
+    return inner > 0 ? Math.log(inner) / lng : Infinity;
+  };
+  const spans = DATA_CENTRES.map((d) => ({ ...d, years: yearsTo(d.power) }));
   const maxYears = Math.max(...spans.map((s) => (Number.isFinite(s.years) ? s.years : 0)), 0.001);
+  const growthPct = Math.round((g - 1) * 100);
   return (
     <Card style={{ marginBottom: 14, padding: 0 }} className="tablewrap">
       <div style={{ padding: '14px 18px 4px' }}>
         <div className="muted" style={{ fontSize: 'var(--fs-small)' }}>How fast is that?</div>
         <div className="dim" style={{ fontSize: 'var(--fs-xs)', marginTop: 2, maxWidth: 760 }}>
-          AI data centres are the energy story of the moment. At our current pace —{' '}
-          {loading ? '…' : <b>{ratePerWorkingDay.toFixed(2)} MW per working day</b>}{' '}
-          ({loading ? '…' : `≈${num(Math.round(annual))} MW`}/year) — here's how long it would take Hypervolt to connect as much grid power as one of them.
+          AI data centres are the energy story of the moment. On our forecast trajectory — install pace growing{' '}
+          {loading ? '…' : <b>≈{growthPct}%/year</b>} from {loading ? '…' : `≈${num(Math.round(A0))} MW`}/year today — here's how long it would take Hypervolt to connect as much grid power as one of them.
         </div>
       </div>
       <div style={{ padding: '6px 18px 14px' }}>
@@ -243,7 +261,7 @@ function DataCentreCompare({ ratePerWorkingDay, loading }: { ratePerWorkingDay: 
           </div>
         ))}
         <div className="dim" style={{ fontSize: 'var(--fs-xs)', marginTop: 8 }}>
-          Data-centre capacities are approximate announced/published figures — external reference points, not Hypervolt data. Pace is the trailing working-day install average.
+          Data-centre capacities are approximate announced/published figures — external reference points, not Hypervolt data. Times integrate the forecast growth curve (compounding), assuming the trajectory continues.
         </div>
       </div>
     </Card>
@@ -268,6 +286,8 @@ export function Activation({ role, ctx, toast }: ActivationProps) {
   const cap = capApi.data ?? null;
   const capPts: CapacityPoint[] = Array.isArray(cap?.points) ? cap!.points! : [];
   const capH = cap?.headline ?? null;
+  const fm = forecastModel(capPts);
+  const v2gRate = fm ? fm.fcRate(fm.dH) : 0; // predicted rate at the end of the forecast horizon (V2G era)
 
   const feedErr = feedApi.error;
   const feedForbidden = feedErr?.forbidden ?? false;
@@ -330,8 +350,10 @@ export function Activation({ role, ctx, toast }: ActivationProps) {
             <div className="dim" style={{ fontSize: 'var(--fs-xs)' }}>current run-rate</div>
           </div>
           <div style={{ textAlign: 'right', borderLeft: '1px solid var(--border)', paddingLeft: 14 }}>
-            <div style={{ fontFamily: 'var(--font-disp)', fontSize: 26, fontWeight: 600, color: 'var(--ok)' }}>~2 GW</div>
-            <div className="dim" style={{ fontSize: 'var(--fs-xs)' }}>deployed to date</div>
+            <div style={{ fontFamily: 'var(--font-disp)', fontSize: 26, fontWeight: 600, color: V2G }}>
+              {capApi.isLoading ? <span className="skel skel-line" style={{ width: 90, height: 22, display: 'inline-block' }} /> : `${v2gRate.toFixed(2)} MW/day`}
+            </div>
+            <div className="dim" style={{ fontSize: 'var(--fs-xs)' }}>predicted V2G rate</div>
           </div>
         </div>
         {capApi.isLoading ? (
@@ -354,8 +376,9 @@ export function Activation({ role, ctx, toast }: ActivationProps) {
       </Card>
 
       {/* AI-data-centre comparison — "at current speed, how long to connect that much power?" */}
-      <DataCentreCompare ratePerWorkingDay={capH?.current_avg_daily_mw ?? 0} loading={capApi.isLoading} />
+      <DataCentreCompare fm={fm} loading={capApi.isLoading} />
 
+      {SHOW_LEGACY_SECTIONS && (<>
       {/* sell-in → sell-through hero + provision summary */}
       <div className="grid" style={{ gridTemplateColumns: '1.6fr 1fr 1fr', marginBottom: 14, alignItems: 'stretch' }}>
         <Card>
@@ -523,6 +546,7 @@ export function Activation({ role, ctx, toast }: ActivationProps) {
           )}
         </Card>
       </div>
+      </>)}
     </div>
   );
 }
