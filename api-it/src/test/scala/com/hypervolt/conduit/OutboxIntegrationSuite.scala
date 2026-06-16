@@ -5,6 +5,7 @@ import cats.effect.Resource
 import cats.syntax.all._
 import com.hypervolt.conduit.db.EntityRepo
 import com.hypervolt.conduit.event._
+import com.hypervolt.conduit.orgconfig.EntityType
 import doobie.implicits._
 import doobie.hikari.HikariTransactor
 import io.circe.Json
@@ -44,7 +45,7 @@ object OutboxIntegrationSuite extends IOSuite {
       _ <- reset(xa)
       _ <-
         EntityRepo
-          .insert("UK Ltd", "GB", "GBP", "operating")
+          .insert("UK Ltd", "GB", "GBP", EntityType.Operating)
           .flatMap(eid => OutboxRepo.append(event("entity", 1, eid)))
           .transact(xa)
       ec <- countEntities(xa)
@@ -59,7 +60,7 @@ object OutboxIntegrationSuite extends IOSuite {
       _ <- OutboxRepo.append(event("seed", 1, UUID.randomUUID(), dup)).transact(xa)
       attempt <-
         EntityRepo
-          .insert("Should Rollback", "GB", "GBP", "operating")
+          .insert("Should Rollback", "GB", "GBP", EntityType.Operating)
           .flatMap(eid => OutboxRepo.append(event("entity", 2, eid, dup))) // duplicate PK -> fails
           .transact(xa)
           .attempt
