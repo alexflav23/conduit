@@ -77,25 +77,55 @@ interface CapacityHeadline { total_units?: number; total_mw?: number; current_av
 interface Capacity { kw_per_unit?: number; window_months?: number; smoothing_days?: number; as_of?: string; headline?: CapacityHeadline; points?: CapacityPoint[] }
 
 // Capacity-connected chart: the smoothed daily run-rate of MW going live (area) over the cumulative MW online
-// (right-axis line). Inline SVG — no chart lib, matching the rest of the desk. X-axis carries dated month ticks.
+// (line), plus a forward projection that holds the run-rate at twice today's pace through the next 12 months —
+// drawn dashed past a "now" divider so it never reads as actuals. Inline SVG, dated month ticks across both spans.
 function CapacityChart({ points }: { points: CapacityPoint[] }) {
   const W = 980, H = 240, padL = 8, padR = 8, padT = 14, padB = 26;
   const n = points.length;
   if (n < 2) return <div className="dim" style={{ padding: 20 }}>Not enough history to chart.</div>;
+
+  const dayNum = (s: string) => Date.UTC(+s.slice(0, 4), +s.slice(5, 7) - 1, +s.slice(8, 10)) / 86400000;
+  const d0 = dayNum(points[0].date);
+  const dF = dayNum(points[n - 1].date);
+  const horizonDays = 365;
+  const dH = dF + horizonDays;
+
+  const currentRate = points[n - 1].avg_daily_mw ?? 0;
+  const currentCum = points[n - 1].cumulative_mw ?? 0;
+  const projRate = currentRate * 2;
+  const projCum = currentCum + projRate * horizonDays;
+
   const avg = points.map((p) => p.avg_daily_mw ?? 0);
   const cum = points.map((p) => p.cumulative_mw ?? 0);
-  const maxAvg = Math.max(...avg, 0.001);
-  const maxCum = Math.max(...cum, 0.001);
-  const x = (i: number) => padL + (i / (n - 1)) * (W - padL - padR);
-  const yA = (v: number) => padT + (1 - v / maxAvg) * (H - padT - padB);
-  const yC = (v: number) => padT + (1 - v / maxCum) * (H - padT - padB);
-  const areaPts = avg.map((v, i) => `${x(i).toFixed(1)},${yA(v).toFixed(1)}`).join(' ');
-  const area = `${padL},${(H - padB).toFixed(1)} ${areaPts} ${x(n - 1).toFixed(1)},${(H - padB).toFixed(1)}`;
-  const cumLine = cum.map((v, i) => `${x(i).toFixed(1)},${yC(v).toFixed(1)}`).join(' ');
-  // Month-boundary ticks (1st of each month present), thinned so labels never collide.
-  const firsts = points.map((p, i) => ({ i, d: p.date })).filter((p) => p.d.slice(8, 10) === '01');
-  const step = Math.ceil(firsts.length / 8);
-  const ticks = firsts.filter((_, k) => k % step === 0);
+  const maxAvg = Math.max(...avg, projRate, 0.001) * 1.06;
+  const maxCum = Math.max(...cum, projCum, 0.001) * 1.02;
+
+  const baseY = H - padB;
+  const x = (dn: number) => padL + ((dn - d0) / (dH - d0)) * (W - padL - padR);
+  const yA = (v: number) => padT + (1 - v / maxAvg) * (baseY - padT);
+  const yC = (v: number) => padT + (1 - v / maxCum) * (baseY - padT);
+  const xi = (i: number) => x(dayNum(points[i].date));
+
+  const areaPts = avg.map((v, i) => `${xi(i).toFixed(1)},${yA(v).toFixed(1)}`).join(' ');
+  const area = `${x(d0).toFixed(1)},${baseY} ${areaPts} ${x(dF).toFixed(1)},${baseY}`;
+  const cumLine = cum.map((v, i) => `${xi(i).toFixed(1)},${yC(v).toFixed(1)}`).join(' ');
+
+  const xF = x(dF), xH = x(dH);
+  const projArea = `${xF.toFixed(1)},${baseY} ${xF.toFixed(1)},${yA(projRate).toFixed(1)} ${xH.toFixed(1)},${yA(projRate).toFixed(1)} ${xH.toFixed(1)},${baseY}`;
+  const projRateLine = `${xF.toFixed(1)},${yA(currentRate).toFixed(1)} ${xF.toFixed(1)},${yA(projRate).toFixed(1)} ${xH.toFixed(1)},${yA(projRate).toFixed(1)}`;
+  const projCumLine = `${xF.toFixed(1)},${yC(currentCum).toFixed(1)} ${xH.toFixed(1)},${yC(projCum).toFixed(1)}`;
+
+  // Month-first ticks across the whole span (history + projection), thinned so labels never collide.
+  const ticks: { dn: number; label: string }[] = [];
+  let cur = new Date(Date.UTC(+points[0].date.slice(0, 4), +points[0].date.slice(5, 7) - 1, 1));
+  while (cur.getTime() / 86400000 <= dH) {
+    const dn = cur.getTime() / 86400000;
+    if (dn >= d0) ticks.push({ dn, label: `${cur.getUTCFullYear()}-${String(cur.getUTCMonth() + 1).padStart(2, '0')}` });
+    cur = new Date(Date.UTC(cur.getUTCFullYear(), cur.getUTCMonth() + 1, 1));
+  }
+  const step = Math.max(1, Math.ceil(ticks.length / 9));
+  const shown = ticks.filter((_, k) => k % step === 0);
+
   return (
     <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: 'block' }} preserveAspectRatio="none">
       <defs>
@@ -103,13 +133,25 @@ function CapacityChart({ points }: { points: CapacityPoint[] }) {
           <stop offset="0%" stopColor="var(--accent)" stopOpacity="0.42" />
           <stop offset="100%" stopColor="var(--accent)" stopOpacity="0.03" />
         </linearGradient>
+        <linearGradient id="capproj" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="var(--accent)" stopOpacity="0.16" />
+          <stop offset="100%" stopColor="var(--accent)" stopOpacity="0.02" />
+        </linearGradient>
       </defs>
-      {ticks.map((t) => (
-        <g key={t.i}>
-          <line x1={x(t.i)} y1={padT} x2={x(t.i)} y2={H - padB} stroke="var(--border)" strokeWidth={1} strokeDasharray="2 4" opacity={0.5} />
-          <text x={x(t.i)} y={H - 8} fontSize={10} fill="var(--faint)" textAnchor="middle">{t.d.slice(0, 7)}</text>
+      {shown.map((t) => (
+        <g key={t.dn}>
+          <line x1={x(t.dn)} y1={padT} x2={x(t.dn)} y2={baseY} stroke="var(--border)" strokeWidth={1} strokeDasharray="2 4" opacity={0.5} />
+          <text x={x(t.dn)} y={H - 8} fontSize={10} fill="var(--faint)" textAnchor="middle">{t.label}</text>
         </g>
       ))}
+      {/* forward projection — held at double the current daily pace */}
+      <polygon points={projArea} fill="url(#capproj)" />
+      <polyline points={projRateLine} fill="none" stroke="var(--accent)" strokeWidth={2} strokeDasharray="6 4" opacity={0.75} strokeLinejoin="round" />
+      <polyline points={projCumLine} fill="none" stroke="var(--ok)" strokeWidth={1.5} strokeDasharray="6 4" opacity={0.55} />
+      <text x={(xF + xH) / 2} y={padT + 10} fontSize={10} fill="var(--faint)" textAnchor="middle" opacity={0.85}>projected</text>
+      {/* now divider */}
+      <line x1={xF} y1={padT} x2={xF} y2={baseY} stroke="var(--faint)" strokeWidth={1} opacity={0.7} />
+      {/* actuals */}
       <polygon points={area} fill="url(#capfill)" />
       <polyline points={areaPts} fill="none" stroke="var(--accent)" strokeWidth={2} strokeLinejoin="round" />
       <polyline points={cumLine} fill="none" stroke="var(--ok)" strokeWidth={1.5} strokeDasharray="5 4" opacity={0.85} />
@@ -229,6 +271,7 @@ export function Activation({ role, ctx, toast }: ActivationProps) {
             <div className="row g16" style={{ padding: '4px 18px 12px', fontSize: 'var(--fs-xs)' }}>
               <span className="dim"><span style={{ display: 'inline-block', width: 18, height: 3, background: 'var(--accent)', verticalAlign: 'middle', marginRight: 5 }} />MW connected per day ({cap?.smoothing_days ?? 28}-day mean)</span>
               <span className="dim"><span style={{ display: 'inline-block', width: 18, height: 0, borderTop: '2px dashed var(--ok)', verticalAlign: 'middle', marginRight: 5 }} />cumulative MW online</span>
+              <span className="dim"><span style={{ display: 'inline-block', width: 18, height: 0, borderTop: '2px dashed var(--accent)', verticalAlign: 'middle', marginRight: 5, opacity: 0.7 }} />projected (next 12 months)</span>
               {cap?.as_of && <span className="dim" style={{ marginLeft: 'auto' }}>as of {cap.as_of}</span>}
             </div>
           </>
