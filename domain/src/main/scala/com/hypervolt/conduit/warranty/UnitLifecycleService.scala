@@ -1,7 +1,9 @@
 package com.hypervolt.conduit.warranty
 
+import cats.data.NonEmptyList
 import cats.effect.Async
 import cats.syntax.all._
+import doobie.Fragments
 import doobie.implicits._
 import doobie.postgres.implicits._
 import doobie.util.transactor.Transactor
@@ -19,7 +21,7 @@ final class UnitLifecycleService[F[_]: Async](xa: Transactor[F]) {
     timeline(serial).flatMap {
       case Nil => Option.empty[Json].pure[F]
       case rows =>
-        tickets(serial).map { ts =>
+        tickets(rows.map(_._1)).map { ts =>
           val units = rows.map {
             case (sn, status, act, wEnd, isRepl) =>
               Json.obj(
@@ -61,22 +63,36 @@ final class UnitLifecycleService[F[_]: Async](xa: Transactor[F]) {
       .to[List]
       .transact(xa)
 
-  private def tickets(serial: String): F[List[Json]] =
-    sql"""SELECT ticket_ref, original_serial, replacement_serial, ticket_type, reason, opened_at::text, status
-          FROM rma_ticket WHERE original_serial = $serial OR replacement_serial = $serial ORDER BY opened_at"""
-      .query[(String, Option[String], Option[String], Option[String], Option[String], Option[String], Option[String])]
-      .to[List]
-      .transact(xa)
-      .map(_.map {
-        case (ref, orig, repl, tType, reason, opened, status) =>
-          Json.obj(
-            "ticket_ref"         -> ref.asJson,
-            "original_serial"    -> orig.asJson,
-            "replacement_serial" -> repl.asJson,
-            "type"               -> tType.asJson,
-            "reason"             -> reason.asJson,
-            "opened_at"          -> opened.asJson,
-            "status"             -> status.asJson
-          )
-      })
+  // Tickets touching ANY unit in the family — resolved via the matched serial-unit ids (charger_id is raw), so the
+  // RMA that links the family shows on every member's lifecycle.
+  private def tickets(familySerials: List[String]): F[List[Json]] =
+    NonEmptyList.fromList(familySerials) match {
+      case None => List.empty[Json].pure[F]
+      case Some(serials) =>
+        (fr"""SELECT t.ticket_ref, t.original_serial, t.replacement_serial, t.ticket_type, t.reason, t.opened_at::text, t.status
+              FROM rma_ticket t WHERE t.original_serial_unit_id IN
+                (SELECT id FROM serial_unit WHERE """ ++ Fragments.in(fr"serial_no", serials) ++ fr""")
+              OR t.replacement_serial_unit_id IN
+                (SELECT id FROM serial_unit WHERE """ ++ Fragments.in(
+          fr"serial_no",
+          serials
+        ) ++ fr""") ORDER BY t.opened_at""")
+          .query[
+            (String, Option[String], Option[String], Option[String], Option[String], Option[String], Option[String])
+          ]
+          .to[List]
+          .transact(xa)
+          .map(_.map {
+            case (ref, orig, repl, tType, reason, opened, status) =>
+              Json.obj(
+                "ticket_ref"         -> ref.asJson,
+                "original_serial"    -> orig.asJson,
+                "replacement_serial" -> repl.asJson,
+                "type"               -> tType.asJson,
+                "reason"             -> reason.asJson,
+                "opened_at"          -> opened.asJson,
+                "status"             -> status.asJson
+              )
+          })
+    }
 }
