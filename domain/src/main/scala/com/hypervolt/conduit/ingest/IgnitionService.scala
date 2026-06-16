@@ -122,8 +122,8 @@ final class IgnitionService[F[_]: Async](xa: Transactor[F]) {
   private def backfillWarrantyWindows: ConnectionIO[Int] =
     sql"""UPDATE serial_unit su SET warranty_end =
             (su.activated_at AT TIME ZONE 'UTC')::date
-            + make_interval(months => $commercialWarrantyMonths
-                + COALESCE((SELECT sum(we.extra_months) FROM warranty_extension we WHERE we.serial_unit_id = su.id), 0))
+            + make_interval(months => ($commercialWarrantyMonths
+                + COALESCE((SELECT sum(we.extra_months) FROM warranty_extension we WHERE we.serial_unit_id = su.id), 0))::int)
           WHERE su.activated_at IS NOT NULL AND su.warranty_end IS NULL""".update.run
 
   // Resolve HubSpot RMA tickets to the serial genealogy: link the replacement unit → the unit it replaced, then
