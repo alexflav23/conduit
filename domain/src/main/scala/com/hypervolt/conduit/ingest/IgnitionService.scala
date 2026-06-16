@@ -36,8 +36,9 @@ final class IgnitionService[F[_]: Async](xa: Transactor[F]) {
             placed  <- emitOrderPlaced
             emitted <- emitRecognitionEvents
             invOpen <- emitOpeningInventory(eid)
+            warr    <- backfillWarrantyWindows
             repl    <- applyRmaTickets
-          } yield s"stamped=$stamped lots=$lots serials_linked=$linked periods=$periods stock_items=$stock exposure_rows=$exp order_placed_events=$placed recognition_events=$emitted opening_inv_event=$invOpen replacements_linked=$repl"
+          } yield s"stamped=$stamped lots=$lots serials_linked=$linked periods=$periods stock_items=$stock exposure_rows=$exp order_placed_events=$placed recognition_events=$emitted opening_inv_event=$invOpen warranty_windows=$warr replacements_linked=$repl"
       }
       .transact(xa)
 
@@ -110,6 +111,20 @@ final class IgnitionService[F[_]: Async](xa: Transactor[F]) {
                  COALESCE(o.created_at, now()), 'pending', 'service:ignition'
           FROM "order" o
           WHERE NOT EXISTS (SELECT 1 FROM outbox_event e WHERE e.event_type = 'order.placed' AND e.aggregate_id = o.id)""".update.run
+
+  // Backfill the warranty window on activated units: warranty_end = activation + the 3-year commercial term (+ any
+  // purchased extension). The historical activation backfill set only activated_at; without a window the warranty
+  // lifecycle is meaningless. The 36-month commercial warranty (doc 04) governs — the legal_warranty 24mo is the
+  // statutory FLOOR, a separate concept. Idempotent (only fills NULLs); originals must have a window before the
+  // replacement chains inherit it.
+  private val commercialWarrantyMonths = 36
+
+  private def backfillWarrantyWindows: ConnectionIO[Int] =
+    sql"""UPDATE serial_unit su SET warranty_end =
+            (su.activated_at AT TIME ZONE 'UTC')::date
+            + make_interval(months => $commercialWarrantyMonths
+                + COALESCE((SELECT sum(we.extra_months) FROM warranty_extension we WHERE we.serial_unit_id = su.id), 0))
+          WHERE su.activated_at IS NOT NULL AND su.warranty_end IS NULL""".update.run
 
   // Resolve HubSpot RMA tickets to the serial genealogy: link the replacement unit → the unit it replaced, then
   // propagate the ROOT original's warranty_end down each replacement chain (a replacement always inherits the
