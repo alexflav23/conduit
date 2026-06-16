@@ -10,6 +10,15 @@ import java.util.UUID
 // the facility/policy/exposure/approval tables are net-new.
 object HedgeProgramRepo {
 
+  def operatingEntity: ConnectionIO[Option[UUID]] =
+    sql"SELECT id FROM entity WHERE entity_type = 'operating' ORDER BY created_at LIMIT 1".query[UUID].option
+
+  def policiesAll(entityId: UUID): ConnectionIO[List[HedgePolicy]] =
+    sql"""SELECT id, entity_id, exposure_type, hedge_ratio, tenor_months, payment_terms_days, effective_from, effective_to, note
+          FROM hedge_policy WHERE entity_id = $entityId ORDER BY exposure_type"""
+      .query[HedgePolicy]
+      .to[List]
+
   def providerByCode(code: String): ConnectionIO[Option[HedgeProvider]] =
     sql"""SELECT id, code, name, adapter, active FROM hedge_provider WHERE code = $code"""
       .query[HedgeProvider]

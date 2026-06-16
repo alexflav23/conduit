@@ -8,6 +8,7 @@ import com.hypervolt.conduit.api.auth.ApiError
 import com.hypervolt.conduit.api.auth.AuthService
 import com.hypervolt.conduit.api.auth.Secured
 import com.hypervolt.conduit.supply.ActivationCapacityRepo
+import com.hypervolt.conduit.supply.ActivationStatsRepo
 import com.hypervolt.conduit.supply.SerialShelfRepo
 import doobie.implicits._
 import doobie.util.transactor.Transactor
@@ -73,6 +74,30 @@ final class ActivationRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F
           else ActivationCapacityRepo.capacity(months.getOrElse(24), smoothing.getOrElse(28)).transact(xa).map(Right(_))
       })
 
+  // Activation count + MW time series (day/week/month) for the Analytics subroute.
+  private val series =
+    base.get
+      .in("api" / "v1" / "activations" / "series")
+      .in(query[Option[String]]("bucket"))
+      .in(query[Option[Int]]("months"))
+      .out(jsonBody[Json])
+      .serverLogic(p => {
+        case (bucket, months) =>
+          if (!gate(p)) Async[F].pure(Left(denied))
+          else ActivationStatsRepo.series(bucket.getOrElse("month"), months.getOrElse(24)).transact(xa).map(Right(_))
+      })
+
+  // Headline activation KPIs (total, last 7/30 days, MW online), anchored on the data frontier.
+  private val kpis =
+    base.get
+      .in("api" / "v1" / "activations" / "kpis")
+      .out(jsonBody[Json])
+      .serverLogic(p =>
+        _ =>
+          if (!gate(p)) Async[F].pure(Left(denied))
+          else ActivationStatsRepo.kpis.transact(xa).map(Right(_))
+      )
+
   val routes: HttpRoutes[F] =
-    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(List(feed, capacity))
+    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(List(feed, capacity, series, kpis))
 }

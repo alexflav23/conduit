@@ -2,6 +2,8 @@ package com.hypervolt.conduit.treasury
 
 import cats.Applicative
 import cats.syntax.all._
+import io.circe.Encoder
+import io.circe.generic.semiauto.deriveEncoder
 import java.time.LocalDate
 import java.time.temporal.ChronoUnit
 import java.util.UUID
@@ -181,6 +183,15 @@ final class EburyProvider[F[_]: Applicative] extends FxHedgeProvider[F] {
     val pips = (BigDecimal(days) * pipsPerDay).setScale(0, RoundingMode.HALF_UP).toInt
     ExtensionQuote((currentRate - BigDecimal(pips) / 10000).setScale(8, RoundingMode.HALF_UP), pips, newValidTo).pure[F]
   }
+}
+
+// JSON encoders for the treasury read routes (imported where the routes assemble the program/effectiveness views).
+object HedgeJson {
+  implicit val facility: Encoder[HedgeFacility]    = deriveEncoder
+  implicit val policy: Encoder[HedgePolicy]        = deriveEncoder
+  implicit val contract: Encoder[HedgeContract]    = deriveEncoder
+  implicit val exposure: Encoder[ExposureForecast] = deriveEncoder
+  implicit val eff: Encoder[EffectivenessRow]      = deriveEncoder
 }
 
 object HedgeRouting {
