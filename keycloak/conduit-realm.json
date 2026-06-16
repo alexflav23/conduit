@@ -15,8 +15,13 @@
       "publicClient": true,
       "standardFlowEnabled": true,
       "directAccessGrantsEnabled": true,
-      "redirectUris": ["http://localhost:3060/*"],
-      "webOrigins": ["http://localhost:3060", "+"],
+      "redirectUris": [
+        "http://localhost:3060/*"
+      ],
+      "webOrigins": [
+        "http://localhost:3060",
+        "+"
+      ],
       "attributes": {
         "pkce.code.challenge.method": "S256",
         "post.logout.redirect.uris": "http://localhost:3060/*"
@@ -50,6 +55,46 @@
         "syncMode": "FORCE"
       }
     }
+  ],
+  "users": [
+    {
+      "username": "ceo",
+      "email": "ceo@demo.hypervolt.local",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "conduit",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "username": "finance",
+      "email": "finance@demo.hypervolt.local",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "conduit",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "username": "admin",
+      "email": "admin@demo.hypervolt.local",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "conduit",
+          "temporary": false
+        }
+      ]
+    }
   ]
 }
-
