@@ -112,10 +112,9 @@ final class IgnitionService[F[_]: Async](xa: Transactor[F]) {
           FROM "order" o
           WHERE NOT EXISTS (SELECT 1 FROM outbox_event e WHERE e.event_type = 'order.placed' AND e.aggregate_id = o.id)""".update.run
 
-  // Backfill the warranty window on activated units: warranty_end = activation + the 3-year commercial term (+ any
-  // purchased extension). The historical activation backfill set only activated_at; without a window the warranty
-  // lifecycle is meaningless. The 36-month commercial warranty (doc 04) governs — the legal_warranty 24mo is the
-  // statutory FLOOR, a separate concept. Idempotent (only fills NULLs); originals must have a window before the
+  // Backfill the warranty window on activated units: warranty_end = activation + the 36-month warranty floor (+ any
+  // purchased 5-year extension = +24mo). The historical activation backfill set only activated_at; without a window
+  // the warranty lifecycle is meaningless. Idempotent (only fills NULLs); originals must have a window before the
   // replacement chains inherit it.
   private val commercialWarrantyMonths = 36
 
@@ -130,9 +129,27 @@ final class IgnitionService[F[_]: Async](xa: Transactor[F]) {
   // propagate the ROOT original's warranty_end down each replacement chain (a replacement always inherits the
   // original's warranty — the clock never resets, transitively). Idempotent; a no-op until real tickets land.
   private def applyRmaTickets: ConnectionIO[Int] =
-    sql"""UPDATE rma_ticket t SET original_serial_unit_id = o.id, replacement_serial_unit_id = r.id
-          FROM serial_unit o, serial_unit r
-          WHERE o.serial_no = t.original_serial AND r.serial_no = t.replacement_serial""".update.run *>
+    // 1. Resolve the faulty (original) unit — HubSpot charger_id is messy (spaces, case), so match normalized.
+    sql"""UPDATE rma_ticket t SET original_serial_unit_id = s.id
+          FROM serial_unit s
+          WHERE t.original_serial_unit_id IS NULL
+            AND lower(regexp_replace(t.original_serial, '[^0-9A-Za-z]', '', 'g')) = lower(s.serial_no)""".update.run *>
+      // 2. HubSpot records only that a replacement WAS sent, not which serial. Infer it from the real shipment: a
+      // free charger to the faulty unit's owner within 180 days after the RMA — earliest such shipment wins.
+      sql"""UPDATE rma_ticket t SET replacement_serial_unit_id = m.repl_id
+            FROM (
+              SELECT DISTINCT ON (t2.ticket_ref) t2.ticket_ref, repl.id AS repl_id
+              FROM rma_ticket t2
+              JOIN serial_unit orig ON orig.id = t2.original_serial_unit_id
+              JOIN free_shipment fs ON fs.party_id = orig.company_id
+              JOIN serial_unit repl ON repl.dispatch_id = fs.dispatch_id AND repl.id <> orig.id
+              WHERE (t2.payload->>'replacement_sent') = 'true' AND t2.original_serial_unit_id IS NOT NULL
+                AND t2.opened_at IS NOT NULL
+                AND fs.occurred_at >= t2.opened_at AND fs.occurred_at < t2.opened_at + interval '180 days'
+              ORDER BY t2.ticket_ref, fs.occurred_at
+            ) m
+            WHERE t.ticket_ref = m.ticket_ref AND t.replacement_serial_unit_id IS NULL""".update.run *>
+      // 3. Set the genealogy pointer: the replacement unit replaces the faulty one.
       sql"""UPDATE serial_unit r SET replaces_serial_unit_id = t.original_serial_unit_id
             FROM rma_ticket t
             WHERE r.id = t.replacement_serial_unit_id AND t.original_serial_unit_id IS NOT NULL
