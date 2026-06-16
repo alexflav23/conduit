@@ -1,0 +1,90 @@
+# Conduit — Build Status & Ignition Plan
+
+_As of 2026-06-16. Assessed by reading the live code (310 Scala files, 84 migrations), the
+testcontainers integration suites, and the running Postgres (`conduit-postgres`) row-by-row.
+Companion to [`spec/07`](./07_BUILD_PLAN.md) (the acceptance source of truth) and the root
+`CLAUDE.md` (the implementation contract)._
+
+## TL;DR
+
+**The code is built and CI-proven across essentially every milestone (M0–M13b + M-Pricing +
+M13-Docs + M13-Tax). The live environment is _dormant_, not incomplete.** The historical data we
+ingested is **trade substrate** (parties, orders, dispatches, serials, deals, exogenous series,
+forecast runs) loaded by the forecasting `SnapshotLoader` — it has **never been driven through the
+milestone engines**, so almost every milestone's own tables are empty in the running DB.
+
+The remaining work is therefore mostly **ignition**: replay the real history through the engines
+that already exist, in dependency order, so the live DB reflects reality across the board. Only a
+short list of items are genuine net-new code. This _is_ the original goal — "the whole data import
+engine, so Conduit can start with all the historical data."
+
+> **No-fake-data rule still governs.** Most ignition steps complete state from real data (mark
+> historical dispatches delivered, open warranty from real activations, recognise revenue on real
+> order lines). A few steps (batch granularity, landed-cost components) have **no real source** and
+> need a decision — flagged as ⚠️ DECISION below.
+
+## Milestone status
+
+| Milestone | Status | One-line |
+|---|---|---|
+| M0 Scaffold | ✅ DONE | Multi-module sbt, nix, compose (pg/pulsar/TB/consul/keycloak), CI, `/health`. |
+| M1 Foundations | ✅ DONE | Typed Money, conserving allocate, outbox+relay, TB deterministic ids, period lock, TZ projection — all property/IT-tested. |
+| M2 Access control | ✅ DONE | PolicyEngine + scope predicate + layer projection + FieldLayerMap (82 rows) + 11 preset roles, server-side. |
+| M3 Catalogue + ADLP pricing | 🟡 PARTIAL | Engine + `/pricing/quote` + governed change done & tested; **`price_rule` = 0 rows** in live DB (373 variants, no prices). |
+| M-Pricing (doc 24) | 🟡 PARTIAL | **Built, not "spec-only"** — `price_agreement`, tiers, retrospective ASC-606 rebate→ledger all coded & tested; tables empty live. |
+| M4 CRM + Order capture | 🟡 PARTIAL | Order capture strong & IT-tested; **no contact/deal/pipeline API**, **no ledger-commitment consumer**, capture path unexercised (orders are MRP imports). |
+| M5 Commission | 🟠 SCAFFOLDED | Accrue/post/claw + true-up coded & TB-tested, but **no route, no consumer** — never triggered; tables empty. |
+| M6 Inventory/ATP/dispatch | 🟠 SCAFFOLDED | Real concurrency-safe allocation + dispatch, IT-tested; **no route/consumer wiring**, carrier is a stored-field stub, tables empty. |
+| M7 Batch/landed-cost/genealogy | 🟠 SCAFFOLDED | Specific-id costing (no averages) coded & tested; **`lot_batch` = 0, serials unlinked** → can't resolve cost/genealogy live. |
+| M8 Activation + warranty | 🟡 PARTIAL | Live Pulsar path correct; **historical backfill broken** — import sets `serial_unit.activated_at` but never feeds `activation`/`warranty_provision` (both 0 despite 91k activations). |
+| M9 Purchasing/receiving + stock ops | 🟠 SCAFFOLDED | Receiving, landed cost, maker-checker stock ops + TB write-down coded & tested; **no route/consumer**, all supply tables 0. |
+| M9b Returns / RMA | 🟡 PARTIAL | Most complete supply-side: routes + consumer wired, spec/09 written; awaits live returns + batch linkage. |
+| M10 Deal Desk + migration/cutover | 🟡 PARTIAL | Deal Desk (maker-checker ADLP) done & wired; **migration has no entry point** (test-only) and never ran on the real import. |
+| M11 H6Q | 🟡 PARTIAL | Forecast engine + coverage + full API done, 1.7M predictions populated; **bottom-up cycle/submission spine empty** (no cycle opened). |
+| M12 Intercompany/TP/tax/hedges | 🟡 PARTIAL | Full logic + routes + suites; dormant (0 rows) — gated on revenue cascade. |
+| M12-Treasury FX hedging program | 🟠 IN PROGRESS | Foundation built (provider-agnostic schema + FxHedgeProvider/Ebury adapter + program service: required-notional, coverage, propose→multi-party-sign→execute). Remaining: apply-to-COGS, margin monitor, extension, effectiveness, routes, desk, seed real contracts. Per the Ebury USD hedging policy. |
+| M13 ERP/GL + P&L + Xero | 🟡 PARTIAL | ASC-606 revenue→GL, P&L, real Xero connector; dormant — **0 dispatches delivered** so nothing posted. |
+| M13b Period close + recon + audit | 🟡 PARTIAL | Close/lock SoD, 5 reconciliations, Proof Center, lineage; **no period even opened** live. |
+| M13-Docs | 🟡 PARTIAL | Real Apache-FOP PDF engine + WORM + gapless numbering; 0 documents generated live. |
+| M13-Tax (doc 16) | 🟡 PARTIAL | Effective-dated rate-table engine done & tested; **external vendor adapter is a seam only**; 0 quotes live. |
+| M14 Companion + Horizons + HubSpot-out | 🔴 MISSING | No Flutter app, no Horizons feed, HubSpot is inbound-ingest only. |
+
+## Ignition plan (dependency-ordered)
+
+### Phase A — light up the financial spine with real history _(real data only)_
+- **A1. Open accounting periods** for the trade history range (monthly, 2023→2026); past closeable, current open. Prereq for all posting. (`accounting_period` = 0 today.)
+- **A2. Activation + warranty backfill (M8):** drive `ActivationService` from the 91,155 real `serial_unit.activated_at`; open warranty provisions. Fix `WarrantyService.backfill` to read `serial_unit.activated_at` (not the empty `activation` table) and invoke it from a boot step / script. ⚠️ DECISION: warranty/COGS cost basis until B2 — use real MRP `std_cost` as interim unit cost.
+- **A3. Mark historical dispatches `delivered`** (they are real, the units are activated in the field) → fires `RevenueRecognitionService` for the historical book → AR/Revenue/VAT/COGS to TB + `gl_entry`.
+- **A4. GL/P&L + close drill:** run GL projection + P&L for a historical period; open→close→lock a past period; run the five reconciliations + a lineage trace. (M13/M13b)
+
+### Phase B — supply-side reality _(needs a data decision)_
+- **B1. ⚠️ DECISION — cost/batch basis:** do we have real landed-cost source data (Luxshare invoices, freight, duty)? If yes, ingest it. If not, seed **opening lots** from MRP `std_cost` (standard migration practice, labelled as opening balances — not fabricated trade).
+- **B2. M10 migration ignition:** opening `lot_batch` + serial→batch linkage + landed cost via the existing `MigrationService`/`SyntheticOpeningLots`; give it a CLI/route entry point. Unlocks specific-id COGS, genealogy, stock positions, warranty at true batch cost (re-cost A2/A3 if B1 yields real costs).
+- **B3. Suppliers/POs/stock:** ingest real purchasing history if it exists; otherwise leave honest-empty (the screens already degrade cleanly).
+
+### Phase C — flows, wiring & remaining backfills
+- **C1.** Wire the **ledger-commitment consumer** for `order.placed` (M4 gap).
+- **C2.** Wire **M6/M9 HTTP routes + consumers** (inventory/dispatch/purchasing/stock-ops) — currently test-only.
+- **C3.** **Commission** (M5): wire accrual to order/revenue events + backfill the historical book.
+- **C4.** **Pricing** (M3/M-Pricing): seed `price_rule`/`price_agreement` from real contract/price data (or wrap `order_line` actuals) so live quoting works.
+- **C5.** **Documents** (M13-Docs): generate invoices/credit-notes for the historical invoiced book.
+- **C6.** **H6Q** (M11): open a forecast cycle to exercise the bottom-up submission spine.
+- **C7.** Ingest provenance: write `ingest_record` per load (or drop the orphan `ingest_record`/`sync_state` tables that have no DDL/writer).
+
+### Phase D — net-new build (Phase-3 tail)
+- **D1.** M13-Tax external vendor adapter (Avalara/TaxJar) — only if a routed vendor is required; the seam exists.
+- **D2.** M14 — Flutter companion app (estate `~/projects/hypervolt/ux`, `hypervolt_ui_kit`, Conduit purple), Horizons feed, HubSpot **outbound** replication.
+
+### Hygiene
+- Remove the stale duplicate `conduit/` subdirectory (a 240-file/61-migration snapshot shadowing the live root tree).
+
+## Genuine code gaps (vs. pure data backfill)
+1. M8 `WarrantyService.backfill` reads empty `activation`; never invoked. (A2)
+2. M4 ledger-commitment consumer for `order.placed` absent. (C1)
+3. M6/M9 services have no route/consumer wiring (test-only). (C2)
+4. M6 carrier integration is a stored-field stub, not a live Rhenus adapter.
+5. M5 commission has no route/consumer. (C3)
+6. M10 migration has no CLI/HTTP entry point. (B2)
+7. M13-Tax external vendor adapter unwritten (seam only). (D1)
+8. M14 companion app / Horizons / HubSpot-outbound unstarted. (D2)
+9. `ingest_record`/`sync_state` orphan tables — no DDL, no writer. (C7)
