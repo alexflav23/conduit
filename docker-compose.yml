@@ -59,8 +59,9 @@ services:
   conduit-keycloak:
     image: quay.io/keycloak/keycloak:25.0
     container_name: conduit-keycloak
-    # Import the `conduit` realm on boot (public PKCE desk client + local test user + a disabled Google IdP to
-    # enable once federation is configured). Idempotent: re-import overwrites the realm.
+    # Import the `conduit` realm on boot (public PKCE desk client + a disabled Google IdP). The realm import ships
+    # Google DISABLED with empty creds (no secret committed); the keycloak-init sidecar enables it at runtime from
+    # .env on EVERY `up`, so a re-import / container recreate never silently drops federation again.
     command: start-dev --http-port=8083 --import-realm
     environment:
       KEYCLOAK_ADMIN: admin
@@ -69,6 +70,41 @@ services:
       - ./keycloak:/opt/keycloak/data/import:ro
     ports:
       - "8083:8083"
+    networks:
+      - conduit
+
+  # One-shot: wait for the realm, then enable the Google IdP from the .env creds (idempotent). This is what keeps
+  # Google federation on across restarts/re-imports — no manual step. No secret → it cleanly skips (local-only run).
+  conduit-keycloak-init:
+    image: quay.io/keycloak/keycloak:25.0
+    container_name: conduit-keycloak-init
+    depends_on:
+      - conduit-keycloak
+    restart: "no"
+    environment:
+      GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:-}
+      GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET:-}
+    entrypoint:
+      - bash
+      - -c
+      - |
+        KC=http://conduit-keycloak:8083
+        if [ -z "$${GOOGLE_OAUTH_CLIENT_SECRET}" ]; then echo "keycloak-init: no GOOGLE_OAUTH_CLIENT_SECRET — skipping federation"; exit 0; fi
+        echo "keycloak-init: waiting for keycloak + conduit realm…"
+        for i in $$(seq 1 90); do
+          if /opt/keycloak/bin/kcadm.sh config credentials --server $$KC --realm master --user admin --password admin >/dev/null 2>&1 \
+             && /opt/keycloak/bin/kcadm.sh get realms/conduit >/dev/null 2>&1; then echo "keycloak-init: keycloak ready"; break; fi
+          sleep 3
+        done
+        /opt/keycloak/bin/kcadm.sh update identity-provider/instances/google -r conduit \
+          -s enabled=true -s trustEmail=true \
+          -s config.clientId="$${GOOGLE_OAUTH_CLIENT_ID}" \
+          -s config.clientSecret="$${GOOGLE_OAUTH_CLIENT_SECRET}" \
+          -s config.hostedDomain=hypervolt.co.uk -s config.useJwksUrl=true \
+          -s config.syncMode=FORCE -s "config.defaultScope=openid email profile"
+        RID=$$(/opt/keycloak/bin/kcadm.sh get 'authentication/flows/first%20broker%20login/executions' -r conduit 2>/dev/null | grep -B3 '"Review Profile"' | grep '"id"' | head -1 | sed -E 's/.*"id" *: *"([^"]+)".*/\1/')
+        if [ -n "$$RID" ]; then /opt/keycloak/bin/kcadm.sh update 'authentication/flows/first%20broker%20login/executions' -r conduit -b "{\"id\":\"$$RID\",\"requirement\":\"DISABLED\"}" || true; fi
+        echo "keycloak-init: ✓ Google IdP enabled (straight-to-Google)"
     networks:
       - conduit
 
