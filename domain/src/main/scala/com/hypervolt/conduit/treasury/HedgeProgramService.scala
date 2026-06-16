@@ -22,6 +22,10 @@ final class HedgeProgramService[F[_]: Async](xa: Transactor[F]) {
   def rebuildExposureForecast(entityId: UUID, transition: LocalDate): F[Int] =
     HedgeProgramRepo.rebuildExposureForecast(entityId, transition).transact(xa)
 
+  // Recompute + read the effectiveness stream (hedged vs counterfactual all-spot — the economic hedge contribution).
+  def rebuildEffectiveness(entityId: UUID): F[Int]              = HedgeProgramRepo.rebuildEffectiveness(entityId).transact(xa)
+  def effectiveness(entityId: UUID): F[List[EffectivenessRow]]  = HedgeProgramRepo.effectiveness(entityId).transact(xa)
+
   // Required hedged USD by exposure type = Σ exposure × the policy ratio in force (the 50 / 50 / 100 policy).
   def requiredHedge(entityId: UUID, from: LocalDate, to: LocalDate, asOf: LocalDate): F[List[RequiredHedge]] =
     (HedgeProgramRepo.exposures(entityId, from, to), HedgeProgramRepo.policies(entityId, asOf)).tupled.transact(xa).map {

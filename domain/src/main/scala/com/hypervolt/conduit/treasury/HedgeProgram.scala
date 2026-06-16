@@ -105,6 +105,33 @@ final case class NewHedgeContract(
     parentHedgeId: Option[UUID]
 )
 
+final case class EffectivenessRow(
+    periodMonth: LocalDate,
+    supplier: String,
+    exposureUsd: BigDecimal,
+    hedgeRatio: BigDecimal,
+    hedgeRate: BigDecimal,
+    spotRate: BigDecimal,
+    effectiveRate: BigDecimal,
+    hedgedGbp: BigDecimal,
+    spotGbp: BigDecimal,
+    savingGbp: BigDecimal,
+    contractNo: Option[String]
+)
+
+// Pure rate maths shared by the apply-to-COGS hook and the effectiveness stream. Rates are GBP/USD (USD per GBP),
+// so a USD payable converts to GBP as USD / rate. The blended EFFECTIVE rate for a hedge ratio h is the harmonic
+// blend of the locked contract rate and spot: hedged GBP = usd·(h/hedgeRate + (1−h)/spot), i.e. 1/effectiveRate =
+// h/hedgeRate + (1−h)/spot. This is the rate the COGS leg uses to value the USD cost; saving vs all-spot is the
+// hedge's economic contribution (negative when the lock sits below market).
+object HedgeMath {
+  def effectiveRate(ratio: BigDecimal, hedgeRate: BigDecimal, spot: BigDecimal): BigDecimal =
+    (BigDecimal(1) / (ratio / hedgeRate + (BigDecimal(1) - ratio) / spot)).setScale(8, RoundingMode.HALF_UP)
+  def hedgedGbp(usd: BigDecimal, ratio: BigDecimal, hedgeRate: BigDecimal, spot: BigDecimal): BigDecimal =
+    (usd * (ratio / hedgeRate + (BigDecimal(1) - ratio) / spot)).setScale(2, RoundingMode.HALF_UP)
+  def spotGbp(usd: BigDecimal, spot: BigDecimal): BigDecimal = (usd / spot).setScale(2, RoundingMode.HALF_UP)
+}
+
 final case class HedgeApproval(
     id: UUID,
     hedgeId: UUID,

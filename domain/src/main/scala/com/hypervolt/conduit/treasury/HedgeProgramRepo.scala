@@ -92,6 +92,41 @@ object HedgeProgramRepo {
           FROM hedge_exposure_forecast WHERE entity_id = $entityId AND period_month >= $from AND period_month < $to
           ORDER BY period_month""".query[ExposureForecast].to[List]
 
+  // Recompute the effectiveness stream: hedged (blended) vs counterfactual all-spot GBP for each exposure month
+  // covered by an executed/extended contract, using the real FX-register spot. Idempotent (upsert per month).
+  def rebuildEffectiveness(entityId: UUID): ConnectionIO[Int] =
+    sql"""WITH spot AS (
+            SELECT as_of m, rate FROM exchange_rate WHERE base = 'GBP' AND quote = 'USD' AND rate_type = 'spot'
+          ),
+          cov AS (
+            SELECT hef.period_month m, hef.supplier, hef.amount_usd, h.contracted_rate hedge_rate, h.hedge_ratio ratio, h.contract_no
+            FROM hedge_exposure_forecast hef
+            JOIN fx_hedge h ON h.entity_id = hef.entity_id AND h.status IN ('executed','extended')
+              AND hef.period_month BETWEEN h.valid_from AND h.valid_to
+            WHERE hef.entity_id = $entityId
+          )
+          INSERT INTO hedge_effectiveness (entity_id, period_month, supplier, exposure_usd, hedge_ratio, hedge_rate,
+            spot_rate, effective_rate, hedged_gbp, spot_gbp, saving_gbp, contract_no)
+          SELECT $entityId, cov.m, cov.supplier, cov.amount_usd, cov.ratio, cov.hedge_rate, s.rate,
+            round(1 / (cov.ratio / cov.hedge_rate + (1 - cov.ratio) / s.rate), 8),
+            round(cov.amount_usd * (cov.ratio / cov.hedge_rate + (1 - cov.ratio) / s.rate), 2),
+            round(cov.amount_usd / s.rate, 2),
+            round(cov.amount_usd / s.rate - cov.amount_usd * (cov.ratio / cov.hedge_rate + (1 - cov.ratio) / s.rate), 2),
+            cov.contract_no
+          FROM cov JOIN spot s ON s.m = cov.m
+          ON CONFLICT (entity_id, period_month, supplier) DO UPDATE SET
+            exposure_usd = EXCLUDED.exposure_usd, hedge_ratio = EXCLUDED.hedge_ratio, hedge_rate = EXCLUDED.hedge_rate,
+            spot_rate = EXCLUDED.spot_rate, effective_rate = EXCLUDED.effective_rate, hedged_gbp = EXCLUDED.hedged_gbp,
+            spot_gbp = EXCLUDED.spot_gbp, saving_gbp = EXCLUDED.saving_gbp, contract_no = EXCLUDED.contract_no,
+            computed_at = now()""".update.run
+
+  def effectiveness(entityId: UUID): ConnectionIO[List[EffectivenessRow]] =
+    sql"""SELECT period_month, supplier, exposure_usd, hedge_ratio, hedge_rate, spot_rate, effective_rate,
+                 hedged_gbp, spot_gbp, saving_gbp, contract_no
+          FROM hedge_effectiveness WHERE entity_id = $entityId ORDER BY period_month"""
+      .query[EffectivenessRow]
+      .to[List]
+
   private val contractCols =
     fr"""id, facility_id, provider_id, contract_no, instrument, pair_from, pair_to, contracted_rate, notional,
          notional_used, valid_from, valid_to, status, hedge_ratio, supplier, exposure_type, parent_hedge_id"""
