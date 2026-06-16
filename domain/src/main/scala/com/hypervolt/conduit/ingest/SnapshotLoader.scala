@@ -67,8 +67,41 @@ object SnapshotLoader {
     "mrpeasy"      -> mrpeasy,
     "ghostbusters" -> ghostbusters,
     "h6q"          -> h6q,
-    "fx"           -> fx
+    "fx"           -> fx,
+    "cost"         -> cost
   )
+
+  // ingest/cost/*.ndjson — per-SKU supplier cost (USD) with quarterly volume-discount bands. One NDJSON row fans
+  // out to one supplier_cost row per band. Idempotent on (supplier, sku, min_qty_per_quarter, as_of).
+  private def cost(@scala.annotation.unused dataset: String, row: Json): ConnectionIO[Int] = {
+    val c = row.hcursor
+    (
+      c.get[String]("sku").toOption,
+      c.get[String]("supplier").toOption,
+      c.get[String]("currency").toOption,
+      c.get[String]("as_of").toOption.flatMap(s => scala.util.Try(LocalDate.parse(s)).toOption)
+    ).tupled match {
+      case None => 0.pure[ConnectionIO]
+      case Some((sku, supplier, ccy, asOf)) =>
+        val ship  = c.get[BigDecimal]("shipping_gbp").toOption.getOrElse(BigDecimal(0))
+        val duty  = c.get[BigDecimal]("duty_pct").toOption.getOrElse(BigDecimal(0))
+        val src   = c.get[String]("source").toOption
+        val bands = c.downField("cost_bands").values.toList.flatten
+        bands.traverse { b =>
+          val bc = b.hcursor
+          (bc.get[Int]("min_qty_per_quarter").toOption, bc.get[BigDecimal]("unit_cost_usd").toOption).tupled match {
+            case None => 0.pure[ConnectionIO]
+            case Some((minQ, unitCost)) =>
+              sql"""INSERT INTO supplier_cost (supplier, sku, currency, min_qty_per_quarter, unit_cost, shipping_gbp, duty_pct, source, as_of)
+                    SELECT $supplier, $sku, $ccy, $minQ, $unitCost, $ship, $duty, $src, $asOf
+                    WHERE NOT EXISTS (
+                      SELECT 1 FROM supplier_cost WHERE supplier = $supplier AND sku = $sku
+                        AND min_qty_per_quarter = $minQ AND as_of = $asOf
+                    )""".update.run
+          }
+        }.map(_.sum)
+    }
+  }
 
   // ingest/fx/rates.ndjson — {"base":"GBP","quote":"USD","rate":1.27,"as_of":"2026-06-01","rate_type":"spot","source":"seed"}
   // The FX rate store (doc 04): presentation/consolidation currency reporting reads the latest rate per pair. A
