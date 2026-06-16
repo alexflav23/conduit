@@ -358,6 +358,65 @@ function SeriesBars({ data }: { data: ActSeriesPoint[] }) {
   );
 }
 
+const DOW = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+// Re-aggregate the daily series client-side to the chosen bucket (so one daily fetch drives all granularities).
+function reBucket(daily: ActSeriesPoint[], bucket: 'day' | 'week' | 'month' | 'quarter'): ActSeriesPoint[] {
+  if (bucket === 'day') return daily;
+  const key = (p: string): string => {
+    const y = p.slice(0, 4);
+    const m = +p.slice(5, 7);
+    if (bucket === 'month') return `${y}-${p.slice(5, 7)}`;
+    if (bucket === 'quarter') return `${y}-Q${Math.floor((m - 1) / 3) + 1}`;
+    const dt = new Date(p + 'T00:00:00Z'); // week → Monday (UTC)
+    dt.setUTCDate(dt.getUTCDate() - ((dt.getUTCDay() + 6) % 7));
+    return dt.toISOString().slice(0, 10);
+  };
+  const agg = new Map<string, { count: number; mw: number }>();
+  daily.forEach((d) => {
+    const cur = agg.get(key(d.period)) ?? { count: 0, mw: 0 };
+    agg.set(key(d.period), { count: cur.count + d.count, mw: cur.mw + d.mw });
+  });
+  return [...agg.entries()].sort(([a], [b]) => (a < b ? -1 : 1)).map(([period, v]) => ({ period, count: v.count, mw: +v.mw.toFixed(3) }));
+}
+
+function dowAverage(daily: ActSeriesPoint[]): { dow: string; avg: number }[] {
+  const sum = [0, 0, 0, 0, 0, 0, 0];
+  const cnt = [0, 0, 0, 0, 0, 0, 0];
+  daily.forEach((d) => {
+    const i = (new Date(d.period + 'T00:00:00Z').getUTCDay() + 6) % 7;
+    sum[i] += d.count;
+    cnt[i] += 1;
+  });
+  return DOW.map((dow, i) => ({ dow, avg: cnt[i] ? Math.round(sum[i] / cnt[i]) : 0 }));
+}
+
+function humanEvery(sec: number): string {
+  if (!Number.isFinite(sec) || sec <= 0) return '—';
+  if (sec < 90) return `${Math.round(sec)}s`;
+  if (sec < 5400) return `${Math.round(sec / 60)} min`;
+  if (sec < 129600) return `${(sec / 3600).toFixed(1)} h`;
+  return `${(sec / 86400).toFixed(1)} d`;
+}
+
+// Average activations per weekday (weekends dimmed) — the install cadence shape.
+function DowBars({ data }: { data: { dow: string; avg: number }[] }) {
+  const max = Math.max(...data.map((d) => d.avg), 1);
+  return (
+    <div className="row" style={{ alignItems: 'flex-end', gap: 10, padding: '12px 18px 14px' }}>
+      {data.map((d) => (
+        <div key={d.dow} style={{ flex: 1, textAlign: 'center' }}>
+          <div style={{ height: 90, display: 'flex', alignItems: 'flex-end' }}>
+            <div style={{ width: '100%', height: `${(d.avg / max) * 100}%`, background: d.dow === 'Sat' || d.dow === 'Sun' ? 'var(--faint)' : 'var(--accent)', borderRadius: '3px 3px 0 0', opacity: 0.85 }} />
+          </div>
+          <div className="dim" style={{ fontSize: 10, marginTop: 4 }}>{d.dow}</div>
+          <div style={{ fontSize: 12, fontWeight: 600 }}>{d.avg}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function Activation({ role, ctx, toast, token, sub }: ActivationProps) {
   const navigate = useNavigate();
   const view = sub === 'live' ? 'live' : sub === 'analytics' ? 'analytics' : 'capacity';
@@ -384,11 +443,15 @@ export function Activation({ role, ctx, toast, token, sub }: ActivationProps) {
   const fm = forecastModel(capPts);
   const v2gRate = fm ? fm.fcRate(fm.dH) : 0; // predicted rate at the end of the forecast horizon (V2G era)
 
-  // Analytics subroute data (count/MW series + KPIs), fetched only when that tab is open.
-  const seriesApi = useApi<ActSeriesPoint[]>(['activation-series'], '/api/v1/activations/series?bucket=month&months=24', { enabled: view === 'analytics' });
+  // Analytics subroute data: the DAILY series (re-aggregated client-side to the chosen bucket) + KPIs.
+  const seriesApi = useApi<ActSeriesPoint[]>(['activation-daily'], '/api/v1/activations/series?bucket=day&months=24', { enabled: view === 'analytics' });
   const kpisApi = useApi<ActKpis>(['activation-kpis'], '/api/v1/activations/kpis', { enabled: view === 'analytics' });
-  const series = seriesApi.data ?? [];
+  const daily = seriesApi.data ?? [];
   const kpis = kpisApi.data ?? null;
+  const [bucket, setBucket] = useState<'day' | 'week' | 'month' | 'quarter'>('month');
+  const series = reBucket(daily, bucket);
+  const dow = dowAverage(daily);
+  const freq = kpis && kpis.last_30d > 0 ? humanEvery((30 * 24 * 3600) / kpis.last_30d) : '—'; // 1 activation every…
 
   const feedErr = feedApi.error;
   const feedForbidden = feedErr?.forbidden ?? false;
@@ -535,17 +598,22 @@ export function Activation({ role, ctx, toast, token, sub }: ActivationProps) {
             <StatCard label="Total activated" value={kpis ? num(kpis.total) : '—'} tone="var(--ok)" />
             <StatCard label="Last 30 days" value={kpis ? num(kpis.last_30d) : '—'} />
             <StatCard label="Last 7 days" value={kpis ? num(kpis.last_7d) : '—'} />
-            <StatCard label="Capacity online" value={kpis ? `${num(Math.round(kpis.total_mw))} MW` : '—'} tone={V2G} />
+            <StatCard label="1 activation every" value={freq} tone={V2G} />
           </div>
-          <Card title="Activations per month" icon={I.trend} aux="count · last 24 months" style={{ padding: 0 }} className="tablewrap">
-            {seriesApi.isLoading ? (
-              <div className="skel skel-line" style={{ height: 180, margin: 16, borderRadius: 8 }} />
-            ) : (
-              <SeriesBars data={series} />
-            )}
-            <div className="dim" style={{ padding: '4px 18px 12px', fontSize: 'var(--fs-xs)' }}>
-              Each bar is a month of charger activations (× 7.4&nbsp;kW = MW connected).{kpis?.as_of ? ` As of ${kpis.as_of}.` : ''}
-            </div>
+          <Card title="Activations over time" icon={I.trend} aux="charger activations · × 7.4 kW = MW" style={{ padding: 0, marginBottom: 14 }} className="tablewrap">
+            <LoadBar>
+              <div className="seg">
+                {(['day', 'week', 'month', 'quarter'] as const).map((b) => (
+                  <button key={b} className={bucket === b ? 'on' : ''} onClick={() => setBucket(b)}>{b[0].toUpperCase() + b.slice(1)}</button>
+                ))}
+              </div>
+              <div style={{ flex: 1 }} />
+              {kpis?.as_of && <span className="dim" style={{ fontSize: 'var(--fs-small)' }}>as of {kpis.as_of}</span>}
+            </LoadBar>
+            {seriesApi.isLoading ? <div className="skel skel-line" style={{ height: 180, margin: 16, borderRadius: 8 }} /> : <SeriesBars data={series} />}
+          </Card>
+          <Card title="Average by weekday" icon={I.layers} aux="installs are a working-day activity" style={{ padding: 0 }} className="tablewrap">
+            {seriesApi.isLoading ? <div className="skel skel-line" style={{ height: 100, margin: 16, borderRadius: 8 }} /> : <DowBars data={dow} />}
           </Card>
         </>
       )}
