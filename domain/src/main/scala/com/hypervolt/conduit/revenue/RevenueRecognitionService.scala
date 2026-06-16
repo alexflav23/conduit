@@ -190,8 +190,24 @@ final class RevenueRecognitionService[F[_]: Async](xa: Transactor[F], ledger: Ti
       )
     }
     ledger.createAccounts(accounts) *> journal.post(occurredAt, postings ++ flashPostings) *>
-      record(dispatchId, ctx, vatAmt).transact(xa).void
+      (ensureBackfillInvoice(dispatchId, ctx, vatAmt) *> record(dispatchId, ctx, vatAmt)).transact(xa).void
   }
+
+  // A backfill invoice for a recognised historical dispatch (one the normal DispatchService flow never raised — the
+  // trade history predates Conduit), at the EXACT ex-VAT / VAT it posts to AR, so Σ open invoices ties the AR ledger
+  // to the penny (ar_vs_invoices). Skipped when a real invoice already covers the order (dispatch_id IS NULL ⇒
+  // DispatchService-raised). Keyed by dispatch_id ⇒ idempotent on redelivery/re-boot. Created BEFORE record() so the
+  // recognition row picks up its invoice_no.
+  private def ensureBackfillInvoice(dispatchId: UUID, ctx: RecogCtx, vatAmt: BigDecimal): ConnectionIO[Int] =
+    sql"""INSERT INTO order_invoice (order_id, dispatch_id, invoice_no, total_ex_vat, vat_total, total_inc_vat, due_date, status)
+          SELECT o.id, d.id, 'INV-' || nextval('invoice_no_seq'),
+                 round(${ctx.rev}, 2), round($vatAmt, 2), round(${ctx.rev}, 2) + round($vatAmt, 2),
+                 COALESCE(d.delivered_at, d.date)::date, 'open'
+          FROM dispatch d JOIN "order" o ON o.id = d.order_id
+          WHERE d.id = $dispatchId
+            AND (round(${ctx.rev}, 2) + round($vatAmt, 2)) > 0
+            AND NOT EXISTS (SELECT 1 FROM order_invoice i WHERE i.order_id = o.id AND i.dispatch_id IS NULL)
+          ON CONFLICT (dispatch_id) DO NOTHING""".update.run
 
   // The authoritative invoice quote (doc 16 §6): the place of supply is the selling entity's jurisdiction for a
   // domestic sale (year-1 UK); ship-to drives cross-border once markets open. One ex-tax line = the dispatched net.
