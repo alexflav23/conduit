@@ -79,6 +79,14 @@ object Main extends IOApp.Simple {
           .loadAll(java.nio.file.Paths.get(sys.env.getOrElse("INGEST_DIR", "ingest")))
       )
       _ <- Resource.eval(logger.info(s"Snapshot ingest: $loaded rows loaded"))
+      // Boot ignition (idempotent): replay the ingested history through the production engines so a fresh env
+      // reconverges to the live state (lots, periods, exposure + dispatch.created events the consumer recognises).
+      // IGNITE=false disables it (e.g. when operating the books manually).
+      _ <- Resource.eval(
+        if (sys.env.getOrElse("IGNITE", "true").toBoolean)
+          new com.hypervolt.conduit.ingest.IgnitionService[IO](xa).ignite.flatMap(s => logger.info(s"Ignition: $s"))
+        else logger.info("Ignition: disabled (IGNITE=false)")
+      )
     } yield (cfg, xa)
 
   override def run: IO[Unit] =

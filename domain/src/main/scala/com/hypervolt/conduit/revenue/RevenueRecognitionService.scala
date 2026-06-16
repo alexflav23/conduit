@@ -327,6 +327,9 @@ final class RevenueRecognitionService[F[_]: Async](xa: Transactor[F], ledger: Ti
 
   private def record(dispatchId: UUID, ctx: RecogCtx, vatAmt: BigDecimal): ConnectionIO[Int] = {
     val h = ctx.head
+    // Recognition's economic instant is the control-transfer (dispatch) date — UTC stored; the fiscal period is a
+    // re-projection off this, never the wall-clock backfill time (doc 14). Makes the P&L period-correct + replayable.
+    val occurredAt = ctx.asOf.atStartOfDay(ZoneOffset.UTC).toInstant
     // Under flash title (doc 28) the operating entity's COGS — the figure its P&L reports — is the TRANSFER
     // price; the landed/uplift decomposition lives ONLY in ic_match, behind the inter_entity wall.
     val opCogs = ctx.flash.fold(ctx.cogs)(_.transferTotal)
@@ -341,13 +344,13 @@ final class RevenueRecognitionService[F[_]: Async](xa: Transactor[F], ledger: Ti
     sql"""INSERT INTO revenue_recognition
             (dispatch_id, order_id, invoice_no, entity_id, currency, revenue_ex_vat, vat, cogs, gross_margin,
              vat_jurisdiction, tax_quote_id, shipping_cost, ar_transfer_id, vat_transfer_id, cogs_transfer_id,
-             carriage_transfer_id)
+             carriage_transfer_id, recognized_at)
           VALUES ($dispatchId, ${h.orderId},
              (SELECT invoice_no FROM order_invoice WHERE order_id = ${h.orderId} ORDER BY issued_at DESC LIMIT 1),
              ${h.entityId}, ${h.currency}, ${ctx.rev}, $vatAmt, $opCogs, ${ctx.rev - opCogs}, ${h.jurisdiction},
              (SELECT id FROM tax_quote WHERE order_invoice_id = ${ctx.invoiceId} AND context = 'invoice'
                 ORDER BY determined_at DESC LIMIT 1),
-             ${ctx.shipping}, $arTid, $vatTid, $cogsTid, $carriageTid)
+             ${ctx.shipping}, $arTid, $vatTid, $cogsTid, $carriageTid, $occurredAt)
           ON CONFLICT (dispatch_id) DO NOTHING""".update.run
       .flatTap { _ =>
         ctx.flash.traverse_ { f =>
