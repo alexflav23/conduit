@@ -236,33 +236,33 @@ function DataCentreCompare({ fm, loading }: { fm: ReturnType<typeof forecastMode
   const maxYears = Math.max(...spans.map((s) => (Number.isFinite(s.years) ? s.years : 0)), 0.001);
   const growthPct = Math.round((g - 1) * 100);
   return (
-    <Card style={{ marginBottom: 14, padding: 0 }} className="tablewrap">
-      <div style={{ padding: '14px 18px 4px' }}>
-        <div className="muted" style={{ fontSize: 'var(--fs-small)' }}>How fast is that?</div>
-        <div className="dim" style={{ fontSize: 'var(--fs-xs)', marginTop: 2, maxWidth: 760 }}>
+    <Card style={{ marginBottom: 14, padding: 0, minHeight: '100vh', display: 'flex', flexDirection: 'column' }} className="tablewrap">
+      <div style={{ padding: '32px 32px 10px' }}>
+        <div style={{ fontFamily: 'var(--font-disp)', fontSize: 30, fontWeight: 700 }}>How fast is that?</div>
+        <div className="dim" style={{ fontSize: 15, marginTop: 8, maxWidth: 920, lineHeight: 1.5 }}>
           AI data centres are the energy story of the moment. On our forecast trajectory — install pace growing{' '}
           {loading ? '…' : <b>≈{growthPct}%/year</b>} from {loading ? '…' : `≈${num(Math.round(A0))} MW`}/year today — here's how long it would take Hypervolt to connect as much grid power as one of them.
         </div>
       </div>
-      <div style={{ padding: '6px 18px 14px' }}>
+      <div style={{ flex: 1, padding: '8px 32px', display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 4 }}>
         {spans.map((s) => (
-          <div key={s.name} className="row g12" style={{ alignItems: 'center', padding: '9px 0', borderBottom: '1px solid var(--border)' }}>
-            <div style={{ width: 240, minWidth: 240 }}>
-              <div style={{ fontSize: 'var(--fs-small)', fontWeight: 600 }}>{s.name}</div>
-              <div className="dim" style={{ fontSize: 'var(--fs-xs)' }}>{s.note}</div>
+          <div key={s.name} className="row" style={{ alignItems: 'center', gap: 20, padding: '22px 0', borderBottom: '1px solid var(--border)' }}>
+            <div style={{ width: 300, minWidth: 300 }}>
+              <div style={{ fontSize: 19, fontWeight: 600 }}>{s.name}</div>
+              <div className="dim" style={{ fontSize: 13, marginTop: 2 }}>{s.note}</div>
             </div>
-            <div style={{ width: 64, textAlign: 'right', fontFamily: 'var(--font-disp)', fontSize: 14, color: 'var(--faint)' }}>{fmtPower(s.power)}</div>
-            <div style={{ flex: 1, height: 10, borderRadius: 5, background: 'var(--surface3)', overflow: 'hidden' }}>
+            <div style={{ width: 84, textAlign: 'right', fontFamily: 'var(--font-disp)', fontSize: 20, color: 'var(--faint)' }}>{fmtPower(s.power)}</div>
+            <div style={{ flex: 1, height: 22, borderRadius: 11, background: 'var(--surface3)', overflow: 'hidden' }}>
               <div style={{ width: `${Math.max(3, ((Number.isFinite(s.years) ? s.years : maxYears) / maxYears) * 100)}%`, height: '100%', background: 'var(--accent)', opacity: 0.85 }} />
             </div>
-            <div style={{ width: 96, textAlign: 'right', fontFamily: 'var(--font-disp)', fontSize: 16, fontWeight: 600 }}>
-              {loading ? <span className="skel skel-line" style={{ width: 64, height: 16, display: 'inline-block' }} /> : fmtSpan(s.years)}
+            <div style={{ width: 150, textAlign: 'right', fontFamily: 'var(--font-disp)', fontSize: 30, fontWeight: 700 }}>
+              {loading ? <span className="skel skel-line" style={{ width: 110, height: 28, display: 'inline-block' }} /> : fmtSpan(s.years)}
             </div>
           </div>
         ))}
-        <div className="dim" style={{ fontSize: 'var(--fs-xs)', marginTop: 8 }}>
-          Data-centre capacities are approximate announced/published figures — external reference points, not Hypervolt data. Times integrate the forecast growth curve (compounding), assuming the trajectory continues.
-        </div>
+      </div>
+      <div className="dim" style={{ fontSize: 12, padding: '0 32px 24px' }}>
+        Data-centre capacities are approximate announced/published figures — external reference points, not Hypervolt data. Times integrate the forecast growth curve (compounding), assuming the trajectory continues.
       </div>
     </Card>
   );
@@ -344,12 +344,6 @@ export function Activation({ role, ctx, toast }: ActivationProps) {
             </div>
           </div>
           <div style={{ textAlign: 'right' }}>
-            <div style={{ fontFamily: 'var(--font-disp)', fontSize: 26, fontWeight: 600, color: 'var(--accent)' }}>
-              {capApi.isLoading ? <span className="skel skel-line" style={{ width: 80, height: 22, display: 'inline-block' }} /> : `${(capH?.current_avg_daily_mw ?? 0).toFixed(2)} MW/day`}
-            </div>
-            <div className="dim" style={{ fontSize: 'var(--fs-xs)' }}>current run-rate</div>
-          </div>
-          <div style={{ textAlign: 'right', borderLeft: '1px solid var(--border)', paddingLeft: 14 }}>
             <div style={{ fontFamily: 'var(--font-disp)', fontSize: 26, fontWeight: 600, color: V2G }}>
               {capApi.isLoading ? <span className="skel skel-line" style={{ width: 90, height: 22, display: 'inline-block' }} /> : `${v2gRate.toFixed(2)} MW/day`}
             </div>
