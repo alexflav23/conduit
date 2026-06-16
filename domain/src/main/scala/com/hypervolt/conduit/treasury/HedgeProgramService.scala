@@ -18,6 +18,10 @@ final case class Coverage(exposureUsd: BigDecimal, hedgedUsd: BigDecimal, ratio:
 // top of this in subsequent slices.
 final class HedgeProgramService[F[_]: Async](xa: Transactor[F]) {
 
+  // Regenerate the exposure forecast from the current forecast × supplier cost (Volex→Luxshare at `transition`).
+  def rebuildExposureForecast(entityId: UUID, transition: LocalDate): F[Int] =
+    HedgeProgramRepo.rebuildExposureForecast(entityId, transition).transact(xa)
+
   // Required hedged USD by exposure type = Σ exposure × the policy ratio in force (the 50 / 50 / 100 policy).
   def requiredHedge(entityId: UUID, from: LocalDate, to: LocalDate, asOf: LocalDate): F[List[RequiredHedge]] =
     (HedgeProgramRepo.exposures(entityId, from, to), HedgeProgramRepo.policies(entityId, asOf)).tupled.transact(xa).map {

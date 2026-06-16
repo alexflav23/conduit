@@ -53,6 +53,40 @@ object HedgeProgramRepo {
           ON CONFLICT (entity_id, supplier, exposure_type, period_month) DO UPDATE SET
             amount_usd = EXCLUDED.amount_usd, source = EXCLUDED.source""".update.run
 
+  // Rebuild the exposure forecast from real data: monthly USD payables = Σ forecast units × the supplier band cost,
+  // bridging the forecast variants (HV-5M-W, v3) to the cost SKUs (HV3PROAAUW050T2, mrp) by colour × length, with
+  // the band selected by that quarter's total volume. Supplier flips Volex→Luxshare at `transition` (Dec 2026).
+  // Idempotent (upsert per month). Recompute whenever the forecast or cost master changes.
+  def rebuildExposureForecast(entityId: UUID, transition: LocalDate): ConnectionIO[Int] =
+    sql"""WITH fc AS (
+            SELECT pc.period_month AS m,
+                   (CASE right(v.sku,1) WHEN 'B' THEN 'Black' WHEN 'G' THEN 'Grey' WHEN 'W' THEN 'White' END) AS colour,
+                   (CASE substring(v.sku from 'HV-([0-9]+)M') WHEN '5' THEN 5.0 WHEN '75' THEN 7.5 WHEN '10' THEN 10.0 END) AS len,
+                   SUM(pc.forecast_qty) AS qty
+            FROM pipeline_coverage pc JOIN product_variant v ON v.id = pc.product_variant_id
+            WHERE pc.level = 'market' AND pc.product_variant_id IS NOT NULL GROUP BY 1,2,3
+          ),
+          qtr AS (SELECT date_trunc('quarter', m) q, SUM(qty) qvol FROM fc GROUP BY 1),
+          cost AS (
+            SELECT (CASE substring(sku,9,2) WHEN 'UB' THEN 'Black' WHEN 'SG' THEN 'Grey' WHEN 'UW' THEN 'White' END) colour,
+                   (CASE substring(sku,11,3) WHEN '050' THEN 5.0 WHEN '075' THEN 7.5 WHEN '100' THEN 10.0 END) len,
+                   min_qty_per_quarter band, unit_cost
+            FROM supplier_cost WHERE supplier = 'Volex'
+          ),
+          priced AS (
+            SELECT fc.m, fc.qty,
+                   (SELECT c.unit_cost FROM cost c JOIN qtr ON date_trunc('quarter', fc.m) = qtr.q
+                    WHERE c.colour = fc.colour AND c.len = fc.len AND c.band <= qtr.qvol
+                    ORDER BY c.band DESC LIMIT 1) unit_usd
+            FROM fc
+          )
+          INSERT INTO hedge_exposure_forecast (entity_id, supplier, exposure_type, period_month, amount_usd, source)
+          SELECT $entityId, CASE WHEN p.m < $transition THEN 'Volex' ELSE 'Luxshare' END, 'cm_payment', p.m,
+                 round(SUM(p.qty * p.unit_usd), 2), 'forecast x supplier cost'
+          FROM priced p GROUP BY p.m
+          ON CONFLICT (entity_id, supplier, exposure_type, period_month)
+            DO UPDATE SET amount_usd = EXCLUDED.amount_usd, source = EXCLUDED.source""".update.run
+
   def exposures(entityId: UUID, from: LocalDate, to: LocalDate): ConnectionIO[List[ExposureForecast]] =
     sql"""SELECT entity_id, supplier, exposure_type, period_month, amount_usd, source
           FROM hedge_exposure_forecast WHERE entity_id = $entityId AND period_month >= $from AND period_month < $to
