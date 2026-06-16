@@ -140,6 +140,11 @@ object Main extends IOApp.Simple {
           // origins fitted → scored → materialized → live-published every 6h, each capturing its censored
           // depletion snapshot. Activations already feed account_forecast_state via the placement consumer; this
           // closes the loop so run history + depletion deltas accrue automatically — no external script.
+          // Shadow-validation harness (doc 33 §5): re-run the discrepancy battery on a cycle so the triage queue
+          // tracks live state. The cutover gate is a sustained window with zero open money/unit findings.
+          val shadowValidation = new com.hypervolt.conduit.shadow.ShadowValidationService[IO](xa)
+          val shadowLoop: IO[Unit] =
+            (shadowValidation.runAll(None, cfg.shadow).attempt.void *> IO.sleep(6.hours)).foreverM
           val forecastCycle = new com.hypervolt.conduit.forecast.ForecastCycle[IO](xa)
           val forecastLoop: IO[Unit] =
             (IO(java.time.LocalDate.now()).flatMap(forecastCycle.runOnce).attempt.void *> IO.sleep(6.hours)).foreverM
@@ -165,6 +170,7 @@ object Main extends IOApp.Simple {
                 Supervised("opening-inventory", openingInvConsumer.runForever),
                 Supervised("commission-accrual", commissionConsumer.runForever),
                 Supervised("order-commitment", commitmentConsumer.runForever),
+                Supervised("shadow-validation", shadowLoop),
                 Supervised("notification-delivery", notifyLoop),
                 Supervised("forecast-cycle", forecastLoop)
               ).parSequence_
