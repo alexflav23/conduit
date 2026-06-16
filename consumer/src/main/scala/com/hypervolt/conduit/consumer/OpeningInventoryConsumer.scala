@@ -56,8 +56,18 @@ final class OpeningInventoryConsumer[F[_]: Async](client: PulsarClient, xa: Tran
         )
     }
 
+  // Opening INV must net (against the per-dispatch COGS relief) to the on-hand value to the penny, so it is computed
+  // on the SAME basis recognition relieves it: Σ per-dispatch round(serials' landed cost) + the on-hand value.
+  // (A single round(grand total) would drift by the accumulated per-dispatch rounding.)
   private def totalLotValueMinor: doobie.ConnectionIO[BigInt] =
-    sql"SELECT COALESCE(SUM(qty * landed_unit_cost), 0) FROM lot_batch"
+    sql"""SELECT (
+            COALESCE((SELECT SUM(round(c.cogs, 2)) FROM (
+              SELECT s.dispatch_id, SUM(lb.landed_unit_cost) AS cogs
+              FROM serial_unit s JOIN lot_batch lb ON lb.id = s.lot_batch_id
+              WHERE s.dispatch_id IS NOT NULL GROUP BY s.dispatch_id) c), 0)
+            + COALESCE((SELECT round(SUM(lb.landed_unit_cost), 2)
+              FROM serial_unit s JOIN lot_batch lb ON lb.id = s.lot_batch_id WHERE s.dispatch_id IS NULL), 0)
+          )"""
       .query[BigDecimal]
       .unique
       .map(v => (v.setScale(2, RoundingMode.HALF_UP) * 100).toBigInt)
