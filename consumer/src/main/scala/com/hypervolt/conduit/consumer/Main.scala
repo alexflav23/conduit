@@ -125,6 +125,8 @@ object Main extends IOApp.Simple {
               pulsar,
               new com.hypervolt.conduit.commission.CommissionAccrualService[IO](xa, ledger)
             )
+          val commitmentConsumer =
+            new OrderCommitmentConsumer[IO](pulsar, new com.hypervolt.conduit.order.OrderCommitmentService[IO](xa))
           // P2.6: the notification delivery relay — routes pending external notifications through the channel
           // (logging stand-in until SES/FCM creds land), shadow-aware (email/push muted in the dual-run).
           val notifyDelivery =
@@ -162,6 +164,7 @@ object Main extends IOApp.Simple {
                 Supervised("return-effector", returnConsumer.runForever),
                 Supervised("opening-inventory", openingInvConsumer.runForever),
                 Supervised("commission-accrual", commissionConsumer.runForever),
+                Supervised("order-commitment", commitmentConsumer.runForever),
                 Supervised("notification-delivery", notifyLoop),
                 Supervised("forecast-cycle", forecastLoop)
               ).parSequence_

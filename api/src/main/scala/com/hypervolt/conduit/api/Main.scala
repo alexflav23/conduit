@@ -151,6 +151,7 @@ object Main extends IOApp.Simple {
         val dispatchRoutes    = new com.hypervolt.conduit.api.routes.DispatchRoutes[IO](xa, auth).routes
         val purchasingRoutes  = new com.hypervolt.conduit.api.routes.PurchasingRoutes[IO](xa, auth).routes
         val commissionRoutes  = new com.hypervolt.conduit.api.routes.CommissionRoutes[IO](xa, auth).routes
+        val commitmentRoutes  = new com.hypervolt.conduit.api.routes.OrderCommitmentRoutes[IO](xa, auth).routes
         // the Tamper Sandbox shares the dev-token gate: it exists only outside prod (doc 31 §2.5)
         val proofRoutes =
           new com.hypervolt.conduit.api.routes.ProofRoutes[IO](xa, auth, tamperEnabled = cfg.env != "prod").routes
@@ -171,7 +172,7 @@ object Main extends IOApp.Simple {
             "/" -> (HealthRoutes
               .routes[
                 IO
-              ] <+> accessRoutes <+> pricingRoutes <+> commerceRoutes <+> crmRoutes <+> activationRoutes <+> shelfDetailRoutes <+> dealDeskRoutes <+> h6qRoutes <+> forecastRunRoutes <+> icRoutes <+> creditRoutes <+> auditRoutes <+> stripeRoutes <+> documentRoutes <+> attachmentRoutes <+> voidRoutes <+> lifecycleRoutes <+> taxRoutes <+> procurementRoutes <+> structureRoutes <+> returnRoutes <+> treasuryRoutes <+> activationStream <+> dispatchRoutes <+> purchasingRoutes <+> commissionRoutes <+> privacyRoutes <+> proofRoutes)
+              ] <+> accessRoutes <+> pricingRoutes <+> commerceRoutes <+> crmRoutes <+> activationRoutes <+> shelfDetailRoutes <+> dealDeskRoutes <+> h6qRoutes <+> forecastRunRoutes <+> icRoutes <+> creditRoutes <+> auditRoutes <+> stripeRoutes <+> documentRoutes <+> attachmentRoutes <+> voidRoutes <+> lifecycleRoutes <+> taxRoutes <+> procurementRoutes <+> structureRoutes <+> returnRoutes <+> treasuryRoutes <+> activationStream <+> dispatchRoutes <+> purchasingRoutes <+> commissionRoutes <+> commitmentRoutes <+> privacyRoutes <+> proofRoutes)
           ).orNotFound
         val host      = Ipv4Address.fromString(cfg.http.host).getOrElse(ipv4"0.0.0.0")
         val apiPort   = Port.fromInt(cfg.http.port).getOrElse(port"8080")

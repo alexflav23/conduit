@@ -33,9 +33,10 @@ final class IgnitionService[F[_]: Async](xa: Transactor[F]) {
             _       <- ensureLocation(eid)
             stock   <- createStockItems(eid)
             exp     <- HedgeProgramRepo.rebuildExposureForecast(eid, transition)
+            placed  <- emitOrderPlaced
             emitted <- emitRecognitionEvents
             invOpen <- emitOpeningInventory(eid)
-          } yield s"stamped=$stamped lots=$lots serials_linked=$linked periods=$periods stock_items=$stock exposure_rows=$exp recognition_events=$emitted opening_inv_event=$invOpen"
+          } yield s"stamped=$stamped lots=$lots serials_linked=$linked periods=$periods stock_items=$stock exposure_rows=$exp order_placed_events=$placed recognition_events=$emitted opening_inv_event=$invOpen"
       }
       .transact(xa)
 
@@ -94,6 +95,20 @@ final class IgnitionService[F[_]: Async](xa: Transactor[F]) {
           SELECT gen_random_uuid(), 'inventory.opening', 1, 'inventory', $eid, $eid::text,
                  jsonb_build_object('entity_id', $eid::text), now(), 'pending'
           WHERE NOT EXISTS (SELECT 1 FROM outbox_event o WHERE o.event_type = 'inventory.opening' AND o.aggregate_id = $eid)""".update.run
+
+  // A historical order IS an order.placed — replay the whole order book through the event so the baseline reality
+  // rebuilds through the engines (sales backlog/commitment, commission accrual, rebate true-up). Idempotent on the
+  // NOT EXISTS guard; consumers read authoritative rows by order id, so the payload is a faithful echo, not the
+  // source of truth. Recognition is NOT triggered here (that is dispatch.created) — no double-posting.
+  private def emitOrderPlaced: ConnectionIO[Int] =
+    sql"""INSERT INTO outbox_event (event_id, event_type, schema_version, aggregate_type, aggregate_id, partition_key, scope, payload, occurred_at, status, origin)
+          SELECT gen_random_uuid(), 'order.placed', 1, 'order', o.id, o.id::text,
+                 jsonb_build_object('entity_id', o.entity_id::text, 'market_id', o.market_id::text, 'channel_id', o.channel_id::text),
+                 jsonb_build_object('order_no', o.order_no, 'sold_to', o.sold_to_party_id::text, 'bill_to', o.bill_to_party_id::text,
+                   'agent_id', o.agent_id::text, 'total_inc_vat', o.total_inc_vat::text, 'historical', true),
+                 COALESCE(o.created_at, now()), 'pending', 'service:ignition'
+          FROM "order" o
+          WHERE NOT EXISTS (SELECT 1 FROM outbox_event e WHERE e.event_type = 'order.placed' AND e.aggregate_id = o.id)""".update.run
 
   // Emit dispatch.created for each costed, not-yet-recognised dispatch with no in-flight event — the relay
   // publishes to conduit.orders and the consumer recognises (AR/Revenue/VAT/COGS → TigerBeetle). Idempotent.
