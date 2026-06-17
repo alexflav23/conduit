@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useApi } from './lib/query';
 import { ApiError } from './lib/client';
 import { marketId } from './api';
@@ -124,9 +125,15 @@ interface Genealogy { serial?: SerialNode; batch?: BatchNode; activation?: Activ
 
 function SerialGenealogy({ ctx, role, hasProfit }: { ctx: Ctx; role: Role; hasProfit: boolean }) {
   const viewer = { layers: role.layers || [] };
-  const [q, setQ] = useState('');
-  const [serial, setSerial] = useState('');
+  const [params] = useSearchParams();
+  const urlSerial = params.get('serial') || '';
+  const [q, setQ] = useState(urlSerial);
+  const [serial, setSerial] = useState(urlSerial);
   const mid = marketId(ctx.market);
+  // arriving from a customer's charger (CRM → click serial): auto-trace it, no copy-paste.
+  useEffect(() => {
+    if (urlSerial) { setQ(urlSerial); setSerial(urlSerial); }
+  }, [urlSerial]);
 
   const path = `/api/v1/inventory/genealogy?${qs({ entity: ctx.entity, market: mid, serial })}`;
   const query = useApi<Genealogy>(['batch-genealogy', ctx.entity, mid, serial], path, { enabled: serial.trim().length > 0 });

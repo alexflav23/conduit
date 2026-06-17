@@ -216,14 +216,25 @@ object CrmReadRepo {
       Some(fr"p.parent_party_id IS NULL"),
       Some(fr"p.status <> 'merged'"),
       segment.map(s => fr"p.segment = $s"),
-      q.map(t =>
+      q.map { t =>
+        val digits = t.filter(_.isDigit)
+        val phoneClause =
+          if (digits.length >= 5)
+            fr" OR EXISTS (SELECT 1 FROM contact c WHERE c.party_id = p.id AND regexp_replace(c.phone, '[^0-9]', '', 'g') ILIKE ${"%" + digits + "%"})"
+          else fr""
         fr"(p.display_name ILIKE ${"%" + t + "%"} OR p.external_refs->>'owner_email' ILIKE ${"%" + t + "%"}" ++
-          fr" OR EXISTS (SELECT 1 FROM contact c WHERE c.party_id = p.id AND c.email ILIKE ${"%" + t + "%"}))")
+          fr" OR EXISTS (SELECT 1 FROM contact c WHERE c.party_id = p.id AND c.email ILIKE ${"%" + t + "%"})" ++
+          phoneClause ++ fr")"
+      }
     ).flatten.reduce(_ ++ fr" AND " ++ _)
 
   def listAccounts(segment: Option[String], q: Option[String], limit: Int, offset: Int): doobie.ConnectionIO[List[Json]] =
     (fr"""SELECT jsonb_build_object(
             'id', p.id::text, 'name', """ ++ nameExpr ++ fr""", 'segment', p.segment, 'type', p.party_type,
+            'first_name', (SELECT c.first_name FROM contact c WHERE c.party_id = p.id AND c.first_name IS NOT NULL ORDER BY c.is_primary DESC LIMIT 1),
+            'last_name', (SELECT c.last_name FROM contact c WHERE c.party_id = p.id AND c.last_name IS NOT NULL ORDER BY c.is_primary DESC LIMIT 1),
+            'email', COALESCE(p.external_refs->>'owner_email', (SELECT c.email::text FROM contact c WHERE c.party_id = p.id AND c.email IS NOT NULL ORDER BY c.is_primary DESC LIMIT 1)),
+            'phone', (SELECT c.phone FROM contact c WHERE c.party_id = p.id AND c.phone IS NOT NULL ORDER BY c.is_primary DESC LIMIT 1),
             'mrpeasy', (SELECT count(*) FROM account_source_link a WHERE a.party_id = p.id AND a.source_system = 'mrpeasy'),
             'hubspot_companies', (SELECT count(*) FROM account_source_link a WHERE a.party_id = p.id AND a.source_system = 'hubspot_company'),
             'contacts', (SELECT count(*) FROM contact c WHERE c.party_id = p.id),

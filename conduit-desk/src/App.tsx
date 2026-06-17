@@ -42,6 +42,7 @@ import { useAuth } from 'react-oidc-context';
 import { SignIn, sessionEmail } from './SignIn';
 import { setOidcToken, devToken, setDevToken } from './lib/auth';
 import { queryClient } from './lib/query';
+import { useApi } from './lib/query';
 
 // The Conduit Desk shell (spec/ui/README.md "Shell affordances"; structure mirrors .design-ref/desk-shell.jsx,
 // Hypervolt dark-first). A grouped rail, the working-context bar (entity/market/period/scenario with the
@@ -401,35 +402,58 @@ export function App() {
   );
 }
 
+interface PalAccount { id: string; name: string; first_name?: string | null; last_name?: string | null; email?: string | null; phone?: string | null; segment?: string | null }
+
 function Palette({ open, onClose, go }: { open: boolean; onClose: () => void; go: (r: TabId) => void }) {
   const [q, setQ] = useState('');
   const [hot, setHot] = useState(0);
   const ref = useRef<HTMLInputElement>(null);
+  const navigate = useNavigate();
   const cmds: { id: TabId; label: string; sect: string }[] = ALL.map((it) => ({ id: it.id, label: it.label, sect: 'screen' })).concat([
     { id: 'dealdesk', label: 'ORD-DEALDESK — ADLP exception', sect: 'record' },
     { id: 'docs', label: 'INV-FLOW — recognised invoice', sect: 'record' },
     { id: 'supply', label: 'Volex — supply commitments', sect: 'record' },
   ]);
-  const hits = cmds.filter((c) => c.label.toLowerCase().includes(q.toLowerCase()));
+  const screenHits = cmds.filter((c) => c.label.toLowerCase().includes(q.toLowerCase()));
+  // live customer search across the whole master (name / email / phone / contact) once you type 2+ chars
+  const acctQ = useApi<{ rows?: PalAccount[] }>(
+    ['pal-accounts', q],
+    `/api/v1/crm/accounts?limit=8&q=${encodeURIComponent(q.trim())}`,
+    { enabled: open && q.trim().length >= 2 },
+  );
+  const custHits = (acctQ.data?.rows ?? []).map((a) => ({
+    kind: 'customer' as const, id: a.id,
+    label: [a.first_name, a.last_name].filter(Boolean).join(' ') || a.name,
+    sub: [a.email, a.phone, a.segment].filter(Boolean).join(' · '),
+  }));
+  type Hit = { kind: 'screen'; id: TabId; label: string; sub: string } | { kind: 'customer'; id: string; label: string; sub: string };
+  const hits: Hit[] = (screenHits.map((c) => ({ kind: 'screen' as const, id: c.id, label: c.label, sub: c.sect })) as Hit[]).concat(custHits);
   useEffect(() => { if (open) { setQ(''); setHot(0); setTimeout(() => ref.current?.focus(), 30); } }, [open]);
+  useEffect(() => { setHot(0); }, [q]);
   if (!open) return null;
+  const pick = (h: Hit) => {
+    if (h.kind === 'screen') go(h.id);
+    else navigate('/crm?account=' + encodeURIComponent(h.id));
+    onClose();
+  };
   const key = (e: React.KeyboardEvent) => {
     if (e.key === 'ArrowDown') { e.preventDefault(); setHot((h) => Math.min(hits.length - 1, h + 1)); }
     if (e.key === 'ArrowUp') { e.preventDefault(); setHot((h) => Math.max(0, h - 1)); }
-    if (e.key === 'Enter' && hits[hot]) { go(hits[hot].id); onClose(); }
+    if (e.key === 'Enter' && hits[hot]) pick(hits[hot]);
     if (e.key === 'Escape') onClose();
   };
   return (
     <div className="pal-scrim" onClick={onClose}>
       <div className="pal" onClick={(e) => e.stopPropagation()}>
-        <input ref={ref} placeholder="Jump to a desk or record…" value={q} onChange={(e) => { setQ(e.target.value); setHot(0); }} onKeyDown={key} />
+        <input ref={ref} placeholder="Search a customer (name · email · phone) or jump to a desk…" value={q} onChange={(e) => { setQ(e.target.value); setHot(0); }} onKeyDown={key} />
         <div className="list">
           {hits.map((c, i) => (
-            <div key={c.label} className={'it' + (i === hot ? ' hot' : '')} onMouseEnter={() => setHot(i)} onClick={() => { go(c.id); onClose(); }}>
-              <span>{c.label}</span><span className="sect">{c.sect}</span>
+            <div key={c.kind + c.id + c.label} className={'it' + (i === hot ? ' hot' : '')} onMouseEnter={() => setHot(i)} onClick={() => pick(c)}>
+              <span>{c.label}{c.sub && <span className="dim" style={{ fontSize: 11, marginLeft: 8 }}>{c.sub}</span>}</span>
+              <span className="sect">{c.kind === 'customer' ? 'customer' : c.sub}</span>
             </div>
           ))}
-          {hits.length === 0 && <div style={{ padding: 16, color: 'var(--faint)', fontSize: 13 }}>No matches.</div>}
+          {hits.length === 0 && <div style={{ padding: 16, color: 'var(--faint)', fontSize: 13 }}>{acctQ.isLoading ? 'Searching…' : 'No matches.'}</div>}
         </div>
         <div className="foot"><span><kbd>↑↓</kbd> navigate</span><span><kbd>↵</kbd> open</span><span><kbd>esc</kbd> close</span></div>
       </div>

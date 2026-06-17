@@ -1,4 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { useApi, request } from './lib/query';
 import { ApiError } from './lib/client';
 import { marketId } from './api';
@@ -127,6 +129,13 @@ export function CRM({ role, ctx, toast }: { role: any; ctx: any; toast: (m: stri
   const [dealPage, setDealPage] = useState(0);
   const [sector, setSector] = useState('all');
   const [sel, setSel] = useState<Party | null>(null);
+
+  // Deep-link from cmd+K: /crm?account=<id> lands on the Accounts tab with that master account open.
+  const [params, setParams] = useSearchParams();
+  useEffect(() => {
+    const id = params.get('account');
+    if (id) { setTab('accounts'); setAcctSel(id); setParams({}, { replace: true }); }
+  }, [params, setParams]);
 
   // ---- credit-limit maker-checker request ----
   const [limitReq, setLimitReq] = useState<Party | null>(null);
@@ -768,6 +777,7 @@ function DealBook({ book, summary, pipeline, setPipeline, status, setStatus, sor
 // ============================================================ CONDUIT MASTER ACCOUNTS (golden record)
 interface MasterAccount {
   id: string; name: string; segment?: string | null; type?: string | null;
+  first_name?: string | null; last_name?: string | null; email?: string | null; phone?: string | null;
   mrpeasy?: number; hubspot_companies?: number; contacts?: number; branches?: number; orders?: number; order_value?: string;
 }
 interface AcctSource { system: string; source_id: string; name?: string | null; method?: string; confidence?: number }
@@ -794,6 +804,7 @@ function AccountsView({ list, detail, seg, setSeg, q, setQ, page, setPage, pageS
   sel: string | null; setSel: (id: string | null) => void; hasCommercial: boolean;
   toast: (m: string, k?: string) => void;
 }) {
+  const nav = useNavigate();
   const rows = list.data?.rows ?? [];
   const total = list.data?.total ?? 0;
   const pages = Math.max(1, Math.ceil(total / pageSize));
@@ -813,24 +824,27 @@ function AccountsView({ list, detail, seg, setSeg, q, setQ, page, setPage, pageS
         </div>
         <Card title="Conduit accounts" icon={I.user} aux={<span className="dim" style={{ fontSize: 11.5 }}>one entity · MRPeasy + HubSpot + contacts as parts</span>} className="tablewrap" style={{ padding: 0 }}>
           <table className="tbl">
-            <thead><tr><th>Account</th><th>Segment</th><th>Sources</th><th style={{ textAlign: 'right' }}>Contacts</th><th style={{ textAlign: 'right' }}>Branches</th><th style={{ textAlign: 'right' }}>Orders</th></tr></thead>
+            <thead><tr><th>First name</th><th>Last name</th><th>Email</th><th>Phone</th><th>Segment</th><th style={{ textAlign: 'right' }}>Contacts</th><th style={{ textAlign: 'right' }}>Orders</th></tr></thead>
             <tbody>
-              {list.isLoading && <><SkeletonRow cols={6} /><SkeletonRow cols={6} /><SkeletonRow cols={6} /></>}
-              {!list.isLoading && rows.length === 0 && <EmptyRow cols={6}>No accounts match.</EmptyRow>}
-              {rows.map((a) => (
+              {list.isLoading && <><SkeletonRow cols={7} /><SkeletonRow cols={7} /><SkeletonRow cols={7} /></>}
+              {!list.isLoading && rows.length === 0 && <EmptyRow cols={7}>No accounts match.</EmptyRow>}
+              {rows.map((a) => {
+                // person name when we have it; else the company/account name lands in the first column.
+                const first = a.first_name || (a.last_name ? '' : a.name);
+                return (
                 <tr key={a.id} data-testid="acct-row" onClick={() => setSel(a.id)}
                   style={{ cursor: 'pointer', background: sel === a.id ? 'var(--surface-2)' : undefined }}>
-                  <td><b>{a.name}</b></td>
-                  <td><span className="dim">{a.segment || '—'}</span></td>
-                  <td>
+                  <td><b>{first || <span className="dim">—</span>}</b>
                     {(a.mrpeasy ?? 0) > 0 && <Chip s="approved">MRP</Chip>}
-                    {(a.hubspot_companies ?? 0) > 0 && <Chip s="accent">HS</Chip>}
-                  </td>
+                    {(a.hubspot_companies ?? 0) > 0 && <Chip s="accent">HS</Chip>}</td>
+                  <td>{a.last_name || <span className="dim">—</span>}</td>
+                  <td className="mono" style={{ fontSize: 11 }}>{a.email || <span className="dim">—</span>}</td>
+                  <td className="mono" style={{ fontSize: 11 }}>{a.phone || <span className="dim">—</span>}</td>
+                  <td><span className="dim">{a.segment || '—'}</span></td>
                   <td style={{ textAlign: 'right' }}>{num(a.contacts ?? 0)}</td>
-                  <td style={{ textAlign: 'right' }}>{(a.branches ?? 0) > 0 ? num(a.branches!) : <span className="dim">—</span>}</td>
                   <td style={{ textAlign: 'right' }}>{num(a.orders ?? 0)}</td>
                 </tr>
-              ))}
+              ); })}
             </tbody>
           </table>
         </Card>
@@ -914,8 +928,8 @@ function AccountsView({ list, detail, seg, setSeg, q, setQ, page, setPage, pageS
                       <div key={ch.id} style={{ padding: '4px 0', borderBottom: '1px solid var(--border)' }}>
                         <div className="row between" style={{ fontSize: 12.5 }}>
                           <span className="mono" style={{ cursor: 'pointer', color: 'var(--accent-bright)' }}
-                            title="copy serial to trace in Batch & genealogy"
-                            onClick={() => { navigator.clipboard?.writeText(ch.serial); toast('Serial copied — trace it in Batch & genealogy', 'ok'); }}>
+                            title="trace this serial in Batch & genealogy"
+                            onClick={() => nav('/batch?serial=' + encodeURIComponent(ch.serial))}>
                             {ch.serial}</span>
                           <span>{warr && <Chip s={warr.s}>{warr.t}</Chip>} <Chip s={ch.status === 'activated' ? 'ok' : 'neutral'}>{ch.status}</Chip></span>
                         </div>
