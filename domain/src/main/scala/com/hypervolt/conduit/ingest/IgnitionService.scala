@@ -33,12 +33,15 @@ final class IgnitionService[F[_]: Async](xa: Transactor[F]) {
             _       <- ensureLocation(eid)
             stock   <- createStockItems(eid)
             exp     <- HedgeProgramRepo.rebuildExposureForecast(eid, transition)
+            repriced <- fixPriceLostLines
+            _        <- fixPriceLostCommitments
+            _        <- invalidateStaleZeroRecognition
             placed  <- emitOrderPlaced
             emitted <- emitRecognitionEvents
             invOpen <- emitOpeningInventory(eid)
             warr    <- backfillWarrantyWindows
             repl    <- applyRmaTickets
-          } yield s"stamped=$stamped lots=$lots serials_linked=$linked periods=$periods stock_items=$stock exposure_rows=$exp order_placed_events=$placed recognition_events=$emitted opening_inv_event=$invOpen warranty_windows=$warr replacements_linked=$repl"
+          } yield s"stamped=$stamped lots=$lots serials_linked=$linked periods=$periods stock_items=$stock exposure_rows=$exp price_lost_lines_fixed=$repriced order_placed_events=$placed recognition_events=$emitted opening_inv_event=$invOpen warranty_windows=$warr replacements_linked=$repl"
       }
       .transact(xa)
 
@@ -174,8 +177,37 @@ final class IgnitionService[F[_]: Async](xa: Transactor[F]) {
             WHERE s.id = c.id AND s.replaces_serial_unit_id IS NOT NULL
               AND s.warranty_end IS DISTINCT FROM c.warranty_end""".update.run
 
-  // Emit dispatch.created for each costed, not-yet-recognised dispatch with no in-flight event — the relay
-  // publishes to conduit.orders and the consumer recognises (AR/Revenue/VAT/COGS → TigerBeetle). Idempotent.
+  // Price-loss remediation (the shadow `cogs_without_revenue / price_lost` defect). The MRPeasy import dropped the
+  // per-line price on some orders (all lines £0) while the header carried the real total. Restore it by allocating
+  // the header evenly across the order's (all-serialised) lines, so recognition computes the true revenue. Only
+  // touches orders where EVERY line is £0 and the header is > 0 — idempotent (a fixed line is never re-touched).
+  private def fixPriceLostLines: ConnectionIO[Int] =
+    sql"""UPDATE order_line ol SET unit_price_ex_vat = round(o.subtotal_ex_vat / NULLIF(tot.q, 0), 4)
+          FROM "order" o
+          JOIN (SELECT order_id, SUM(qty) AS q FROM order_line GROUP BY order_id) tot ON tot.order_id = o.id
+          WHERE ol.order_id = o.id AND o.subtotal_ex_vat > 0 AND ol.unit_price_ex_vat = 0
+            AND NOT EXISTS (SELECT 1 FROM order_line p WHERE p.order_id = o.id AND p.unit_price_ex_vat > 0)""".update.run
+
+  // The same orders' commitment was recorded at £0 (from the £0 lines); recompute it from the now-fixed lines so
+  // the backlog (committed = recognised + open) stays consistent. Idempotent (only fills the £0-committed rows).
+  private def fixPriceLostCommitments: ConnectionIO[Int] =
+    sql"""UPDATE order_commitment oc
+          SET committed_ex_vat = c.ex, committed_vat = round(c.ex * 0.20, 2), committed_inc_vat = round(c.ex * 1.20, 2)
+          FROM (SELECT order_id, SUM(qty * unit_price_ex_vat * (1 - COALESCE(discount_pct,0)/100)) AS ex
+                FROM order_line GROUP BY order_id) c
+          WHERE oc.order_id = c.order_id AND oc.committed_ex_vat = 0 AND c.ex > 0""".update.run
+
+  // Drop the stale £0-revenue recognitions for the now-repriced orders so they re-recognise at the true revenue.
+  // Safe: re-recognition re-posts the COGS leg (deterministic id → TB + gl_entry ON CONFLICT both dedupe) and adds
+  // the previously-skipped AR/Revenue/VAT legs. Only the price-lost set (header > 0, lines now priced) is dropped.
+  private def invalidateStaleZeroRecognition: ConnectionIO[Int] =
+    sql"""DELETE FROM revenue_recognition rr USING "order" o
+          WHERE rr.order_id = o.id AND rr.revenue_ex_vat = 0 AND o.subtotal_ex_vat > 0
+            AND EXISTS (SELECT 1 FROM order_line ol WHERE ol.order_id = o.id AND ol.unit_price_ex_vat > 0)""".update.run
+
+  // Emit dispatch.created for each costed dispatch with no recognition row and no IN-FLIGHT event — the relay
+  // publishes to conduit.orders and the consumer recognises (AR/Revenue/VAT/COGS → TigerBeetle). Idempotent, and
+  // re-emits for a dispatch whose stale recognition was just invalidated (the published event no longer blocks it).
   private def emitRecognitionEvents: ConnectionIO[Int] =
     sql"""INSERT INTO outbox_event (event_id, event_type, schema_version, aggregate_type, aggregate_id, partition_key, payload, occurred_at, status)
           SELECT gen_random_uuid(), 'dispatch.created', 1, 'order', d.order_id, d.order_id::text,
@@ -184,5 +216,5 @@ final class IgnitionService[F[_]: Async](xa: Transactor[F]) {
           WHERE EXISTS (SELECT 1 FROM dispatch_line dl WHERE dl.dispatch_id = d.id)
             AND EXISTS (SELECT 1 FROM serial_unit s WHERE s.dispatch_id = d.id AND s.lot_batch_id IS NOT NULL)
             AND NOT EXISTS (SELECT 1 FROM revenue_recognition r WHERE r.dispatch_id = d.id)
-            AND NOT EXISTS (SELECT 1 FROM outbox_event o WHERE o.event_type = 'dispatch.created' AND o.payload->>'dispatch_id' = d.id::text)""".update.run
+            AND NOT EXISTS (SELECT 1 FROM outbox_event o WHERE o.event_type = 'dispatch.created' AND o.payload->>'dispatch_id' = d.id::text AND o.status = 'pending')""".update.run
 }
