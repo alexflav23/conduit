@@ -26,6 +26,7 @@ import { Lifecycle } from './Lifecycle';
 import { Warranty } from './Warranty';
 import { Shadow } from './Shadow';
 import { Backlog } from './Backlog';
+import { Pricing } from './Pricing';
 import { Tax } from './Tax';
 import { Intercompany } from './Intercompany';
 import { Procurement } from './Procurement';
@@ -51,7 +52,7 @@ import { queryClient } from './lib/query';
 // testids (tab-*, session-chip, signout, locale-select, token via SignIn) are preserved.
 
 type TabId =
-  | 'order' | 'dealdesk' | 'returns' | 'crm' | 'reseller'
+  | 'order' | 'dealdesk' | 'pricing' | 'returns' | 'crm' | 'reseller'
   | 'h6q' | 'flow' | 'supply' | 'shelf' | 'engine' | 'runs'
   | 'inventory' | 'purchasing' | 'batch' | 'activation' | 'warranty'
   | 'finance' | 'commission' | 'docs' | 'lifecycle' | 'tax' | 'backlog'
@@ -64,6 +65,7 @@ const GROUPS: { sec: string; items: NavItem[] }[] = [
   { sec: 'Sell', items: [
     { id: 'order', label: 'Order Desk', icon: 'charger' },
     { id: 'dealdesk', label: 'Deal Desk', icon: 'flag' },
+    { id: 'pricing', label: 'Pricing', icon: 'scale' },
     { id: 'returns', label: 'Returns', icon: 'arrowBack' },
     { id: 'crm', label: 'CRM', icon: 'user' },
     { id: 'reseller', label: 'Reseller portal', icon: 'globe' },
@@ -111,7 +113,7 @@ const ALL: NavItem[] = GROUPS.flatMap((g) => g.items);
 type ViewProps = { token: string; role: Role; ctx: Ctx; toast: (text: string, kind?: 'ok' | 'warn' | 'err') => void };
 
 const PAGES: Record<TabId, React.ComponentType<any>> = {
-  order: OrderDesk, dealdesk: DealDesk, returns: Returns, crm: CRM, reseller: Reseller,
+  order: OrderDesk, dealdesk: DealDesk, pricing: Pricing, returns: Returns, crm: CRM, reseller: Reseller,
   h6q: H6Q, flow: Flow, supply: SupplyWindow, shelf: Shelf, engine: Forecasting, runs: ForecastRuns,
   inventory: Inventory, purchasing: Purchasing, batch: BatchGenealogy, activation: Activation,
   finance: Finance, commission: Commission, docs: Documents, lifecycle: Lifecycle, warranty: Warranty, tax: Tax, shadow: Shadow, backlog: Backlog,

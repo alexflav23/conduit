@@ -139,9 +139,13 @@ object PriceRuleRepo {
       })
 
   def listRulesJson: ConnectionIO[List[Json]] =
-    sql"""SELECT id, surface, currency, status, authorised_price, max_discount_pct,
-                 tp_method, tp_markup_pct, from_entity_id, to_entity_id
-          FROM price_rule ORDER BY created_at DESC"""
+    sql"""SELECT pr.id, pr.surface, pr.currency, pr.status, pr.authorised_price, pr.max_discount_pct,
+                 pr.tp_method, pr.tp_markup_pct, pr.from_entity_id, pr.to_entity_id,
+                 pv.sku, COALESCE(pa.name, 'open'), COALESCE(pa.applies_to, 'open_list'), pr.min_qty
+          FROM price_rule pr
+          LEFT JOIN product_variant pv ON pv.id = pr.product_variant_id
+          LEFT JOIN price_agreement pa ON pa.id = pr.price_agreement_id
+          ORDER BY COALESCE(pa.name, 'open'), pv.sku, pr.min_qty"""
       .query[
         (
             UUID,
@@ -153,12 +157,16 @@ object PriceRuleRepo {
             Option[String],
             Option[BigDecimal],
             Option[UUID],
-            Option[UUID]
+            Option[UUID],
+            Option[String],
+            String,
+            String,
+            Int
         )
       ]
       .to[List]
       .map(_.map {
-        case (id, surface, ccy, status, price, disc, tpm, tpmk, fe, te) =>
+        case (id, surface, ccy, status, price, disc, tpm, tpmk, fe, te, sku, agreement, appliesTo, minQty) =>
           Json.obj(
             "id"               -> id.toString.asJson,
             "surface"          -> surface.asJson,
@@ -169,7 +177,11 @@ object PriceRuleRepo {
             "tp_method"        -> tpm.asJson,
             "tp_markup_pct"    -> tpmk.map(_.toString).asJson,
             "from_entity_id"   -> fe.map(_.toString).asJson,
-            "to_entity_id"     -> te.map(_.toString).asJson
+            "to_entity_id"     -> te.map(_.toString).asJson,
+            "sku"              -> sku.asJson,
+            "agreement"        -> agreement.asJson,
+            "applies_to"       -> appliesTo.asJson,
+            "min_qty"          -> minQty.asJson
           )
       })
 
