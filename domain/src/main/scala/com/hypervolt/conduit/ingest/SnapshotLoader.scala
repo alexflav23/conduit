@@ -225,7 +225,27 @@ object SnapshotLoader {
     else if (dataset == "deals_attributed") hubspotAttributedDeal(row)
     else if (dataset == "contacts") hubspotContact(row)
     else if (dataset == "companies") hubspotCompany(row)
+    else if (dataset == "account_match_verdicts") hubspotMatchVerdict(row)
     else 0.pure[ConnectionIO]
+
+  // ingest/hubspot/account_match_verdicts.ndjson → hubspot_match_verdict staging (the model matcher's output).
+  // The apply step merges confidence>=0.9 with a target. Empty until the Bedrock matcher runs; idempotent.
+  private def hubspotMatchVerdict(row: Json): ConnectionIO[Int] = {
+    val c = row.hcursor
+    c.get[String]("hs_company_id").toOption match {
+      case None => 0.pure[ConnectionIO]
+      case Some(id) =>
+        val target = c.get[String]("merge_into_party_id").toOption.filter(_.nonEmpty)
+          .flatMap(s => scala.util.Try(java.util.UUID.fromString(s)).toOption)
+        val conf   = c.get[BigDecimal]("confidence").toOption.orElse(c.get[Double]("confidence").toOption.map(BigDecimal(_)))
+        val reason = c.get[String]("reason").toOption
+        sql"""INSERT INTO hubspot_match_verdict (hs_company_id, merge_into_party_id, confidence, reason, model)
+              VALUES ($id, $target, ${conf.getOrElse(BigDecimal(0))}, $reason, 'bedrock')
+              ON CONFLICT (hs_company_id) DO UPDATE SET
+                merge_into_party_id = EXCLUDED.merge_into_party_id, confidence = EXCLUDED.confidence,
+                reason = EXCLUDED.reason, model = EXCLUDED.model""".update.run
+    }
+  }
 
   // ingest/hubspot/companies.ndjson → hubspot_company_raw staging (the canonical company universe for correlation).
   private def hubspotCompany(row: Json): ConnectionIO[Int] = {

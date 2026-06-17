@@ -44,7 +44,8 @@ final class IgnitionService[F[_]: Async](xa: Transactor[F]) {
             warr    <- backfillWarrantyWindows
             repl    <- applyRmaTickets
             mdm     <- correlateMasterAccounts
-          } yield s"stamped=$stamped lots=$lots legacy_lots=$legacyLots serials_linked=$linked periods=$periods stock_items=$stock exposure_rows=$exp price_lost_lines_fixed=$repriced order_placed_events=$placed recognition_events=$emitted opening_inv_event=$invOpen warranty_windows=$warr replacements_linked=$repl $mdm"
+            merged  <- applyAccountMatches
+          } yield s"stamped=$stamped lots=$lots legacy_lots=$legacyLots serials_linked=$linked periods=$periods stock_items=$stock exposure_rows=$exp price_lost_lines_fixed=$repriced order_placed_events=$placed recognition_events=$emitted opening_inv_event=$invOpen warranty_windows=$warr replacements_linked=$repl $mdm $merged"
       }
       .transact(xa)
 
@@ -327,5 +328,77 @@ final class IgnitionService[F[_]: Async](xa: Transactor[F]) {
       _    <- linkContacts
       ct   <- materializeContacts
     } yield s"mdm_company_exact=$ex mdm_new_parties=$np mdm_candidates=$cand contacts_materialized=$ct"
+  }
+
+  // Apply account matches → merge with perfect lineage (doc 02). Picks = committed model verdicts (confidence>=0.9,
+  // when present) UNION the deterministic heuristic (best candidate per company at trgm>=0.92 whose target has real
+  // order history and whose name isn't junk). The loser (a HubSpot-only party) folds into the survivor (the MRPeasy
+  // trading account): source-links + contacts re-point (tagged merged_from), the loser is preserved as 'merged',
+  // and an account_merge row records from→to. Idempotent: merged losers carry no pending candidates next run.
+  private def applyAccountMatches: ConnectionIO[String] = {
+    // Fully recomputable: reverse every prior AUTO merge (merged_by='ignition') and reset the candidates it
+    // decided, so applying from the current verdicts yields the authoritative state. Manual merges (a human in the
+    // review UI) carry a different merged_by and are never touched.
+    val revLinks =
+      sql"""UPDATE account_source_link a SET party_id = a.merged_from_party_id, merged_from_party_id = NULL
+            WHERE a.merged_from_party_id IS NOT NULL
+              AND EXISTS (SELECT 1 FROM account_merge m WHERE m.loser_party_id = a.merged_from_party_id AND m.merged_by = 'ignition')""".update.run
+    val revContacts =
+      sql"""UPDATE contact ct SET party_id = ct.merged_from_party_id, merged_from_party_id = NULL
+            WHERE ct.merged_from_party_id IS NOT NULL
+              AND EXISTS (SELECT 1 FROM account_merge m WHERE m.loser_party_id = ct.merged_from_party_id AND m.merged_by = 'ignition')""".update.run
+    val revParty =
+      sql"""UPDATE party SET status = 'active', merged_into_party_id = NULL
+            WHERE id IN (SELECT loser_party_id FROM account_merge WHERE merged_by = 'ignition')""".update.run
+    val revCand =
+      sql"""UPDATE account_link_candidate SET status = 'pending', reviewed_by = NULL, reviewed_at = NULL
+            WHERE reviewed_by = 'ignition'""".update.run
+    val revMerge = sql"""DELETE FROM account_merge WHERE merged_by = 'ignition'""".update.run
+    val buildPicks =
+      sql"""CREATE TEMP TABLE _merge_picks ON COMMIT DROP AS
+            SELECT DISTINCT ON (x.hs_id) x.hs_id, x.winner, x.method, x.confidence,
+                   (SELECT asl.party_id FROM account_source_link asl
+                    WHERE asl.source_system = 'hubspot_company' AND asl.source_id = x.hs_id LIMIT 1) AS loser
+            FROM (
+              SELECT v.hs_company_id AS hs_id, v.merge_into_party_id AS winner, 'model' AS method, v.confidence, 1 AS pri
+              FROM hubspot_match_verdict v WHERE v.merge_into_party_id IS NOT NULL AND v.confidence >= 0.9
+              UNION ALL
+              SELECT h.source_id, h.party_id, 'heuristic', h.score, 2 FROM (
+                SELECT DISTINCT ON (c.source_id) c.source_id, c.party_id, c.score
+                FROM account_link_candidate c
+                WHERE c.status = 'pending' AND c.score >= 0.92
+                  AND (SELECT count(*) FROM "order" o WHERE o.sold_to_party_id = c.party_id) > 0
+                  AND length(regexp_replace(lower(coalesce(c.source_name,'')), '[^a-z0-9]', '', 'g')) >= 3
+                  AND NOT EXISTS (SELECT 1 FROM hubspot_match_verdict v WHERE v.hs_company_id = c.source_id)
+                ORDER BY c.source_id, c.score DESC) h
+            ) x
+            ORDER BY x.hs_id, x.pri""".update.run
+    val prune     = sql"""DELETE FROM _merge_picks WHERE loser IS NULL OR loser = winner""".update.run
+    val moveLinks =
+      sql"""UPDATE account_source_link a SET party_id = p.winner, merged_from_party_id = p.loser
+            FROM _merge_picks p WHERE a.party_id = p.loser""".update.run
+    val moveContacts =
+      sql"""UPDATE contact ct SET party_id = p.winner, merged_from_party_id = p.loser
+            FROM _merge_picks p WHERE ct.party_id = p.loser""".update.run
+    val lineage =
+      sql"""INSERT INTO account_merge (loser_party_id, winner_party_id, method, confidence, reason, sources_moved, contacts_moved, merged_by)
+            SELECT p.loser, p.winner, p.method, p.confidence, 'auto-merge ('||p.method||')',
+                   (SELECT count(*) FROM account_source_link a WHERE a.merged_from_party_id = p.loser),
+                   (SELECT count(*) FROM contact ct WHERE ct.merged_from_party_id = p.loser), 'ignition'
+            FROM _merge_picks p""".update.run
+    val markLosers =
+      sql"""UPDATE party SET status = 'merged', merged_into_party_id = p.winner
+            FROM _merge_picks p WHERE party.id = p.loser""".update.run
+    val acceptChosen =
+      sql"""UPDATE account_link_candidate c SET status = 'accepted', reviewed_by = 'ignition', reviewed_at = now()
+            FROM _merge_picks p WHERE c.source_id = p.hs_id AND c.party_id = p.winner AND c.status = 'pending'""".update.run
+    val supersede =
+      sql"""UPDATE account_link_candidate c SET status = 'superseded'
+            FROM _merge_picks p WHERE c.source_id = p.hs_id AND c.party_id <> p.winner AND c.status = 'pending'""".update.run
+    val count = sql"SELECT count(*) FROM _merge_picks".query[Int].unique
+    revLinks *> revContacts *> revParty *> revCand *> revMerge *>
+      buildPicks *> prune *> count.flatMap(n =>
+        moveLinks *> moveContacts *> lineage *> markLosers *> acceptChosen *> supersede.as(s"account_merges=$n")
+      )
   }
 }
