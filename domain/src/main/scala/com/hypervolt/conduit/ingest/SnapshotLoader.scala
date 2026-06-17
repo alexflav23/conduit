@@ -51,14 +51,32 @@ final class SnapshotLoader[F[_]: Async](xa: Transactor[F]) {
       lines =>
         val rows = lines.flatMap(l => parse(l).toOption)
         SnapshotLoader.handlers.get(source) match {
-          case None          => 0.pure[F] // unknown dataset families are skipped, never an error
-          case Some(handler) => rows.traverse(handler(dataset, _)).map(_.sum).transact(xa)
+          case None => 0.pure[F] // unknown dataset families are skipped, never an error
+          // Record provenance (sync_state) in the SAME tx as the load: what dataset, how many rows seen/written,
+          // when — so the Auditability Center can show exactly what the git snapshot put in the DB (doc 26 §3a / C7).
+          case Some(handler) =>
+            rows
+              .traverse(handler(dataset, _))
+              .map(_.sum)
+              .flatMap(written => SnapshotLoader.recordSync(source, dataset, rows.size.toLong, written.toLong).as(written))
+              .transact(xa)
         }
     }
   }
 }
 
 object SnapshotLoader {
+
+  // Provenance for one dataset load (C7): upsert the sync_state summary — rows seen in the file, rows written
+  // this run, when, status. SET (not accumulate) so it reflects the latest load; a re-run shows written=0 (all
+  // idempotent no-ops), which is the honest record that nothing new landed.
+  private[ingest] def recordSync(source: String, dataset: String, seen: Long, written: Long): ConnectionIO[Int] =
+    sql"""INSERT INTO sync_state (source, dataset, last_run_at, last_status, records_seen, records_written,
+            consecutive_failures, last_error, updated_at)
+          VALUES ($source, $dataset, now(), 'ok', $seen, $written, 0, NULL, now())
+          ON CONFLICT (source, dataset) DO UPDATE SET
+            last_run_at = now(), last_status = 'ok', records_seen = $seen, records_written = $written,
+            consecutive_failures = 0, last_error = NULL, updated_at = now()""".update.run
 
   // dataset family → (dataset name, one parsed NDJSON row) → rows written (0 on conflict = idempotent re-load).
   private[ingest] val handlers: Map[String, (String, Json) => ConnectionIO[Int]] = Map(
