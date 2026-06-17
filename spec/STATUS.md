@@ -27,6 +27,23 @@ Companion to [`spec/07`](./07_BUILD_PLAN.md) (the acceptance source of truth) an
 > clean boot regenerates lots → links → recognition automatically. No remaining uncosted dispatched
 > serials.
 
+> **Update 2026-06-18 — Phase C (C4–C7) closed + Conduit brand adopted.**
+> - **C4 Pricing**: already seeded/verified (22 agreements, 198 rules, governed quoting).
+> - **C5 Documents (M13-Docs)**: stood up the WORM pipeline — MinIO local S3 (compose) + gapless
+>   number series (`HV-UK-INV`/`HV-UK-CN`, seeded in ignition) + a line-VAT backfill (the import
+>   dropped `order_line.vat_amount`, breaking the Σ-lines==invoice conservation guard; single-line
+>   case fixed exactly) + a self-draining consumer loop (50/20s). Invoices generate with gapless
+>   numbers + MinIO PDFs + content hashes; the ~19.5k single-line book drains in ~2h. **Tail**:
+>   multi-line VAT needs largest-remainder allocation (~4.4k orders).
+> - **C6 H6Q (M11)**: forecast-ownership seed (37 real ≥£100k accounts, owned by the operator) +
+>   a scheduled consumer opener → cycle **2026-W25** open with 37 outstanding capture slots; the
+>   bottom-up spine is exercised (`/h6q/cycles`, `/h6q/my-forecasts`).
+> - **C7 Provenance**: `SnapshotLoader` records `sync_state` per dataset load (22 datasets
+>   backfilled — contacts 154,317 … cost 25). The orphan table now has a writer.
+> - **Brand**: adopted the Conduit "Articulate" junction mark + purple Iris favicon/app-icon across
+>   the desk (rail, sign-in, browser tab) from the Claude Design `identity/` project.
+> All replayable via ignition/compose.
+
 ## TL;DR
 
 **The code is built and CI-proven across essentially every milestone (M0–M13b + M-Pricing +
