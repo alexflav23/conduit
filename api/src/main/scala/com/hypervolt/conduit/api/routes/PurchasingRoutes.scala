@@ -8,12 +8,14 @@ import com.hypervolt.conduit.api.auth.ApiError
 import com.hypervolt.conduit.api.auth.AuthService
 import com.hypervolt.conduit.api.auth.Secured
 import com.hypervolt.conduit.inventory.AllocationService
+import com.hypervolt.conduit.purchasing.PurchasingReadRepo
 import com.hypervolt.conduit.purchasing.PurchasingService
 import com.hypervolt.conduit.purchasing.ReceiveLine
 import io.circe.Json
 import io.circe.syntax._
 import java.time.LocalDate
 import java.util.UUID
+import doobie.implicits._
 import doobie.util.transactor.Transactor
 import org.http4s.HttpRoutes
 import scala.util.Try
@@ -144,6 +146,75 @@ final class PurchasingRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F
           }
       })
 
+  // ----- read: the PO book -----
+  private def optUuidS(s: Option[String]): Option[UUID] = s.flatMap(v => Try(UUID.fromString(v)).toOption)
+
+  private val listPos =
+    base.get
+      .in("api" / "v1" / "purchasing" / "orders")
+      .in(query[Option[String]]("entity_id"))
+      .in(query[Option[String]]("status"))
+      .out(jsonBody[Json])
+      .serverLogic(p => {
+        case (entityF, statusF) =>
+          forbid(p, Action.View, "purchase_order") match {
+            case Some(e) => Async[F].pure(Left(e))
+            case None =>
+              PurchasingReadRepo
+                .listPos(optUuidS(entityF), statusF)
+                .transact(xa)
+                .map(rows =>
+                  Right(
+                    Json.obj(
+                      "rows"        -> Json.fromValues(rows.map(Projection.projectFor(p, "purchase_order", _))),
+                      "can_receive" -> PolicyEngine.hasPermission(p, Action.Edit, "purchase_order").asJson
+                    )
+                  )
+                )
+          }
+      })
+
+  private val poDetail =
+    base.get
+      .in("api" / "v1" / "purchasing" / "orders" / path[String]("id"))
+      .out(jsonBody[Json])
+      .serverLogic(p =>
+        idS =>
+          forbid(p, Action.View, "purchase_order") match {
+            case Some(e) => Async[F].pure(Left(e))
+            case None =>
+              uuid(idS) match {
+                case Left(e) => Async[F].pure(Left(e))
+                case Right(id) =>
+                  PurchasingReadRepo
+                    .poDetail(id)
+                    .transact(xa)
+                    .map {
+                      case Some(row) => Right(Projection.projectFor(p, "purchase_order", row))
+                      case None      => Left(err(StatusCode.NotFound, "not_found", s"no PO $idS"))
+                    }
+              }
+          }
+      )
+
+  private val stockOps =
+    base.get
+      .in("api" / "v1" / "purchasing" / "stock-ops")
+      .in(query[Option[String]]("entity_id"))
+      .out(jsonBody[Json])
+      .serverLogic(p => {
+        case entityF =>
+          forbid(p, Action.View, "purchase_order") match {
+            case Some(e) => Async[F].pure(Left(e))
+            case None =>
+              (PurchasingReadRepo.stockOps(optUuidS(entityF), 200, 0), PurchasingReadRepo.stockOpsCount(optUuidS(entityF)))
+                .tupled
+                .transact(xa)
+                .map { case (rows, total) => Right(Json.obj("rows" -> Json.fromValues(rows), "total" -> total.asJson)) }
+          }
+      })
+
   val routes: HttpRoutes[F] =
-    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(List(createPo, addLine, receive))
+    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F])
+      .toRoutes(List(listPos, poDetail, stockOps, createPo, addLine, receive))
 }

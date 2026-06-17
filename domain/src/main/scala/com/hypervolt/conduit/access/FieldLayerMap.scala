@@ -31,6 +31,12 @@ object FieldLayerMap {
     // cost / margin
     ("lot_batch", "landed_unit_cost") -> DataLayer.Profitability,
     ("lot_batch", "unit_cost_usd")    -> DataLayer.Profitability,
+    // inventory read surface — cost detail rides profitability; units/status are commercial (the default)
+    ("stock_item", "landed_unit_cost") -> DataLayer.Profitability,
+    ("stock_item", "unit_cost_usd")    -> DataLayer.Profitability,
+    ("stock_item", "shipping_alloc")   -> DataLayer.Profitability,
+    ("stock_item", "duty_alloc")       -> DataLayer.Profitability,
+    ("stock_item", "fx_rate")          -> DataLayer.Profitability,
     // returns / RMA — refund/credit money is commercial; the unit's landed cost is profitability (doc 09 §J)
     ("rma", "refund_amount")    -> DataLayer.Commercial,
     ("rma", "unit_landed_cost") -> DataLayer.Profitability,

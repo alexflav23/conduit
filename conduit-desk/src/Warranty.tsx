@@ -105,8 +105,8 @@ export function Warranty(_props: any) {
                 {!trend.isLoading && months.length === 0 && <EmptyRow cols={1}>No trend data.</EmptyRow>}
                 <div style={{ display: 'flex', alignItems: 'flex-end', gap: 3, height: 120, marginTop: 8 }}>
                   {months.map(([m, n]) => (
-                    <div key={m} title={`${m}: ${n}`} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
-                      <div style={{ width: '100%', height: `${Math.round((n / max) * 100)}%`, minHeight: 2, background: 'var(--accent)', borderRadius: '3px 3px 0 0' }} />
+                    <div key={m} title={`${m}: ${n}`} style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', alignItems: 'center', gap: 4, height: '100%' }}>
+                      <div style={{ width: '100%', height: `${Math.max(2, Math.round((n / max) * 96))}px`, background: 'var(--accent)', borderRadius: '3px 3px 0 0' }} />
                       <span className="dim" style={{ fontSize: 9, transform: 'rotate(-60deg)', whiteSpace: 'nowrap', transformOrigin: 'center' }}>{m.slice(2)}</span>
                     </div>
                   ))}

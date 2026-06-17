@@ -149,7 +149,11 @@ object Main extends IOApp.Simple {
               freeShipments.rebuild.attempt.void *> IO.sleep(6.hours)).foreverM
           val forecastCycle = new com.hypervolt.conduit.forecast.ForecastCycle[IO](xa)
           val forecastLoop: IO[Unit] =
-            (IO(java.time.LocalDate.now()).flatMap(forecastCycle.runOnce).attempt.void *> IO.sleep(6.hours)).foreverM
+            (IO(java.time.LocalDate.now())
+              .flatMap(forecastCycle.runOnce)
+              .flatMap(_ => logger.info("forecast-cycle: rolling-origin run complete"))
+              .handleErrorWith(e => logger.error(e)(s"forecast-cycle failed: ${e.getMessage}")) *>
+              IO.sleep(6.hours)).foreverM
           PulsarEventPublisher.create[IO](pulsar).flatMap { publisher =>
             val relay                                           = new OutboxRelay[IO](xa, publisher)
             val relayLoop: IO[Unit]                             = (relay.runOnce() *> IO.sleep(1.second)).foreverM
