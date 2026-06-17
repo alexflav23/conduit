@@ -488,10 +488,27 @@ final class IgnitionService[F[_]: Async](xa: Transactor[F]) {
             JOIN party p ON lower(p.external_refs->>'owner_email') = lower(r.owner_email)
             WHERE r.keycloak_user_id IS NOT NULL
             ON CONFLICT (source_system, source_id) DO NOTHING""".update.run
+    // Reconcile: a HubSpot consumer contact whose email matches an owner account IS that owner — attach the
+    // contact (marketing identity) to the owner master account, unifying the two populations by email.
+    val attachConsumers =
+      sql"""INSERT INTO contact (party_id, first_name, last_name, role, email, phone, hs_contact_id)
+            SELECT DISTINCT ON (r.contact_id) p.id, r.first_name, r.last_name, r.job_title, nullif(r.email,''), r.phone, r.contact_id
+            FROM hubspot_contact_raw r
+            JOIN party p ON lower(p.external_refs->>'owner_email') = lower(r.email)
+            WHERE r.company_id IS NULL AND r.email IS NOT NULL
+            ON CONFLICT (hs_contact_id) WHERE hs_contact_id IS NOT NULL DO NOTHING""".update.run
+    val linkConsumerSources =
+      sql"""INSERT INTO account_source_link (party_id, source_system, source_id, source_name, match_method, confidence, status)
+            SELECT ct.party_id, 'hubspot_contact', ct.hs_contact_id,
+                   btrim(coalesce(ct.first_name,'') || ' ' || coalesce(ct.last_name,'')), 'exact', 1.000, 'linked'
+            FROM contact ct WHERE ct.hs_contact_id IS NOT NULL
+            ON CONFLICT (source_system, source_id) DO NOTHING""".update.run
     for {
       o  <- createOwners
       ls <- linkSerialOwners
       _  <- linkOwnerSources
-    } yield s"owner_accounts=$o serials_owner_linked=$ls"
+      cc <- attachConsumers
+      _  <- linkConsumerSources
+    } yield s"owner_accounts=$o serials_owner_linked=$ls consumer_contacts_unified=$cc"
   }
 }
