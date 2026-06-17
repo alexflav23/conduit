@@ -47,7 +47,8 @@ final class IgnitionService[F[_]: Async](xa: Transactor[F]) {
             merged  <- applyAccountMatches
             branches <- detectBranches
             owners  <- materializeOwners
-          } yield s"stamped=$stamped lots=$lots legacy_lots=$legacyLots serials_linked=$linked periods=$periods stock_items=$stock exposure_rows=$exp price_lost_lines_fixed=$repriced order_placed_events=$placed recognition_events=$emitted opening_inv_event=$invOpen warranty_windows=$warr replacements_linked=$repl $mdm $merged branches_linked=$branches $owners"
+            soldVia <- phonePreAssociate
+          } yield s"stamped=$stamped lots=$lots legacy_lots=$legacyLots serials_linked=$linked periods=$periods stock_items=$stock exposure_rows=$exp price_lost_lines_fixed=$repriced order_placed_events=$placed recognition_events=$emitted opening_inv_event=$invOpen warranty_windows=$warr replacements_linked=$repl $mdm $merged branches_linked=$branches $owners customer_installer_phone_links=$soldVia"
       }
       .transact(xa)
 
@@ -511,4 +512,36 @@ final class IgnitionService[F[_]: Async](xa: Transactor[F]) {
       _  <- linkConsumerSources
     } yield s"owner_accounts=$o serials_owner_linked=$ls consumer_contacts_unified=$cc"
   }
+
+  // Phone pre-association (doc 02 §C): a phone number is a person-level identity key. Where email did NOT already
+  // unify a consumer with the installer/wholesaler who sold or fitted their charger, an exact phone match does —
+  // bridging the materialised owner to the org that carries the same number on one of its contacts. Deliberately
+  // conservative: ONLY a phone held by exactly two non-merged parties (so installer switchboards, which fan out
+  // across many staff/customer contacts, are excluded), ONLY consumer↔organisation, and NEVER overwrites an
+  // existing attribution. Stamps the installer onto the consumer's external_refs as a soft, reviewable link —
+  // it does not merge the records. Idempotent.
+  private def phonePreAssociate: ConnectionIO[Int] =
+    sql"""WITH ph AS (
+            SELECT regexp_replace(c.phone, '[^0-9]', '', 'g') AS n, c.party_id
+            FROM contact c
+            WHERE c.phone IS NOT NULL AND length(regexp_replace(c.phone, '[^0-9]', '', 'g')) >= 7
+            GROUP BY 1, 2),
+          two AS (SELECT n FROM ph GROUP BY n HAVING count(*) = 2),
+          sides AS (
+            SELECT ph.n, p.id, p.display_name, p.is_organization, p.party_type
+            FROM ph JOIN two USING (n)
+            JOIN party p ON p.id = ph.party_id AND p.status <> 'merged'),
+          bridge AS (
+            SELECT DISTINCT ON (ind.id) ind.id AS consumer_id, org.id AS org_id, org.display_name AS org_name
+            FROM sides ind
+            JOIN sides org ON org.n = ind.n AND org.id <> ind.id
+            WHERE ind.party_type = 'individual' AND org.is_organization
+            ORDER BY ind.id, org.id)
+          UPDATE party SET external_refs = COALESCE(external_refs, '{}'::jsonb)
+                 || jsonb_build_object('sold_via_party_id', bridge.org_id::text,
+                                       'sold_via_name', bridge.org_name,
+                                       'sold_via_match', 'phone')
+          FROM bridge
+          WHERE party.id = bridge.consumer_id
+            AND NOT jsonb_exists(COALESCE(party.external_refs, '{}'::jsonb), 'sold_via_party_id')""".update.run
 }

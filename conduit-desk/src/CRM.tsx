@@ -791,6 +791,7 @@ interface AcctCharger {
 interface AccountDetail {
   id: string; name: string; segment?: string | null; type?: string | null;
   parent?: { id: string; name: string } | null;
+  sold_via?: { id: string; name: string; match: string } | null;
   sources?: AcctSource[]; contacts?: AcctContact[]; branches?: AcctBranch[]; orders?: AcctOrder[]; chargers?: AcctCharger[];
 }
 
@@ -865,6 +866,11 @@ function AccountsView({ list, detail, seg, setSeg, q, setQ, page, setPage, pageS
                 {d.segment && <Chip s="neutral">{d.segment}</Chip>}
                 {d.type && <Chip s="neutral">{d.type}</Chip>}
                 {d.parent && <Chip s="warn">branch of {d.parent.name}</Chip>}
+                {d.sold_via && (
+                  <span title={`Associated by ${d.sold_via.match} match`} style={{ cursor: 'pointer' }} onClick={() => setSel(d.sold_via!.id)}>
+                    <Chip s="accent">installer: {d.sold_via.name}</Chip>
+                  </span>
+                )}
               </div>
 
               <BranchAssign account={d} onChanged={() => { detail.refetch(); list.refetch(); }} toast={toast} />

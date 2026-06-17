@@ -256,6 +256,9 @@ object CrmReadRepo {
             'type', p.party_type, 'external_refs', p.external_refs,
             'parent', (SELECT jsonb_build_object('id', pp.id::text, 'name', regexp_replace(pp.display_name,'^MRP:\s*',''))
                        FROM party pp WHERE pp.id = p.parent_party_id),
+            'sold_via', (SELECT jsonb_build_object('id', sv.id::text, 'name', regexp_replace(sv.display_name,'^MRP:\s*',''),
+                          'match', p.external_refs->>'sold_via_match')
+                         FROM party sv WHERE sv.id = (p.external_refs->>'sold_via_party_id')::uuid AND sv.status <> 'merged'),
             'sources', (SELECT COALESCE(jsonb_agg(jsonb_build_object('system', a.source_system, 'source_id', a.source_id,
                           'name', a.source_name, 'method', a.match_method, 'confidence', a.confidence) ORDER BY a.source_system), '[]'::jsonb)
                         FROM account_source_link a WHERE a.party_id = p.id),
