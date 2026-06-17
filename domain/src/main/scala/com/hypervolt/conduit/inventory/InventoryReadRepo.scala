@@ -88,6 +88,8 @@ object InventoryReadRepo {
             'serial', jsonb_build_object(
               'sn', s.serial_no, 'serial', s.serial_no, 'sku_label', pv.sku, 'location', loc.name,
               'status', s.status, 'order', o.order_no, 'customer', party.display_name,
+              'owner', (SELECT regexp_replace(op.display_name,'^MRP:\s*','') FROM party op WHERE op.id = s.owner_party_id),
+              'owner_email', (SELECT op.external_refs->>'owner_email' FROM party op WHERE op.id = s.owner_party_id),
               'dispatched_at', COALESCE(d.delivered_at, d.date::timestamptz),
               'replaces_serial_no', (SELECT r.serial_no FROM serial_unit r WHERE r.id = s.replaces_serial_unit_id),
               'replaced_by', (SELECT jsonb_agg(c.serial_no) FROM serial_unit c WHERE c.replaces_serial_unit_id = s.id)),

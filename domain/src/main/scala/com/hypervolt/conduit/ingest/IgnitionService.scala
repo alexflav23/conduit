@@ -46,7 +46,8 @@ final class IgnitionService[F[_]: Async](xa: Transactor[F]) {
             mdm     <- correlateMasterAccounts
             merged  <- applyAccountMatches
             branches <- detectBranches
-          } yield s"stamped=$stamped lots=$lots legacy_lots=$legacyLots serials_linked=$linked periods=$periods stock_items=$stock exposure_rows=$exp price_lost_lines_fixed=$repriced order_placed_events=$placed recognition_events=$emitted opening_inv_event=$invOpen warranty_windows=$warr replacements_linked=$repl $mdm $merged branches_linked=$branches"
+            owners  <- materializeOwners
+          } yield s"stamped=$stamped lots=$lots legacy_lots=$legacyLots serials_linked=$linked periods=$periods stock_items=$stock exposure_rows=$exp price_lost_lines_fixed=$repriced order_placed_events=$placed recognition_events=$emitted opening_inv_event=$invOpen warranty_windows=$warr replacements_linked=$repl $mdm $merged branches_linked=$branches $owners"
       }
       .transact(xa)
 
@@ -461,4 +462,36 @@ final class IgnitionService[F[_]: Async](xa: Transactor[F]) {
             WHERE bc.parent_name IS NOT NULL AND length(bc.parent_name) >= 2
             ORDER BY bc.id, length(p.display_name) ASC)
           UPDATE party SET parent_party_id = pairs.parent FROM pairs WHERE party.id = pairs.branch""".update.run
+
+  // Serial → owner (doc 07 M7): from the placement registry (placement_owner_raw), materialise an INDIVIDUAL master
+  // account per owner email (the consumer who owns the charger), then stamp serial_unit.owner_party_id so every
+  // activated charger traces to its owner. Idempotent: one party per email (unique index), serial link re-derives.
+  private def materializeOwners: ConnectionIO[String] = {
+    val createOwners =
+      sql"""INSERT INTO party (display_name, party_type, is_organization, segment, market_id, external_refs)
+            SELECT DISTINCT ON (lower(r.owner_email)) COALESCE(NULLIF(r.owner_name,''), r.owner_email), 'individual',
+                   false, 'consumer', (SELECT id FROM market WHERE code = 'UK'),
+                   jsonb_build_object('owner_email', lower(r.owner_email), 'keycloak', r.keycloak_user_id)
+            FROM placement_owner_raw r
+            WHERE r.owner_email IS NOT NULL
+              AND NOT EXISTS (SELECT 1 FROM party p WHERE lower(p.external_refs->>'owner_email') = lower(r.owner_email))
+            ORDER BY lower(r.owner_email)""".update.run
+    val linkSerialOwners =
+      sql"""UPDATE serial_unit s SET owner_party_id = p.id
+            FROM placement_owner_raw r
+            JOIN party p ON lower(p.external_refs->>'owner_email') = lower(r.owner_email)
+            WHERE s.serial_no = r.serial AND r.owner_email IS NOT NULL AND s.owner_party_id IS DISTINCT FROM p.id""".update.run
+    val linkOwnerSources =
+      sql"""INSERT INTO account_source_link (party_id, source_system, source_id, source_name, match_method, confidence, status)
+            SELECT DISTINCT ON (r.keycloak_user_id) p.id, 'placement_owner', r.keycloak_user_id, r.owner_email, 'exact', 1.000, 'linked'
+            FROM placement_owner_raw r
+            JOIN party p ON lower(p.external_refs->>'owner_email') = lower(r.owner_email)
+            WHERE r.keycloak_user_id IS NOT NULL
+            ON CONFLICT (source_system, source_id) DO NOTHING""".update.run
+    for {
+      o  <- createOwners
+      ls <- linkSerialOwners
+      _  <- linkOwnerSources
+    } yield s"owner_accounts=$o serials_owner_linked=$ls"
+  }
 }

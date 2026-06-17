@@ -116,7 +116,7 @@ function ChainNode({ label, title, sub, money, tone, last }: {
 }
 
 // ============================================================ SERIAL → GENEALOGY
-interface SerialNode { sn?: string; serial?: string; sku_label?: string; skuLabel?: string; location?: string; status?: string; order?: string; customer?: string; dispatched_at?: string; dispatchedAt?: string }
+interface SerialNode { sn?: string; serial?: string; sku_label?: string; skuLabel?: string; location?: string; status?: string; order?: string; customer?: string; dispatched_at?: string; dispatchedAt?: string; owner?: string; owner_email?: string }
 interface BatchNode { id?: string; received?: string; cm?: string; po?: string; location_name?: string; locationName?: string; landed_unit_cost?: number | string; unit_cost?: number | string; freight_per_unit?: number | string; duty_per_unit?: number | string; currency?: string }
 interface Activation { activated_at?: string; installer?: string }
 interface TimelineEvent { at?: string; event?: string; origin?: string }
@@ -214,13 +214,20 @@ function SerialGenealogy({ ctx, role, hasProfit }: { ctx: Ctx; role: Role; hasPr
             )}
             {d.activation ? (
               <ChainNode
-                label="Activation" tone="var(--ok)" last
+                label="Activation" tone="var(--ok)" last={!d.serial?.owner}
                 title={'Live · ' + (d.activation.activated_at || '—')}
                 sub={['installer ' + (d.activation.installer || '—'), 'warranty clock started here'].join(' · ')}
               />
             ) : (
-              <ChainNode label="Activation" tone="var(--faint)" last
+              <ChainNode label="Activation" tone="var(--faint)" last={!d.serial?.owner}
                 title="Not activated" sub="dispatched (sell-in) but no sell-through signal yet" />
+            )}
+            {d.serial?.owner && (
+              <ChainNode
+                label="Owner (end customer)" tone="var(--accent-bright)" last
+                title={d.serial.owner}
+                sub={[d.serial.owner_email, 'from the placement registry'].filter(Boolean).join(' · ')}
+              />
             )}
           </Card>
 

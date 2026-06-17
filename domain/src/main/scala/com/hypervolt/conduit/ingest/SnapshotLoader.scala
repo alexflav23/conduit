@@ -69,6 +69,7 @@ object SnapshotLoader {
     "h6q"          -> h6q,
     "fx"           -> fx,
     "cost"         -> cost,
+    "placements"   -> placements,
     "pricing"      -> pricing
   )
 
@@ -258,6 +259,24 @@ object SnapshotLoader {
               VALUES ($id, ${s("name")}, ${s("domain")}, ${s("industry")}, ${s("country")})
               ON CONFLICT (company_id) DO UPDATE SET
                 name = EXCLUDED.name, domain = EXCLUDED.domain, industry = EXCLUDED.industry, country = EXCLUDED.country""".update.run
+    }
+  }
+
+  // ingest/placements/serial_owner.ndjson → placement_owner_raw staging (serial → owner email/name). The
+  // correlation step materializes an individual master account per owner and stamps serial_unit.owner_party_id.
+  private def placements(@scala.annotation.unused dataset: String, row: Json): ConnectionIO[Int] = {
+    val c = row.hcursor
+    c.get[String]("serial").toOption match {
+      case None => 0.pure[ConnectionIO]
+      case Some(serial) =>
+        val s = (k: String) => c.get[String](k).toOption.filter(_.nonEmpty)
+        sql"""INSERT INTO placement_owner_raw (serial, device_id, placement_id, keycloak_user_id, owner_email, owner_name, placement_name, country)
+              VALUES ($serial, ${s("device_id")}, ${s("placement_id")}, ${s("keycloak_user_id")}, ${s("owner_email")},
+                      ${s("owner_name")}, ${s("placement_name")}, ${s("country")})
+              ON CONFLICT (serial) DO UPDATE SET
+                device_id = EXCLUDED.device_id, placement_id = EXCLUDED.placement_id, keycloak_user_id = EXCLUDED.keycloak_user_id,
+                owner_email = EXCLUDED.owner_email, owner_name = EXCLUDED.owner_name, placement_name = EXCLUDED.placement_name,
+                country = EXCLUDED.country""".update.run
     }
   }
 
