@@ -4,6 +4,7 @@ import cats.syntax.all._
 import doobie.Fragments
 import doobie.implicits._
 import doobie.postgres.implicits._
+import doobie.postgres.circe.jsonb.implicits._
 import io.circe.Json
 import io.circe.syntax._
 import java.time.Instant
@@ -205,4 +206,54 @@ object CrmReadRepo {
         case (segments, pipelines) =>
           Json.obj("segments" -> Json.fromValues(segments), "pipelines" -> Json.fromValues(pipelines))
       }
+
+  // ---- Master accounts (doc 02 golden record): the Conduit entity, with MRPeasy + HubSpot + contacts as parts ----
+
+  private val nameExpr = fr"regexp_replace(p.display_name, '^MRP:\s*', '')"
+
+  private def accountWhere(segment: Option[String], q: Option[String]): doobie.Fragment =
+    fr"WHERE " ++ List(
+      Some(fr"p.parent_party_id IS NULL"),
+      segment.map(s => fr"p.segment = $s"),
+      q.map(t => fr"p.display_name ILIKE ${"%" + t + "%"}")
+    ).flatten.reduce(_ ++ fr" AND " ++ _)
+
+  def listAccounts(segment: Option[String], q: Option[String], limit: Int, offset: Int): doobie.ConnectionIO[List[Json]] =
+    (fr"""SELECT jsonb_build_object(
+            'id', p.id::text, 'name', """ ++ nameExpr ++ fr""", 'segment', p.segment, 'type', p.party_type,
+            'mrpeasy', (SELECT count(*) FROM account_source_link a WHERE a.party_id = p.id AND a.source_system = 'mrpeasy'),
+            'hubspot_companies', (SELECT count(*) FROM account_source_link a WHERE a.party_id = p.id AND a.source_system = 'hubspot_company'),
+            'contacts', (SELECT count(*) FROM contact c WHERE c.party_id = p.id),
+            'branches', (SELECT count(*) FROM party b WHERE b.parent_party_id = p.id),
+            'orders', (SELECT count(*) FROM "order" o WHERE o.sold_to_party_id = p.id),
+            'order_value', (SELECT COALESCE(sum(total_inc_vat),0) FROM "order" o WHERE o.sold_to_party_id = p.id))
+          FROM party p """
+      ++ accountWhere(segment, q)
+      ++ fr"""ORDER BY (SELECT count(*) FROM "order" o WHERE o.sold_to_party_id = p.id) DESC, p.display_name LIMIT $limit OFFSET $offset""")
+      .query[Json]
+      .to[List]
+
+  def countAccounts(segment: Option[String], q: Option[String]): doobie.ConnectionIO[Long] =
+    (fr"SELECT count(*) FROM party p " ++ accountWhere(segment, q)).query[Long].unique
+
+  def accountDetail(id: UUID): doobie.ConnectionIO[Option[Json]] =
+    sql"""SELECT jsonb_build_object(
+            'id', p.id::text, 'name', regexp_replace(p.display_name, '^MRP:\s*', ''), 'segment', p.segment,
+            'type', p.party_type, 'external_refs', p.external_refs,
+            'parent', (SELECT jsonb_build_object('id', pp.id::text, 'name', regexp_replace(pp.display_name,'^MRP:\s*',''))
+                       FROM party pp WHERE pp.id = p.parent_party_id),
+            'sources', (SELECT COALESCE(jsonb_agg(jsonb_build_object('system', a.source_system, 'source_id', a.source_id,
+                          'name', a.source_name, 'method', a.match_method, 'confidence', a.confidence) ORDER BY a.source_system), '[]'::jsonb)
+                        FROM account_source_link a WHERE a.party_id = p.id),
+            'contacts', (SELECT COALESCE(jsonb_agg(jsonb_build_object('name', btrim(coalesce(c.first_name,'')||' '||coalesce(c.last_name,'')),
+                          'email', c.email::text, 'phone', c.phone, 'role', c.role) ORDER BY c.is_primary DESC, c.last_name), '[]'::jsonb)
+                         FROM contact c WHERE c.party_id = p.id),
+            'branches', (SELECT COALESCE(jsonb_agg(jsonb_build_object('id', b.id::text, 'name', regexp_replace(b.display_name,'^MRP:\s*',''),
+                          'orders', (SELECT count(*) FROM "order" o WHERE o.sold_to_party_id = b.id)) ORDER BY b.display_name), '[]'::jsonb)
+                         FROM party b WHERE b.parent_party_id = p.id),
+            'orders', (SELECT COALESCE(jsonb_agg(t.o ORDER BY t.d DESC), '[]'::jsonb) FROM (
+                         SELECT jsonb_build_object('order_no', o.order_no, 'date', o.created_at::date::text, 'total', o.total_inc_vat) AS o,
+                                o.created_at AS d
+                         FROM "order" o WHERE o.sold_to_party_id = p.id ORDER BY o.created_at DESC LIMIT 25) t))
+          FROM party p WHERE p.id = $id""".query[Json].option
 }

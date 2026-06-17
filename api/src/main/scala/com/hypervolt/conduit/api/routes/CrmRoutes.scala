@@ -126,6 +126,51 @@ final class CrmRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
           else CrmReadRepo.dealsSummary.transact(xa).map(Right(_))
       )
 
+  // Master accounts: the Conduit entity (golden record), with MRPeasy + HubSpot + contacts + branches as parts.
+  private val accounts =
+    base.get
+      .in("api" / "v1" / "crm" / "accounts")
+      .in(query[Option[String]]("segment"))
+      .in(query[Option[String]]("q"))
+      .in(query[Option[Int]]("limit"))
+      .in(query[Option[Int]]("offset"))
+      .out(jsonBody[Json])
+      .serverLogic(p => {
+        case (segment, q, limitF, offsetF) =>
+          if (!gate(p)) Async[F].pure(Left(denied))
+          else {
+            val lim = limitF.getOrElse(50).min(200).max(1)
+            val off = offsetF.getOrElse(0).max(0)
+            val ne  = (s: Option[String]) => s.filter(_.nonEmpty)
+            (CrmReadRepo.listAccounts(ne(segment), ne(q), lim, off), CrmReadRepo.countAccounts(ne(segment), ne(q))).tupled
+              .transact(xa)
+              .map {
+                case (rows, total) =>
+                  Right(Json.obj("rows" -> Json.fromValues(rows), "total" -> total.asJson, "limit" -> lim.asJson, "offset" -> off.asJson))
+              }
+          }
+      })
+
+  private val accountDetail =
+    base.get
+      .in("api" / "v1" / "crm" / "accounts" / path[String]("id"))
+      .out(jsonBody[Json])
+      .serverLogic(p =>
+        idS =>
+          if (!gate(p)) Async[F].pure(Left(denied))
+          else
+            optUuid(Some(idS)) match {
+              case Left(e)         => Async[F].pure(Left(e))
+              case Right(None)     => Async[F].pure(Left(err(StatusCode.BadRequest, "bad_request", "invalid id")))
+              case Right(Some(id)) =>
+                CrmReadRepo.accountDetail(id).transact(xa).map {
+                  case Some(j) => Right(j)
+                  case None    => Left(err(StatusCode.NotFound, "not_found", s"no account $idS"))
+                }
+            }
+      )
+
   val routes: HttpRoutes[F] =
-    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(List(parties, pipeline, dealsSummary, deals))
+    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F])
+      .toRoutes(List(accounts, accountDetail, parties, pipeline, dealsSummary, deals))
 }

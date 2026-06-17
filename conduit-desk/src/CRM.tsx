@@ -113,7 +113,11 @@ export function CRM({ role, ctx, toast }: { role: any; ctx: any; toast: (m: stri
   const hasPii = layers.indexOf('pii') >= 0;
   const market = c.market ? marketId(c.market) : '';
 
-  const [tab, setTab] = useState<'parties' | 'pipeline' | 'deals'>('parties');
+  const [tab, setTab] = useState<'accounts' | 'parties' | 'pipeline' | 'deals'>('accounts');
+  const [acctSeg, setAcctSeg] = useState('all');
+  const [acctQ, setAcctQ] = useState('');
+  const [acctPage, setAcctPage] = useState(0);
+  const [acctSel, setAcctSel] = useState<string | null>(null);
   const [dealPipeline, setDealPipeline] = useState('all');
   const [dealStatus, setDealStatus] = useState('all');
   const [dealSort, setDealSort] = useState('created');
@@ -136,6 +140,22 @@ export function CRM({ role, ctx, toast }: { role: any; ctx: any; toast: (m: stri
   const parties = useApi<PartyList | Party[]>(
     ['crm', 'parties', c.entity, market, sector],
     `/api/v1/crm/parties${partyQ.toString() ? `?${partyQ}` : ''}`,
+  );
+
+  // The Conduit master accounts (golden records) — MRPeasy + HubSpot + contacts roll up into one entity.
+  const ACCT_PAGE = 50;
+  const acctQs = new URLSearchParams({ limit: String(ACCT_PAGE), offset: String(acctPage * ACCT_PAGE) });
+  if (acctSeg !== 'all') acctQs.set('segment', acctSeg);
+  if (acctQ.trim()) acctQs.set('q', acctQ.trim());
+  const accounts = useApi<{ rows?: MasterAccount[]; total?: number }>(
+    ['crm', 'accounts', acctSeg, acctQ, acctPage],
+    `/api/v1/crm/accounts?${acctQs}`,
+    { enabled: tab === 'accounts' },
+  );
+  const acctDetail = useApi<AccountDetail>(
+    ['crm', 'account', acctSel ?? ''],
+    `/api/v1/crm/accounts/${encodeURIComponent(acctSel ?? '')}`,
+    { enabled: !!acctSel },
   );
 
   const pipeQ = new URLSearchParams();
@@ -202,12 +222,19 @@ export function CRM({ role, ctx, toast }: { role: any; ctx: any; toast: (m: stri
       />
 
       <div className="seg" style={{ marginBottom: 18 }}>
-        <button className={tab === 'parties' ? 'on' : ''} data-testid="crm-tab-parties" onClick={() => setTab('parties')}>Parties</button>
+        <button className={tab === 'accounts' ? 'on' : ''} data-testid="crm-tab-accounts" onClick={() => setTab('accounts')}>Accounts</button>
+        <button className={tab === 'parties' ? 'on' : ''} data-testid="crm-tab-parties" onClick={() => setTab('parties')}>Parties (raw)</button>
         <button className={tab === 'pipeline' ? 'on' : ''} data-testid="crm-tab-pipeline" onClick={() => setTab('pipeline')}>Pipeline</button>
         <button className={tab === 'deals' ? 'on' : ''} data-testid="crm-tab-deals" onClick={() => setTab('deals')}>Deal book</button>
       </div>
 
-      {tab === 'parties' ? (
+      {tab === 'accounts' ? (
+        <AccountsView
+          list={accounts} detail={acctDetail} seg={acctSeg} setSeg={(s) => { setAcctSeg(s); setAcctPage(0); }}
+          q={acctQ} setQ={(v) => { setAcctQ(v); setAcctPage(0); }} page={acctPage} setPage={setAcctPage} pageSize={ACCT_PAGE}
+          sel={acctSel} setSel={setAcctSel} hasCommercial={hasCommercial}
+        />
+      ) : tab === 'parties' ? (
         <PartyListView
           q={parties} role={r} hasCommercial={hasCommercial} hasPii={hasPii}
           sector={sector} setSector={setSector} onSelect={setSel}
@@ -721,6 +748,141 @@ function DealBook({ book, summary, pipeline, setPipeline, status, setStatus, sor
         <span className="dim" style={{ fontSize: 12 }}>Page {page + 1} of {pages}</span>
         <button className="btn sm" disabled={page + 1 >= pages} onClick={() => setPage(page + 1)} data-testid="deal-next">Next</button>
       </div>
+    </div>
+  );
+}
+
+// ============================================================ CONDUIT MASTER ACCOUNTS (golden record)
+interface MasterAccount {
+  id: string; name: string; segment?: string | null; type?: string | null;
+  mrpeasy?: number; hubspot_companies?: number; contacts?: number; branches?: number; orders?: number; order_value?: string;
+}
+interface AcctSource { system: string; source_id: string; name?: string | null; method?: string; confidence?: number }
+interface AcctContact { name?: string; email?: string | null; phone?: string | null; role?: string | null }
+interface AcctBranch { id: string; name: string; orders?: number }
+interface AcctOrder { order_no?: string; date?: string; total?: string | number }
+interface AccountDetail {
+  id: string; name: string; segment?: string | null; type?: string | null;
+  parent?: { id: string; name: string } | null;
+  sources?: AcctSource[]; contacts?: AcctContact[]; branches?: AcctBranch[]; orders?: AcctOrder[];
+}
+
+const SRC_LABEL: Record<string, string> = { mrpeasy: 'MRPeasy', hubspot_company: 'HubSpot', hubspot_contact: 'Contact' };
+
+function AccountsView({ list, detail, seg, setSeg, q, setQ, page, setPage, pageSize, sel, setSel, hasCommercial }: {
+  list: ReturnType<typeof useApi<{ rows?: MasterAccount[]; total?: number }>>;
+  detail: ReturnType<typeof useApi<AccountDetail>>;
+  seg: string; setSeg: (s: string) => void; q: string; setQ: (v: string) => void;
+  page: number; setPage: (n: number) => void; pageSize: number;
+  sel: string | null; setSel: (id: string | null) => void; hasCommercial: boolean;
+}) {
+  const rows = list.data?.rows ?? [];
+  const total = list.data?.total ?? 0;
+  const pages = Math.max(1, Math.ceil(total / pageSize));
+  const d = detail.data ?? null;
+  const segs = ['all', 'installer', 'wholesaler', 'retail', 'energy', 'automotive', 'commercial', 'other'];
+
+  return (
+    <div className="grid" style={{ gridTemplateColumns: sel ? '1.3fr 1fr' : '1fr', gap: 16, alignItems: 'start' }}>
+      <div>
+        <div className="loadbar" style={{ marginBottom: 12, gap: 8 }}>
+          <select className="cellinput" value={seg} onChange={(e) => setSeg(e.target.value)} data-testid="acct-seg">
+            {segs.map((s) => <option key={s} value={s}>{s === 'all' ? 'All segments' : s}</option>)}
+          </select>
+          <input className="cellinput" style={{ width: 220, textAlign: 'left' }} value={q} data-testid="acct-search"
+            onChange={(e) => setQ(e.target.value)} placeholder="Search account…" />
+          <span className="dim" style={{ fontSize: 12, marginLeft: 'auto' }}>{num(total)} Conduit accounts</span>
+        </div>
+        <Card title="Conduit accounts" icon={I.user} aux={<span className="dim" style={{ fontSize: 11.5 }}>one entity · MRPeasy + HubSpot + contacts as parts</span>} className="tablewrap" style={{ padding: 0 }}>
+          <table className="tbl">
+            <thead><tr><th>Account</th><th>Segment</th><th>Sources</th><th style={{ textAlign: 'right' }}>Contacts</th><th style={{ textAlign: 'right' }}>Branches</th><th style={{ textAlign: 'right' }}>Orders</th></tr></thead>
+            <tbody>
+              {list.isLoading && <><SkeletonRow cols={6} /><SkeletonRow cols={6} /><SkeletonRow cols={6} /></>}
+              {!list.isLoading && rows.length === 0 && <EmptyRow cols={6}>No accounts match.</EmptyRow>}
+              {rows.map((a) => (
+                <tr key={a.id} data-testid="acct-row" onClick={() => setSel(a.id)}
+                  style={{ cursor: 'pointer', background: sel === a.id ? 'var(--surface-2)' : undefined }}>
+                  <td><b>{a.name}</b></td>
+                  <td><span className="dim">{a.segment || '—'}</span></td>
+                  <td>
+                    {(a.mrpeasy ?? 0) > 0 && <Chip s="approved">MRP</Chip>}
+                    {(a.hubspot_companies ?? 0) > 0 && <Chip s="accent">HS</Chip>}
+                  </td>
+                  <td style={{ textAlign: 'right' }}>{num(a.contacts ?? 0)}</td>
+                  <td style={{ textAlign: 'right' }}>{(a.branches ?? 0) > 0 ? num(a.branches!) : <span className="dim">—</span>}</td>
+                  <td style={{ textAlign: 'right' }}>{num(a.orders ?? 0)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Card>
+        <div className="row g8" style={{ marginTop: 12, justifyContent: 'flex-end', alignItems: 'center' }}>
+          <button className="btn sm" disabled={page <= 0} onClick={() => setPage(page - 1)} data-testid="acct-prev">Prev</button>
+          <span className="dim" style={{ fontSize: 12 }}>Page {page + 1} of {pages}</span>
+          <button className="btn sm" disabled={page + 1 >= pages} onClick={() => setPage(page + 1)} data-testid="acct-next">Next</button>
+        </div>
+      </div>
+
+      {sel && (
+        <Card title={d?.name || 'Account'} icon={I.user}
+          aux={<button className="btn ghost sm" onClick={() => setSel(null)}>Close</button>}>
+          {detail.isLoading && <Skeleton lines={8} />}
+          {!detail.isLoading && d && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+              <div className="row g8" style={{ flexWrap: 'wrap' }}>
+                {d.segment && <Chip s="neutral">{d.segment}</Chip>}
+                {d.type && <Chip s="neutral">{d.type}</Chip>}
+                {d.parent && <Chip s="warn">branch of {d.parent.name}</Chip>}
+              </div>
+
+              <div>
+                <div className="fldlabel" style={{ marginBottom: 6 }}>Source systems (lineage)</div>
+                {(d.sources ?? []).length === 0 && <div className="dim" style={{ fontSize: 12 }}>No source links.</div>}
+                {(d.sources ?? []).map((s, i) => (
+                  <div key={i} className="row between" style={{ fontSize: 12.5, padding: '3px 0' }}>
+                    <span><Chip s={s.system === 'mrpeasy' ? 'approved' : 'accent'}>{SRC_LABEL[s.system] || s.system}</Chip> <span className="mono">{s.name || s.source_id}</span></span>
+                    <span className="dim">{s.method}{s.confidence != null ? ` · ${(Number(s.confidence) * 100).toFixed(0)}%` : ''}</span>
+                  </div>
+                ))}
+              </div>
+
+              {(d.branches ?? []).length > 0 && (
+                <div>
+                  <div className="fldlabel" style={{ marginBottom: 6 }}>Branches ({d.branches!.length})</div>
+                  {d.branches!.map((b) => (
+                    <div key={b.id} className="row between" style={{ fontSize: 12.5, padding: '2px 0', cursor: 'pointer' }} onClick={() => setSel(b.id)}>
+                      <span>{b.name}</span><span className="dim">{num(b.orders ?? 0)} orders</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div>
+                <div className="fldlabel" style={{ marginBottom: 6 }}>Contacts ({(d.contacts ?? []).length})</div>
+                {(d.contacts ?? []).length === 0 && <div className="dim" style={{ fontSize: 12 }}>No contacts.</div>}
+                {(d.contacts ?? []).slice(0, 25).map((c, i) => (
+                  <div key={i} className="row between" style={{ fontSize: 12.5, padding: '2px 0' }}>
+                    <span>{c.name || <span className="dim">—</span>}{c.role && <span className="dim"> · {c.role}</span>}</span>
+                    <span className="dim mono" style={{ fontSize: 11 }}>{c.email || ''}</span>
+                  </div>
+                ))}
+                {(d.contacts ?? []).length > 25 && <div className="dim" style={{ fontSize: 11, marginTop: 4 }}>+{d.contacts!.length - 25} more</div>}
+              </div>
+
+              <div>
+                <div className="fldlabel" style={{ marginBottom: 6 }}>Recent orders ({(d.orders ?? []).length})</div>
+                {(d.orders ?? []).length === 0 && <div className="dim" style={{ fontSize: 12 }}>No orders.</div>}
+                {(d.orders ?? []).slice(0, 12).map((o, i) => (
+                  <div key={i} className="row between" style={{ fontSize: 12.5, padding: '2px 0' }}>
+                    <span className="mono">{o.order_no}</span>
+                    <span className="dim">{o.date}{hasCommercial && o.total != null ? ` · ${gbp(o.total, 'GBP')}` : ''}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </Card>
+      )}
     </div>
   );
 }
