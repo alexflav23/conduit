@@ -223,7 +223,28 @@ object SnapshotLoader {
   private def hubspot(dataset: String, row: Json): ConnectionIO[Int] =
     if (dataset == "rma_tickets") hubspotRmaTicket(row)
     else if (dataset == "deals_attributed") hubspotAttributedDeal(row)
+    else if (dataset == "contacts") hubspotContact(row)
     else 0.pure[ConnectionIO]
+
+  // ingest/hubspot/contacts.ndjson → hubspot_contact_raw staging. The MDM correlation step materializes these into
+  // `contact` once each contact's HubSpot company is bound to a master party. Idempotent on contact_id.
+  private def hubspotContact(row: Json): ConnectionIO[Int] = {
+    val c = row.hcursor
+    c.get[String]("contact_id").toOption match {
+      case None => 0.pure[ConnectionIO]
+      case Some(id) =>
+        val s   = (k: String) => c.get[String](k).toOption.filter(_.nonEmpty)
+        val created = s("created").flatMap(v => scala.util.Try(LocalDate.parse(v)).toOption)
+        sql"""INSERT INTO hubspot_contact_raw
+                (contact_id, email, first_name, last_name, phone, company, company_id, job_title, lifecycle, created)
+              VALUES ($id, ${s("email")}, ${s("first_name")}, ${s("last_name")}, ${s("phone")}, ${s("company")},
+                      ${s("company_id")}, ${s("job_title")}, ${s("lifecycle")}, $created)
+              ON CONFLICT (contact_id) DO UPDATE SET
+                email = EXCLUDED.email, first_name = EXCLUDED.first_name, last_name = EXCLUDED.last_name,
+                phone = EXCLUDED.phone, company = EXCLUDED.company, company_id = EXCLUDED.company_id,
+                job_title = EXCLUDED.job_title, lifecycle = EXCLUDED.lifecycle, created = EXCLUDED.created""".update.run
+    }
+  }
 
   // ingest/hubspot/deals_attributed.ndjson → deal_snapshot WITH company attribution (deal → installer/wholesaler/
   // retail customer). Supersedes deals_lifecycle: same substrate plus company_id/company_name/segment, so the desk

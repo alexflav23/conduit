@@ -43,7 +43,8 @@ final class IgnitionService[F[_]: Async](xa: Transactor[F]) {
             invOpen <- emitOpeningInventory(eid)
             warr    <- backfillWarrantyWindows
             repl    <- applyRmaTickets
-          } yield s"stamped=$stamped lots=$lots legacy_lots=$legacyLots serials_linked=$linked periods=$periods stock_items=$stock exposure_rows=$exp price_lost_lines_fixed=$repriced order_placed_events=$placed recognition_events=$emitted opening_inv_event=$invOpen warranty_windows=$warr replacements_linked=$repl"
+            mdm     <- correlateMasterAccounts
+          } yield s"stamped=$stamped lots=$lots legacy_lots=$legacyLots serials_linked=$linked periods=$periods stock_items=$stock exposure_rows=$exp price_lost_lines_fixed=$repriced order_placed_events=$placed recognition_events=$emitted opening_inv_event=$invOpen warranty_windows=$warr replacements_linked=$repl $mdm"
       }
       .transact(xa)
 
@@ -246,4 +247,79 @@ final class IgnitionService[F[_]: Async](xa: Transactor[F]) {
             AND EXISTS (SELECT 1 FROM serial_unit s WHERE s.dispatch_id = d.id AND s.lot_batch_id IS NOT NULL)
             AND NOT EXISTS (SELECT 1 FROM revenue_recognition r WHERE r.dispatch_id = d.id)
             AND NOT EXISTS (SELECT 1 FROM outbox_event o WHERE o.event_type = 'dispatch.created' AND o.payload->>'dispatch_id' = d.id::text AND o.status = 'pending')""".update.run
+
+  // Master-account correlation (doc 02). Deterministic links auto-bind; fuzzy MRPeasy↔HubSpot matches become
+  // review candidates — never a guessed merge. Idempotent end to end (ON CONFLICT on the source-link / candidate
+  // / contact unique keys), so it re-derives the same golden records on every boot.
+  private def correlateMasterAccounts: ConnectionIO[String] = {
+    // exact-link each HubSpot company to an existing party sharing its normalized name (earliest party wins)
+    val linkExact =
+      sql"""INSERT INTO account_source_link (party_id, source_system, source_id, source_name, match_method, confidence, status)
+            SELECT DISTINCT ON (hc.cid) p.id, 'hubspot_company', hc.cid, hc.cname, 'exact', 1.000, 'linked'
+            FROM (SELECT DISTINCT company_id AS cid, company_name AS cname, segment AS seg,
+                    btrim(regexp_replace(regexp_replace(regexp_replace(lower(company_name),'^mrp:\s*','','g'),
+                      '\y(ltd|limited|plc|llp|llc|inc|the|group|holdings|uk)\y','','g'),'[^a-z0-9]+',' ','g')) AS nn
+                  FROM deal_snapshot WHERE company_id IS NOT NULL AND company_name IS NOT NULL) hc
+            JOIN party p ON p.normalized_name = hc.nn AND hc.nn <> ''
+            ORDER BY hc.cid, p.created_at
+            ON CONFLICT (source_system, source_id) DO NOTHING""".update.run
+    val stampExact =
+      sql"""UPDATE party p SET external_refs = jsonb_set(p.external_refs, '{hubspot_company}', to_jsonb(asl.source_id))
+            FROM account_source_link asl
+            WHERE asl.party_id = p.id AND asl.source_system = 'hubspot_company' AND NOT jsonb_exists(p.external_refs, 'hubspot_company')""".update.run
+    // a new master party for every HubSpot company with no exact match
+    val newParties =
+      sql"""INSERT INTO party (display_name, party_type, is_organization, segment, market_id, external_refs)
+            SELECT DISTINCT ON (hc.cid) hc.cname,
+                   CASE hc.seg WHEN 'installer' THEN 'installer' WHEN 'wholesaler' THEN 'wholesaler'
+                               WHEN 'automotive' THEN 'fleet' ELSE 'other' END,
+                   true, hc.seg, (SELECT id FROM market WHERE code = 'UK'),
+                   jsonb_build_object('hubspot_company', hc.cid)
+            FROM (SELECT DISTINCT company_id AS cid, company_name AS cname, segment AS seg
+                  FROM deal_snapshot WHERE company_id IS NOT NULL AND company_name IS NOT NULL) hc
+            WHERE NOT EXISTS (SELECT 1 FROM account_source_link asl WHERE asl.source_system = 'hubspot_company' AND asl.source_id = hc.cid)""".update.run
+    val linkNew =
+      sql"""INSERT INTO account_source_link (party_id, source_system, source_id, source_name, match_method, confidence, status)
+            SELECT p.id, 'hubspot_company', p.external_refs->>'hubspot_company', p.display_name, 'seed', 1.000, 'linked'
+            FROM party p
+            WHERE jsonb_exists(p.external_refs, 'hubspot_company')
+              AND NOT EXISTS (SELECT 1 FROM account_source_link asl
+                              WHERE asl.source_system = 'hubspot_company' AND asl.source_id = p.external_refs->>'hubspot_company')
+            ON CONFLICT (source_system, source_id) DO NOTHING""".update.run
+    // fuzzy candidates: a new HubSpot-only party that closely matches an existing MRPeasy party → review to merge
+    val candidates =
+      sql"""INSERT INTO account_link_candidate (party_id, source_system, source_id, source_name, score)
+            SELECT mrp.id, 'hubspot_company', hl.source_id, hl.source_name,
+                   round(similarity(mrp.normalized_name, newp.normalized_name)::numeric, 3)
+            FROM party newp
+            JOIN account_source_link hl ON hl.party_id = newp.id AND hl.source_system = 'hubspot_company' AND hl.match_method = 'seed'
+            JOIN party mrp ON jsonb_exists(mrp.external_refs, 'mrpeasy') AND mrp.id <> newp.id
+              AND mrp.normalized_name % newp.normalized_name
+              AND similarity(mrp.normalized_name, newp.normalized_name) >= 0.6
+            WHERE newp.normalized_name <> ''
+            ON CONFLICT (source_system, source_id, party_id) DO NOTHING""".update.run
+    // bind each contact identity to its company's master party, then materialize the contact row (idempotent)
+    val linkContacts =
+      sql"""INSERT INTO account_source_link (party_id, source_system, source_id, source_name, match_method, confidence, status)
+            SELECT asl.party_id, 'hubspot_contact', r.contact_id,
+                   btrim(coalesce(r.first_name,'') || ' ' || coalesce(r.last_name,'')), 'exact', 1.000, 'linked'
+            FROM hubspot_contact_raw r
+            JOIN account_source_link asl ON asl.source_system = 'hubspot_company' AND asl.source_id = r.company_id AND asl.status = 'linked'
+            ON CONFLICT (source_system, source_id) DO NOTHING""".update.run
+    val materializeContacts =
+      sql"""INSERT INTO contact (party_id, first_name, last_name, role, email, phone, hs_contact_id)
+            SELECT asl.party_id, r.first_name, r.last_name, r.job_title, nullif(r.email,''), r.phone, r.contact_id
+            FROM hubspot_contact_raw r
+            JOIN account_source_link asl ON asl.source_system = 'hubspot_company' AND asl.source_id = r.company_id AND asl.status = 'linked'
+            ON CONFLICT (hs_contact_id) WHERE hs_contact_id IS NOT NULL DO NOTHING""".update.run
+    for {
+      ex   <- linkExact
+      _    <- stampExact
+      np   <- newParties
+      _    <- linkNew
+      cand <- candidates
+      _    <- linkContacts
+      ct   <- materializeContacts
+    } yield s"mdm_company_exact=$ex mdm_new_parties=$np mdm_candidates=$cand contacts_materialized=$ct"
+  }
 }
