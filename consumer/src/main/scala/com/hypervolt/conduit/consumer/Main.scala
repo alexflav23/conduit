@@ -165,6 +165,15 @@ object Main extends IOApp.Simple {
               .flatMap { case (id, created) => logger.info(s"h6q-cycle: cycle $id open, $created outstanding slots") }
               .handleErrorWith(e => logger.error(e)(s"h6q-cycle failed: ${e.getMessage}")) *>
               IO.sleep(6.hours)).foreverM
+          // Document backfill (C5 / M13-Docs): render the WORM invoice PDF + gapless number for the historical
+          // invoiced book in bounded batches, so the legal documents exist for every recognised invoice without a
+          // render storm. Self-draining: emits 0 once fully documented, then idles.
+          val docBackfillLoop: IO[Unit] =
+            (docService
+              .backfillPending(50)
+              .flatMap(n => if (n > 0) logger.info(s"doc-backfill: issued $n invoice documents") else IO.unit)
+              .handleErrorWith(e => logger.error(e)(s"doc-backfill failed: ${e.getMessage}")) *>
+              IO.sleep(20.seconds)).foreverM
           PulsarEventPublisher.create[IO](pulsar).flatMap { publisher =>
             val relay                                           = new OutboxRelay[IO](xa, publisher)
             val relayLoop: IO[Unit]                             = (relay.runOnce() *> IO.sleep(1.second)).foreverM
@@ -190,7 +199,8 @@ object Main extends IOApp.Simple {
                 Supervised("shadow-validation", shadowLoop),
                 Supervised("notification-delivery", notifyLoop),
                 Supervised("forecast-cycle", forecastLoop),
-                Supervised("h6q-cycle", h6qCycleLoop)
+                Supervised("h6q-cycle", h6qCycleLoop),
+                Supervised("doc-backfill", docBackfillLoop)
               ).parSequence_
           }
         }

@@ -101,6 +101,21 @@ final class DocumentService[F[_]: Async](
     }
   }
 
+  // Backfill the historical invoiced book (C5 / M13-Docs): generate the WORM PDF + gapless number for up to
+  // `limit` order_invoices that have no invoice document yet. Bounded per call so a background loop drains the
+  // book gently (never a render storm). Idempotent — generateInvoice no-ops a doc that already exists. Returns
+  // the count newly issued this call (0 when the book is fully documented).
+  def backfillPending(limit: Int): F[Int] =
+    sql"""SELECT oi.id FROM order_invoice oi
+          WHERE oi.status <> 'void'
+            AND NOT EXISTS (SELECT 1 FROM document d WHERE d.order_invoice_id = oi.id AND d.document_type = 'invoice')
+          ORDER BY oi.issued_at NULLS LAST
+          LIMIT $limit"""
+      .query[UUID]
+      .to[List]
+      .transact(xa)
+      .flatMap(_.foldLeftM(0)((n, id) => generateInvoice(id).map(_.fold(_ => n, _ => n + 1)).handleError(_ => n)))
+
   private def existing(id: UUID): ConnectionIO[Option[DocumentResult]] =
     sql"""SELECT id, formatted_number, content_sha256, total_amount, status FROM document WHERE id = $id AND status = 'finalised'"""
       .query[(UUID, Option[String], Option[String], Option[BigDecimal], String)]

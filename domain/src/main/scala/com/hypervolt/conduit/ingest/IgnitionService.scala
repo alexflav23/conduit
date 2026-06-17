@@ -49,7 +49,9 @@ final class IgnitionService[F[_]: Async](xa: Transactor[F]) {
             owners  <- materializeOwners
             soldVia <- phonePreAssociate
             fcOwn   <- seedForecastOwnership
-          } yield s"stamped=$stamped lots=$lots legacy_lots=$legacyLots serials_linked=$linked periods=$periods stock_items=$stock exposure_rows=$exp price_lost_lines_fixed=$repriced order_placed_events=$placed recognition_events=$emitted opening_inv_event=$invOpen warranty_windows=$warr replacements_linked=$repl $mdm $merged branches_linked=$branches $owners customer_installer_phone_links=$soldVia forecastable_accounts=$fcOwn"
+            docSer  <- ensureDocumentSeries
+            lineVat <- backfillLineVat
+          } yield s"stamped=$stamped lots=$lots legacy_lots=$legacyLots serials_linked=$linked periods=$periods stock_items=$stock exposure_rows=$exp price_lost_lines_fixed=$repriced order_placed_events=$placed recognition_events=$emitted opening_inv_event=$invOpen warranty_windows=$warr replacements_linked=$repl $mdm $merged branches_linked=$branches $owners customer_installer_phone_links=$soldVia forecastable_accounts=$fcOwn document_series=$docSer line_vat_backfilled=$lineVat"
       }
       .transact(xa)
 
@@ -513,6 +515,32 @@ final class IgnitionService[F[_]: Async](xa: Transactor[F]) {
       _  <- linkConsumerSources
     } yield s"owner_accounts=$o serials_owner_linked=$ls consumer_contacts_unified=$cc"
   }
+
+  // The MRPeasy import dropped line-level VAT (order_line.vat_amount = 0) though the invoice carries vat_total.
+  // The document conservation guard (Σ line inc-VAT == invoice total) then rejects every invoice. Backfill the
+  // exact single-line case: one line, one non-void invoice → line VAT = the invoice's vat_total (no rounding
+  // ambiguity). Multi-line orders need largest-remainder allocation and are left for that follow-up. Idempotent
+  // (only fills zero-VAT lines). Recognition already used the invoice-level VAT, so the ledger is unaffected.
+  private def backfillLineVat: ConnectionIO[Int] =
+    sql"""WITH oi AS (
+            SELECT o.id AS order_id, max(i.vat_total) AS vat_total, count(i.*) AS ninv
+            FROM order_invoice i JOIN "order" o ON o.id = i.order_id WHERE i.status <> 'void' GROUP BY o.id),
+          single AS (
+            SELECT oi.order_id, oi.vat_total FROM oi
+            WHERE oi.ninv = 1 AND (SELECT count(*) FROM order_line ol WHERE ol.order_id = oi.order_id) = 1)
+          UPDATE order_line ol SET vat_amount = single.vat_total
+          FROM single WHERE ol.order_id = single.order_id AND COALESCE(ol.vat_amount, 0) = 0""".update.run
+
+  // Gapless document numbering (doc 17 §3 / C5): the FOP renderer needs an active number series per
+  // (entity, document_type, jurisdiction) to allocate from. Seed the UK invoice + credit-note series for the
+  // operating entity. Continuous current_seq → gapless; {yyyy} in the format is presentation only. Idempotent.
+  private def ensureDocumentSeries: ConnectionIO[Int] =
+    sql"""INSERT INTO document_number_series (entity_id, document_type, jurisdiction, series_code, format, period_scope, current_seq, status)
+          SELECT e.id, t.doc_type, 'GB', t.series_code, '{series}-{yyyy}-{seq:06d}', 'annual', 0, 'active'
+          FROM (SELECT id FROM entity WHERE entity_type = 'operating' ORDER BY created_at LIMIT 1) e
+          CROSS JOIN (VALUES ('invoice', 'HV-UK-INV'), ('credit_note', 'HV-UK-CN')) AS t(doc_type, series_code)
+          WHERE NOT EXISTS (SELECT 1 FROM document_number_series s
+                            WHERE s.entity_id = e.id AND s.document_type = t.doc_type AND s.jurisdiction = 'GB')""".update.run
 
   // Bootstrap the H6Q bottom-up spine (doc 12): the cycle only generates capture slots for accounts that are
   // `forecastable` and owned by someone. No account-manager delegation exists in the imported book, so seed the

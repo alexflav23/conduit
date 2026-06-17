@@ -137,12 +137,36 @@ services:
     ports: ["8080:8080", "9990:9990", "9464:9464"]
     networks: [conduit]
 
+  # Local S3-compatible WORM store for generated documents (doc 17 §6). endpointClient uses path-style, so MinIO
+  # works as the dev S3. The estate would point this at LocalStack/real S3; locally MinIO is lighter.
+  conduit-minio:
+    image: minio/minio:latest
+    container_name: conduit-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: conduit
+      MINIO_ROOT_PASSWORD: conduit-local-secret
+    ports: ["9100:9000", "9101:9001"]
+    volumes: [conduit_minio_data:/data]
+    networks: [conduit]
+
+  conduit-minio-init:
+    image: minio/mc:latest
+    container_name: conduit-minio-init
+    depends_on:
+      conduit-minio: { condition: service_started }
+    entrypoint: >
+      /bin/sh -c "until mc alias set local http://conduit-minio:9000 conduit conduit-local-secret; do sleep 1; done;
+      mc mb -p local/conduit-records-local || true; echo minio-bucket-ready"
+    networks: [conduit]
+
   conduit-consumer:
     build: { context: ., dockerfile: Dockerfile.consumer }
     container_name: conduit-consumer
     restart: unless-stopped
     depends_on:
       conduit-api: { condition: service_started }
+      conduit-minio: { condition: service_started }
     environment:
       HYPERVOLT_ENV: local
       HYPERVOLT_SHADOW: "true"
@@ -153,6 +177,10 @@ services:
       CONDUIT_TB_ADDRESSES: 172.31.250.10:3000
       CONDUIT_TB_CLUSTER: "1"
       PROMETHEUS_PORT: "9465"
+      CONDUIT_DOCUMENTS_ENDPOINT: http://conduit-minio:9000
+      CONDUIT_DOCUMENTS_BUCKET: conduit-records-local
+      CONDUIT_DOCUMENTS_ACCESS_KEY: conduit
+      CONDUIT_DOCUMENTS_SECRET_KEY: conduit-local-secret
     security_opt:
       - "seccomp=unconfined"
     ports: ["9466:9465"]
@@ -168,4 +196,5 @@ networks:
 volumes:
   conduit_postgres_data:
   conduit_pulsar_data:
+  conduit_minio_data:
   conduit_tigerbeetle_data:
