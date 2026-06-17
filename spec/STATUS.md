@@ -1,9 +1,17 @@
 # Conduit — Build Status & Ignition Plan
 
-_As of 2026-06-16. Assessed by reading the live code (310 Scala files, 84 migrations), the
+_As of 2026-06-18. Assessed by reading the live code (310 Scala files, 89 migrations), the
 testcontainers integration suites, and the running Postgres (`conduit-postgres`) row-by-row.
 Companion to [`spec/07`](./07_BUILD_PLAN.md) (the acceptance source of truth) and the root
 `CLAUDE.md` (the implementation contract)._
+
+> **Update 2026-06-18 — the CRM/MDM layer went live** (Phase C, M4). A full Master Data
+> Management golden-record was built on top of the dormant trade substrate: every customer the
+> business has ever touched — across MRPeasy, HubSpot (companies + 154k contacts), the placement
+> registry and Keycloak — is now correlated into **one master account**, with serial→owner
+> genealogy, branch hierarchy, model-assisted matching, and a customer-360 desk. See the **CRM/MDM
+> (M4)** section after the table. This is net-new beyond the 2026-06-16 ignition plan and is the
+> bulk of recent work.
 
 ## TL;DR
 
@@ -32,7 +40,7 @@ engine, so Conduit can start with all the historical data."
 | M2 Access control | ✅ DONE | PolicyEngine + scope predicate + layer projection + FieldLayerMap (82 rows) + 11 preset roles, server-side. |
 | M3 Catalogue + ADLP pricing | 🟢 SEEDED | Engine + `/pricing/quote` done & tested; **real price book now live** — 198 prices from the Comprehensive Pricing workbook → 22 `price_agreement`s (Retail open-list, Installers segment, 20 customer-set: Octopus/YESSS/CEF/Rexel/…) + 949 party links. Quote verified: retail HV3PRO £575, an OVO party £435.18 (its contract tier). Reproducible via `ingest/pricing/`. **Governance airtight** (doc 24 §3): order placement prices from the tier — a typed/non-tier price → `NonTierPrice` reject, unpriced SKU → `NoPrice`. **Pricing desk view** (Sell) surfaces the book grouped by agreement. CM cost tiers preset (Volex HV3PRO + **legacy in-house mfg from real MRPeasy `avg_cost`, 19 lots**); Luxshare ICT future shift still to wire. IC transfer pricing built at recognition (`FlashTitle`→`ic_match`, procurement markup); auto transfer-doc/order is the post-2027 piece (dormant — no procurement entities yet). |
 | M-Pricing (doc 24) | 🟡 PARTIAL | **Built, not "spec-only"** — `price_agreement`, tiers, retrospective ASC-606 rebate→ledger all coded & tested; tables empty live. |
-| M4 CRM + Order capture | 🟡 PARTIAL | Order capture strong & IT-tested; **no contact/deal/pipeline API**. **Order→ledger commitment now wired + baseline rebuilt**: ignition replays the full order book as `order.placed` (49,948 events), `OrderCommitmentConsumer` records the sales backlog (ASC 606: no GL at placement), exposed at `/finance/backlog` + `/orders/{id}/commitment`. Baseline ties: **committed £60.55m = recognised £36.64m + open £23.91m**. Surfaced a real data anomaly for shadow validation (a £0-revenue/£238-COGS dispatch). |
+| M4 CRM + Order capture | 🟢 MOSTLY (MDM live) | Order capture strong & IT-tested. **Order→ledger commitment wired**: ignition replays the order book as `order.placed`, `OrderCommitmentConsumer` records the sales backlog (ASC 606: no GL at placement), `/finance/backlog` + `/orders/{id}/commitment`. Baseline ties: **committed £60.55m = recognised £36.64m + open £23.91m**. **Master Data Management now live (golden record)** — see the CRM/MDM section below: **150,325 master accounts** (38,353 orgs + 111,972 individual owners), 95,869 contacts attributed, 90,652 serials owner-linked, deal/pipeline book + customer-360 + cmd+K search + phone customer→installer bridging shipped. **Remaining**: no contact/deal *write* API (read + ingest only); pipeline-stage editing. |
 | M5 Commission | 🟢 WIRED (dormant) | Accrue/post/claw + true-up TB-tested; now **wired**: `CommissionConsumer` (order.placed → provisional std-cost accrual, order-idempotent) + read routes (`/commission/statement`, `/entries`). Honestly dormant — `sales_agent`/`commission_scheme` = 0 (no real source), so it accrues 0 until real agents/schemes land. |
 | M6 Inventory/ATP/dispatch | 🟢 WIRED | Concurrency-safe allocation + dispatch IT-tested; now **exposed**: `DispatchRoutes` (POST `/orders/{id}/dispatch`, POST `/dispatches/{id}/deliver` → recognition, GET `/inventory/availability` ATP), RBAC-gated (dispatch/stock_item). Carrier still a stored-field stub. |
 | M7 Batch/landed-cost/genealogy | 🟠 SCAFFOLDED | Specific-id costing (no averages) coded & tested; **`lot_batch` = 0, serials unlinked** → can't resolve cost/genealogy live. |
@@ -49,6 +57,45 @@ engine, so Conduit can start with all the historical data."
 | M13-Docs | 🟡 PARTIAL | Real Apache-FOP PDF engine + WORM + gapless numbering; 0 documents generated live. |
 | M13-Tax (doc 16) | 🟡 PARTIAL | Effective-dated rate-table engine done & tested; **external vendor adapter is a seam only**; 0 quotes live. |
 | M14 Companion + Horizons + HubSpot-out | 🔴 MISSING | No Flutter app, no Horizons feed, HubSpot is inbound-ingest only. |
+
+## CRM / MDM — the golden-record layer (M4, live as of 2026-06-18)
+
+Net-new beyond the original ignition plan. The dormant trade substrate had parties as disconnected
+rows per source; this unifies every customer touchpoint into one **Conduit master account** and
+hangs the serial-number lifecycle off it. **Fully reproducible from committed `ingest/` ndjson on a
+clean machine — no API calls at boot.**
+
+**What's live (real numbers, running DB):**
+- **150,325 master accounts** — `party` with `parent_party_id IS NULL`, merged losers excluded.
+  Of these **38,353 organisations** (installers/wholesalers/retail/energy/fleet) + **111,972
+  individual consumers** (charger owners). **532 branches** hang off parents (CEF-style hierarchy,
+  auto-detected by parent-name + manually assignable).
+- **249,052 source links** (`account_source_link`) tying each master to its origin identities:
+  111,974 placement-owner, 95,869 HubSpot-contact, 23,722 HubSpot-company, 17,487 MRPeasy. This is
+  the lineage — every account shows exactly which systems it was assembled from.
+- **Serial → owner genealogy**: **90,652 of 108,455 serials** carry `owner_party_id`, resolved
+  serial(hex)→DynamoDB placement→Keycloak `retail-customers`. A charger traces to the consumer who
+  owns it; the consumer traces back through bulk-buyer → owner chains.
+- **Matching**: deterministic exact links auto-bind; fuzzy MRPeasy↔HubSpot pairs go to a review
+  queue (**36,281 candidates pending**) — never a guessed merge. A **model matcher** (Anthropic
+  Message Batches, claude-sonnet-4-6) verdicts the ambiguous set; verdicts keyed on stable MRPeasy
+  *name* so they replay cross-machine. **152 merges** applied with full loser→winner lineage.
+- **Phone pre-association** (2026-06-18): a phone is a person-level key. Where email didn't already
+  unify them, an exact phone match bridges **384 consumers to the installer who sold/fitted their
+  charger** — conservative (2-party only, consumer↔org only, never overwrites), stamped as a
+  reviewable `sold_via` soft link, not a merge.
+- **Desk (CRM screen)**: Accounts list leads with First/Last/Email/Phone; **cmd+K** searches the
+  whole master by name·email·phone (digit-normalized); customer-360 detail shows sources/lineage,
+  branches, contacts (with `end_customer` vs `contact` entity-type), order book, **charger
+  lifecycle** (serial → status → warranty days left → replaces/replaced-by), and the phone-matched
+  installer. Clicking a serial deep-links to Batch & genealogy and auto-traces it. Deal/pipeline
+  book attributed per company.
+
+**Honest gaps (M4 remainder):** no contact/deal/pipeline **write** API yet (everything is
+read + ingest-derived); pipeline-stage editing and the permission-builder API (doc 06) unbuilt;
+36,281 fuzzy candidates await human/model triage; V2 owner coverage limited by the placement
+registry. Phone bridges include occasional coincidental shared-phone links — surfaced labelled
+("matched by phone"), reviewable, never silently merged.
 
 ## Ignition plan (dependency-ordered)
 
