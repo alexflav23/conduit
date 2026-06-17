@@ -242,7 +242,7 @@ export function CRM({ role, ctx, toast }: { role: any; ctx: any; toast: (m: stri
         <AccountsView
           list={accounts} detail={acctDetail} seg={acctSeg} setSeg={(s) => { setAcctSeg(s); setAcctPage(0); }}
           q={acctQ} setQ={(v) => { setAcctQ(v); setAcctPage(0); }} page={acctPage} setPage={setAcctPage} pageSize={ACCT_PAGE}
-          sel={acctSel} setSel={setAcctSel} hasCommercial={hasCommercial}
+          sel={acctSel} setSel={setAcctSel} hasCommercial={hasCommercial} toast={toast}
         />
       ) : tab === 'parties' ? (
         <PartyListView
@@ -782,12 +782,13 @@ interface AccountDetail {
 
 const SRC_LABEL: Record<string, string> = { mrpeasy: 'MRPeasy', hubspot_company: 'HubSpot', hubspot_contact: 'Contact' };
 
-function AccountsView({ list, detail, seg, setSeg, q, setQ, page, setPage, pageSize, sel, setSel, hasCommercial }: {
+function AccountsView({ list, detail, seg, setSeg, q, setQ, page, setPage, pageSize, sel, setSel, hasCommercial, toast }: {
   list: ReturnType<typeof useApi<{ rows?: MasterAccount[]; total?: number }>>;
   detail: ReturnType<typeof useApi<AccountDetail>>;
   seg: string; setSeg: (s: string) => void; q: string; setQ: (v: string) => void;
   page: number; setPage: (n: number) => void; pageSize: number;
   sel: string | null; setSel: (id: string | null) => void; hasCommercial: boolean;
+  toast: (m: string, k?: string) => void;
 }) {
   const rows = list.data?.rows ?? [];
   const total = list.data?.total ?? 0;
@@ -847,6 +848,9 @@ function AccountsView({ list, detail, seg, setSeg, q, setQ, page, setPage, pageS
                 {d.type && <Chip s="neutral">{d.type}</Chip>}
                 {d.parent && <Chip s="warn">branch of {d.parent.name}</Chip>}
               </div>
+
+              <BranchAssign account={d} onChanged={() => { detail.refetch(); list.refetch(); }} toast={toast} />
+
 
               <div>
                 <div className="fldlabel" style={{ marginBottom: 6 }}>Source systems (lineage)</div>
@@ -986,6 +990,61 @@ function ReviewQueue({ review, page, setPage, pageSize, onChanged, toast }: {
         <span className="dim" style={{ fontSize: 12 }}>Page {page + 1} of {pages}</span>
         <button className="btn sm" disabled={page + 1 >= pages} onClick={() => setPage(page + 1)}>Next</button>
       </div>
+    </div>
+  );
+}
+
+// ---- Branch hierarchy assignment (CEF-style): make an account a branch of a parent, or detach it ----
+function BranchAssign({ account, onChanged, toast }: {
+  account: AccountDetail; onChanged: () => void; toast: (m: string, k?: string) => void;
+}) {
+  const [q, setQ] = useState('');
+  const [matches, setMatches] = useState<MasterAccount[]>([]);
+  const [busy, setBusy] = useState(false);
+
+  const search = async () => {
+    if (!q.trim()) return;
+    try {
+      const r: any = await request(`/api/v1/crm/accounts?q=${encodeURIComponent(q.trim())}&limit=8`);
+      const rows = (r?.rows ?? r?.json?.rows ?? []) as MasterAccount[];
+      setMatches(rows.filter((m) => m.id !== account.id));
+    } catch { setMatches([]); }
+  };
+  const setParent = async (parentId: string | null, label: string) => {
+    setBusy(true);
+    try {
+      await request(`/api/v1/crm/accounts/${encodeURIComponent(account.id)}/parent`, { method: 'POST', body: JSON.stringify({ parent_id: parentId }) });
+      toast(label, 'ok'); setQ(''); setMatches([]); onChanged();
+    } catch (e) {
+      const ae = e as ApiError;
+      toast(ae?.forbidden ? 'Forbidden — requires edit rights' : `Failed (${ae?.status ?? '?'})`, 'err');
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <div>
+      <div className="fldlabel" style={{ marginBottom: 6 }}>Hierarchy</div>
+      {account.parent ? (
+        <div className="row between" style={{ fontSize: 12.5 }}>
+          <span>Branch of <b>{account.parent.name}</b></span>
+          <button className="btn ghost sm" disabled={busy} data-testid="branch-detach" onClick={() => setParent(null, 'Made standalone')}>Make standalone</button>
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div className="row g8">
+            <input className="cellinput" style={{ flex: 1, textAlign: 'left' }} value={q} data-testid="branch-search"
+              placeholder="Make this a branch of… (search parent account)"
+              onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && search()} />
+            <button className="btn sm" onClick={search}>Find</button>
+          </div>
+          {matches.map((m) => (
+            <div key={m.id} className="row between" style={{ fontSize: 12.5, padding: '2px 0' }}>
+              <span>{m.name} <span className="dim">· {num(m.orders ?? 0)} orders</span></span>
+              <button className="btn ghost sm" disabled={busy} data-testid="branch-set" onClick={() => setParent(m.id, `Set as branch of ${m.name}`)}>Set as parent</button>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

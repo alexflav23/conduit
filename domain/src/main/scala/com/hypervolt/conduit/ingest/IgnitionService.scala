@@ -45,7 +45,8 @@ final class IgnitionService[F[_]: Async](xa: Transactor[F]) {
             repl    <- applyRmaTickets
             mdm     <- correlateMasterAccounts
             merged  <- applyAccountMatches
-          } yield s"stamped=$stamped lots=$lots legacy_lots=$legacyLots serials_linked=$linked periods=$periods stock_items=$stock exposure_rows=$exp price_lost_lines_fixed=$repriced order_placed_events=$placed recognition_events=$emitted opening_inv_event=$invOpen warranty_windows=$warr replacements_linked=$repl $mdm $merged"
+            branches <- detectBranches
+          } yield s"stamped=$stamped lots=$lots legacy_lots=$legacyLots serials_linked=$linked periods=$periods stock_items=$stock exposure_rows=$exp price_lost_lines_fixed=$repriced order_placed_events=$placed recognition_events=$emitted opening_inv_event=$invOpen warranty_windows=$warr replacements_linked=$repl $mdm $merged branches_linked=$branches"
       }
       .transact(xa)
 
@@ -404,4 +405,21 @@ final class IgnitionService[F[_]: Async](xa: Transactor[F]) {
         moveLinks *> moveContacts *> lineage *> markLosers *> acceptChosen *> supersede.as(s"account_merges=$n")
       )
   }
+
+  // CEF-style wholesaler branches: the very clean "PARENT (location)" pattern — "CEF (Aberdeen City Centre)" rolls
+  // up to "CEF". Conservative + safe: only the parenthesised-location form, parent itself unparenthesised,
+  // shortest matching parent wins. Branches keep their own identity/orders; the rest are set manually in the desk.
+  private def detectBranches: ConnectionIO[Int] =
+    sql"""WITH branch_cand AS (
+            SELECT id, substring(regexp_replace(display_name,'^MRP:\s*','') from '^(.*) \(') AS parent_name
+            FROM party
+            WHERE parent_party_id IS NULL AND status <> 'merged' AND display_name LIKE '% (%'),
+          pairs AS (
+            SELECT DISTINCT ON (bc.id) bc.id AS branch, p.id AS parent
+            FROM branch_cand bc
+            JOIN party p ON regexp_replace(p.display_name,'^MRP:\s*','') = bc.parent_name
+                        AND p.parent_party_id IS NULL AND p.status <> 'merged'
+            WHERE bc.parent_name IS NOT NULL AND length(bc.parent_name) >= 2
+            ORDER BY bc.id, length(p.display_name) ASC)
+          UPDATE party SET parent_party_id = pairs.parent FROM pairs WHERE party.id = pairs.branch""".update.run
 }
