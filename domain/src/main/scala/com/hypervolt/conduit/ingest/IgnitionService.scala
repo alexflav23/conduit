@@ -363,6 +363,8 @@ final class IgnitionService[F[_]: Async](xa: Transactor[F]) {
               SELECT v.hs_company_id AS hs_id, w.id AS winner, 'model' AS method, v.confidence, 1 AS pri
               FROM hubspot_match_verdict v JOIN party w ON w.display_name = 'MRP: ' || v.merge_into_name
               WHERE v.merge_into_name IS NOT NULL AND v.confidence >= 0.9
+                AND NOT EXISTS (SELECT 1 FROM account_link_candidate cc
+                                WHERE cc.source_id = v.hs_company_id AND cc.reviewed_by IS NOT NULL AND cc.reviewed_by <> 'ignition')
               UNION ALL
               SELECT h.source_id, h.party_id, 'heuristic', h.score, 2 FROM (
                 SELECT DISTINCT ON (c.source_id) c.source_id, c.party_id, c.score

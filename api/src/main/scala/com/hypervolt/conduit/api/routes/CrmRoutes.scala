@@ -8,6 +8,7 @@ import com.hypervolt.conduit.api.auth.ApiError
 import com.hypervolt.conduit.api.auth.AuthService
 import com.hypervolt.conduit.api.auth.Secured
 import com.hypervolt.conduit.crm.CrmReadRepo
+import com.hypervolt.conduit.crm.MasterAccountRepo
 import doobie.implicits._
 import doobie.util.transactor.Transactor
 import io.circe.Json
@@ -170,7 +171,81 @@ final class CrmRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
             }
       )
 
+  // ---- Master-account review: the fuzzy candidates the model didn't auto-merge, with its verdict + reasoning ----
+  private def canEdit(p: Principal): Boolean = PolicyEngine.hasPermission(p, Action.Edit, "credit_profile")
+  private val editDenied = err(StatusCode.Forbidden, "forbidden", "requires edit:credit_profile")
+
+  private val reviewQueue =
+    base.get
+      .in("api" / "v1" / "crm" / "account-candidates")
+      .in(query[Option[String]]("q"))
+      .in(query[Option[Int]]("limit"))
+      .in(query[Option[Int]]("offset"))
+      .out(jsonBody[Json])
+      .serverLogic(p => {
+        case (q, limitF, offsetF) =>
+          if (!gate(p)) Async[F].pure(Left(denied))
+          else {
+            val lim = limitF.getOrElse(50).min(200).max(1)
+            val off = offsetF.getOrElse(0).max(0)
+            (MasterAccountRepo.reviewQueue(q.filter(_.nonEmpty), lim, off), MasterAccountRepo.reviewCount(q.filter(_.nonEmpty))).tupled
+              .transact(xa)
+              .map { case (rows, total) => Right(Json.obj("rows" -> Json.fromValues(rows), "total" -> total.asJson, "limit" -> lim.asJson, "offset" -> off.asJson)) }
+          }
+      })
+
+  private def field(j: Json, k: String): Option[String] = j.hcursor.get[String](k).toOption.filter(_.nonEmpty)
+
+  private val mergeAccounts =
+    base.post
+      .in("api" / "v1" / "crm" / "account-candidates" / "merge")
+      .in(jsonBody[Json])
+      .out(jsonBody[Json])
+      .serverLogic(p =>
+        body =>
+          if (!canEdit(p)) Async[F].pure(Left(editDenied))
+          else
+            (field(body, "hs_company_id"), field(body, "winner_party_id").flatMap(s => Try(UUID.fromString(s)).toOption)) match {
+              case (Some(hs), Some(winner)) =>
+                MasterAccountRepo.merge(winner, hs, p.userId.toString, "manual review accept").transact(xa)
+                  .map(n => Right(Json.obj("merged" -> (n > 0).asJson)))
+              case _ => Async[F].pure(Left(err(StatusCode.BadRequest, "bad_request", "need hs_company_id + winner_party_id")))
+            }
+      )
+
+  private val rejectCandidate =
+    base.post
+      .in("api" / "v1" / "crm" / "account-candidates" / "reject")
+      .in(jsonBody[Json])
+      .out(jsonBody[Json])
+      .serverLogic(p =>
+        body =>
+          if (!canEdit(p)) Async[F].pure(Left(editDenied))
+          else
+            field(body, "hs_company_id") match {
+              case Some(hs) => MasterAccountRepo.reject(hs, p.userId.toString).transact(xa).map(n => Right(Json.obj("rejected" -> n.asJson)))
+              case None     => Async[F].pure(Left(err(StatusCode.BadRequest, "bad_request", "need hs_company_id")))
+            }
+      )
+
+  private val setParent =
+    base.post
+      .in("api" / "v1" / "crm" / "accounts" / path[String]("id") / "parent")
+      .in(jsonBody[Json])
+      .out(jsonBody[Json])
+      .serverLogic(p => {
+        case (idS, body) =>
+          if (!canEdit(p)) Async[F].pure(Left(editDenied))
+          else
+            Try(UUID.fromString(idS)).toOption match {
+              case None => Async[F].pure(Left(err(StatusCode.BadRequest, "bad_request", "invalid id")))
+              case Some(child) =>
+                val parent = field(body, "parent_id").flatMap(s => Try(UUID.fromString(s)).toOption)
+                MasterAccountRepo.setParent(child, parent).transact(xa).map(_ => Right(Json.obj("ok" -> true.asJson)))
+            }
+      })
+
   val routes: HttpRoutes[F] =
     Http4sServerInterpreter[F](ApiMetrics.serverOptions[F])
-      .toRoutes(List(accounts, accountDetail, parties, pipeline, dealsSummary, deals))
+      .toRoutes(List(accounts, accountDetail, reviewQueue, mergeAccounts, rejectCandidate, setParent, parties, pipeline, dealsSummary, deals))
 }

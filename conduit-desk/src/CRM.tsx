@@ -113,7 +113,8 @@ export function CRM({ role, ctx, toast }: { role: any; ctx: any; toast: (m: stri
   const hasPii = layers.indexOf('pii') >= 0;
   const market = c.market ? marketId(c.market) : '';
 
-  const [tab, setTab] = useState<'accounts' | 'parties' | 'pipeline' | 'deals'>('accounts');
+  const [tab, setTab] = useState<'accounts' | 'review' | 'parties' | 'pipeline' | 'deals'>('accounts');
+  const [reviewPage, setReviewPage] = useState(0);
   const [acctSeg, setAcctSeg] = useState('all');
   const [acctQ, setAcctQ] = useState('');
   const [acctPage, setAcctPage] = useState(0);
@@ -156,6 +157,14 @@ export function CRM({ role, ctx, toast }: { role: any; ctx: any; toast: (m: stri
     ['crm', 'account', acctSel ?? ''],
     `/api/v1/crm/accounts/${encodeURIComponent(acctSel ?? '')}`,
     { enabled: !!acctSel },
+  );
+
+  // The match-review queue — fuzzy candidates the model didn't auto-merge, with its verdict + reasoning.
+  const REVIEW_PAGE = 25;
+  const review = useApi<{ rows?: ReviewItem[]; total?: number }>(
+    ['crm', 'review', reviewPage],
+    `/api/v1/crm/account-candidates?limit=${REVIEW_PAGE}&offset=${reviewPage * REVIEW_PAGE}`,
+    { enabled: tab === 'review' },
   );
 
   const pipeQ = new URLSearchParams();
@@ -223,6 +232,7 @@ export function CRM({ role, ctx, toast }: { role: any; ctx: any; toast: (m: stri
 
       <div className="seg" style={{ marginBottom: 18 }}>
         <button className={tab === 'accounts' ? 'on' : ''} data-testid="crm-tab-accounts" onClick={() => setTab('accounts')}>Accounts</button>
+        <button className={tab === 'review' ? 'on' : ''} data-testid="crm-tab-review" onClick={() => setTab('review')}>Match review</button>
         <button className={tab === 'parties' ? 'on' : ''} data-testid="crm-tab-parties" onClick={() => setTab('parties')}>Parties (raw)</button>
         <button className={tab === 'pipeline' ? 'on' : ''} data-testid="crm-tab-pipeline" onClick={() => setTab('pipeline')}>Pipeline</button>
         <button className={tab === 'deals' ? 'on' : ''} data-testid="crm-tab-deals" onClick={() => setTab('deals')}>Deal book</button>
@@ -239,6 +249,9 @@ export function CRM({ role, ctx, toast }: { role: any; ctx: any; toast: (m: stri
           q={parties} role={r} hasCommercial={hasCommercial} hasPii={hasPii}
           sector={sector} setSector={setSector} onSelect={setSel}
         />
+      ) : tab === 'review' ? (
+        <ReviewQueue review={review} page={reviewPage} setPage={setReviewPage} pageSize={REVIEW_PAGE}
+          onChanged={() => { review.refetch(); }} toast={toast} />
       ) : tab === 'pipeline' ? (
         <PipelineView q={pipeline} hasCommercial={hasCommercial} />
       ) : (
@@ -883,6 +896,96 @@ function AccountsView({ list, detail, seg, setSeg, q, setQ, page, setPage, pageS
           )}
         </Card>
       )}
+    </div>
+  );
+}
+
+// ============================================================ MATCH REVIEW (fuzzy candidates + model verdict)
+interface ReviewCand { party_id: string; name: string; orders?: number; score?: number }
+interface ReviewItem {
+  hs_company_id: string; hs_name?: string; hs_domain?: string | null;
+  model_suggestion?: string | null; model_confidence?: number | null; model_reason?: string | null;
+  candidates?: ReviewCand[];
+}
+
+function ReviewQueue({ review, page, setPage, pageSize, onChanged, toast }: {
+  review: ReturnType<typeof useApi<{ rows?: ReviewItem[]; total?: number }>>;
+  page: number; setPage: (n: number) => void; pageSize: number; onChanged: () => void; toast: (m: string, k?: string) => void;
+}) {
+  const rows = review.data?.rows ?? [];
+  const total = review.data?.total ?? 0;
+  const pages = Math.max(1, Math.ceil(total / pageSize));
+  const [busy, setBusy] = useState<string | null>(null);
+
+  const act = async (path: string, body: unknown, label: string, hs: string) => {
+    setBusy(hs);
+    try {
+      await request(path, { method: 'POST', body: JSON.stringify(body) });
+      toast(label, 'ok');
+      onChanged();
+    } catch (e) {
+      const ae = e as ApiError;
+      toast(ae?.forbidden ? 'Forbidden — requires edit rights' : `Failed (${ae?.status ?? '?'})`, 'err');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  // default merge target = the candidate whose name matches the model's suggestion
+  const winnerFor = (it: ReviewItem): ReviewCand | undefined =>
+    (it.candidates ?? []).find((c) => c.name === it.model_suggestion) ?? (it.candidates ?? [])[0];
+
+  return (
+    <div>
+      <div className="row between" style={{ marginBottom: 12, alignItems: 'center' }}>
+        <span className="dim" style={{ fontSize: 12 }}>{num(total)} companies to review · model verdict + order-history shown · accept merges into the survivor, preserving lineage</span>
+      </div>
+      {review.isLoading && <Card title="Match review" icon={I.user}><Skeleton lines={8} /></Card>}
+      {!review.isLoading && rows.length === 0 && <Card title="Match review" icon={I.user}><div className="dim" style={{ padding: 14 }}>Nothing left to review — every candidate resolved.</div></Card>}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        {rows.map((it) => {
+          const win = winnerFor(it);
+          const conf = it.model_confidence != null ? Math.round(Number(it.model_confidence) * 100) : null;
+          return (
+            <Card key={it.hs_company_id} title={it.hs_name || 'HubSpot company'}
+              aux={<span className="dim mono" style={{ fontSize: 11 }}>{it.hs_domain || ''}</span>}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {it.model_suggestion ? (
+                  <div className="banner info" style={{ fontSize: 12.5 }}>
+                    {I.shield()}<div><b>Model:</b> merge into <b>{it.model_suggestion}</b>{conf != null && <Chip s={conf >= 90 ? 'ok' : conf >= 75 ? 'warn' : 'neutral'}>{conf}%</Chip>}<br /><span className="dim">{it.model_reason}</span></div>
+                  </div>
+                ) : (
+                  <div className="dim" style={{ fontSize: 12 }}>No model suggestion — likely distinct or junk.</div>
+                )}
+                <div>
+                  <div className="fldlabel" style={{ marginBottom: 4 }}>Candidate accounts (order history)</div>
+                  {(it.candidates ?? []).slice(0, 6).map((c) => (
+                    <div key={c.party_id} className="row between" style={{ fontSize: 12.5, padding: '2px 0' }}>
+                      <span>{c.name === it.model_suggestion ? <b>{c.name}</b> : c.name}</span>
+                      <span className="dim">{num(c.orders ?? 0)} orders · {Math.round(Number(c.score ?? 0) * 100)}%</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="row g8">
+                  <button className="btn primary sm" disabled={!win || busy === it.hs_company_id} data-testid="review-merge"
+                    onClick={() => win && act('/api/v1/crm/account-candidates/merge', { hs_company_id: it.hs_company_id, winner_party_id: win.party_id }, `Merged into ${win.name}`, it.hs_company_id)}>
+                    {I.check({ size: 13 })}Merge into {win?.name ?? '—'}
+                  </button>
+                  <button className="btn ghost sm" disabled={busy === it.hs_company_id} data-testid="review-reject"
+                    onClick={() => act('/api/v1/crm/account-candidates/reject', { hs_company_id: it.hs_company_id }, 'Marked distinct', it.hs_company_id)}>
+                    Distinct (reject)
+                  </button>
+                </div>
+              </div>
+            </Card>
+          );
+        })}
+      </div>
+      <div className="row g8" style={{ marginTop: 12, justifyContent: 'flex-end', alignItems: 'center' }}>
+        <button className="btn sm" disabled={page <= 0} onClick={() => setPage(page - 1)}>Prev</button>
+        <span className="dim" style={{ fontSize: 12 }}>Page {page + 1} of {pages}</span>
+        <button className="btn sm" disabled={page + 1 >= pages} onClick={() => setPage(page + 1)}>Next</button>
+      </div>
     </div>
   );
 }
