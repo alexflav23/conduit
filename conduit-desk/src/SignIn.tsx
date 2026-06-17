@@ -14,7 +14,7 @@ export function SignIn({ signIn, error }: { signIn: () => void; error?: string }
   return (
     <div className="signin" data-testid="signin-page">
       <div className="panel">
-        <div className="bolt">{I.bolt({ size: 28 })}</div>
+        <div className="bolt">{I.conduit({ size: 28 })}</div>
         <h2 className="hv-gradient-text">CONDUIT</h2>
         <div className="sub">Hypervolt&rsquo;s system of record &mdash; staff only</div>
 

@@ -13,6 +13,25 @@ export type IconC = (p?: IconProps) => React.ReactElement;
 export const I: Record<string, IconC> = {
   grid: (p) => <Ic {...p}><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></Ic>,
   bolt: (p) => <Ic {...p} fill="currentColor" sw={0}><path d="M13 2 4 14h6l-1 8 9-12h-6z"/></Ic>,
+  // The Conduit junction mark ("Articulate" — identity/Conduit Junction Refined): one hub routing to three
+  // tapered spokes → terminal nodes. Drawn in currentColor on a 100×100 grid so it inherits the badge colour.
+  conduit: ({ size = 18, fill, sw, ...p } = {}) => (
+    <svg width={size} height={size} viewBox="0 0 100 100" fill="currentColor" {...p}>
+      <polygon points="54.40,44.00 52.50,31.00 47.50,31.00 45.60,44.00" />
+      <circle cx="50.00" cy="44.00" r="4.4" />
+      <circle cx="50.00" cy="31.00" r="2.5" />
+      <polygon points="53.00,56.81 65.20,61.67 67.70,57.33 57.40,49.19" />
+      <circle cx="55.20" cy="53.00" r="4.4" />
+      <circle cx="66.45" cy="59.50" r="2.5" />
+      <polygon points="42.60,49.19 32.30,57.33 34.80,61.67 47.00,56.81" />
+      <circle cx="44.80" cy="53.00" r="4.4" />
+      <circle cx="33.55" cy="59.50" r="2.5" />
+      <circle cx="50" cy="50" r="8.4" />
+      <circle cx="50.00" cy="20.00" r="6" />
+      <circle cx="75.98" cy="65.00" r="6" />
+      <circle cx="24.02" cy="65.00" r="6" />
+    </svg>
+  ),
   charger: (p) => <Ic {...p}><rect x="6" y="3" width="12" height="18" rx="2.5"/><path d="M12 8 10 12h3l-2 4"/></Ic>,
   pulse: (p) => <Ic {...p}><path d="M3 12h4l2-6 4 12 2-6h6"/></Ic>,
   alert: (p) => <Ic {...p}><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.3 2.6 17a2 2 0 0 0 1.7 3h15.4a2 2 0 0 0 1.7-3L13.7 3.3a2 2 0 0 0-3.4 0Z"/></Ic>,

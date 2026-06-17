@@ -267,7 +267,7 @@ export function App() {
     <div className="app">
       <aside className="rail">
         <div className="brand">
-          <span className="bolt">{I.bolt({ size: 20 })}</span>
+          <span className="bolt">{I.conduit({ size: 20 })}</span>
           <span className="wm"><b>CONDUIT</b><span>Desk</span></span>
         </div>
         {GROUPS.map((g) => (
