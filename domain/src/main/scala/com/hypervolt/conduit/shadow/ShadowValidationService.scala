@@ -21,18 +21,26 @@ final class ShadowValidationService[F[_]: Async](xa: Transactor[F]) {
   // Each check: (code, body(runId) → the SELECT feeding the upsert).
   // expected = source-stated / invariant-expected ; actual = Conduit-computed ; variance = actual − expected.
   private val checks: List[(String, UUID => Fragment)] = List(
-    // Margin integrity: COGS relieved with zero recognised revenue. Graded by the SOURCE header: a header value
-    // means the import dropped the line price (HIGH — understated revenue to fix); a £0 header means a genuinely
-    // free shipment (LOW — warranty/replacement/sample, COGS correctly absorbed). expected = source revenue.
+    // Margin integrity: COGS relieved with zero recognised revenue. HIGH only when the WHOLE order is unpriced
+    // (header > 0 but no line carries a price → the import dropped the price → understated revenue to fix). If the
+    // order HAS priced lines, this dispatch shipped a genuinely £0 line (a free unit within a paid order — the
+    // header belongs to the priced line, already recognised) → LOW, £0 variance, no money missing.
     (
       "cogs_without_revenue",
       (runId: UUID) => fr"""SELECT 'cogs_without_revenue',
-                      CASE WHEN o.subtotal_ex_vat > 0 THEN 'high' ELSE 'low' END,
+                      CASE WHEN o.subtotal_ex_vat > 0 AND NOT EXISTS (SELECT 1 FROM order_line p WHERE p.order_id = o.id AND p.unit_price_ex_vat > 0)
+                           THEN 'high' ELSE 'low' END,
                       'recognition', rr.dispatch_id::text, rr.entity_id,
-                      o.subtotal_ex_vat, rr.revenue_ex_vat, rr.revenue_ex_vat - o.subtotal_ex_vat, rr.currency,
+                      CASE WHEN o.subtotal_ex_vat > 0 AND NOT EXISTS (SELECT 1 FROM order_line p WHERE p.order_id = o.id AND p.unit_price_ex_vat > 0)
+                           THEN o.subtotal_ex_vat ELSE 0 END,
+                      rr.revenue_ex_vat,
+                      rr.revenue_ex_vat - CASE WHEN o.subtotal_ex_vat > 0 AND NOT EXISTS (SELECT 1 FROM order_line p WHERE p.order_id = o.id AND p.unit_price_ex_vat > 0)
+                           THEN o.subtotal_ex_vat ELSE 0 END,
+                      rr.currency,
                       jsonb_build_object('order_id', rr.order_id::text, 'order_no', o.order_no, 'cogs', rr.cogs,
                         'source_header_ex_vat', o.subtotal_ex_vat,
-                        'classification', CASE WHEN o.subtotal_ex_vat > 0 THEN 'price_lost_in_import' ELSE 'genuinely_free' END),
+                        'classification', CASE WHEN o.subtotal_ex_vat > 0 AND NOT EXISTS (SELECT 1 FROM order_line p WHERE p.order_id = o.id AND p.unit_price_ex_vat > 0)
+                             THEN 'price_lost_in_import' ELSE 'free_unit_in_order' END),
                       $runId, 'open'
                     FROM revenue_recognition rr JOIN "order" o ON o.id = rr.order_id
                     WHERE rr.cogs > 0 AND rr.revenue_ex_vat = 0"""
