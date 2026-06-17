@@ -101,4 +101,71 @@ object CrmReadRepo {
       )
     }
   }
+
+  // The attributed deal/PO book (doc 26 §4a + the HubSpot company association): every historical customer deal
+  // tied to the installer/wholesaler/retail company that placed it. Paginated; filterable by segment + won and a
+  // company/pipeline search. company_name is the attribution carried on the deal.
+  private def dealFilters(segment: Option[String], won: Option[Boolean], q: Option[String]): Option[doobie.Fragment] = {
+    val fs = List(
+      segment.map(s => fr"segment = $s"),
+      won.map(w => fr"is_won = $w"),
+      q.map(t => fr"(company_name ILIKE ${"%" + t + "%"} OR pipeline ILIKE ${"%" + t + "%"})")
+    ).flatten
+    if (fs.isEmpty) None else Some(fs.reduce(_ ++ fr"AND" ++ _))
+  }
+
+  def deals(
+      segment: Option[String],
+      won: Option[Boolean],
+      q: Option[String],
+      limit: Int,
+      offset: Int
+  ): doobie.ConnectionIO[List[Json]] =
+    (fr"""SELECT deal_id, company_name, segment, pipeline, amount, created_at, closed_at, is_won, is_closed
+          FROM deal_snapshot"""
+      ++ Fragments.whereAndOpt(dealFilters(segment, won, q))
+      ++ fr"ORDER BY created_at DESC NULLS LAST, amount DESC NULLS LAST LIMIT $limit OFFSET $offset")
+      .query[
+        (String, Option[String], Option[String], Option[String], Option[BigDecimal], Option[LocalDate], Option[LocalDate], Boolean, Boolean)
+      ]
+      .to[List]
+      .map(_.map {
+        case (id, company, seg, pipe, amount, created, closed, won_, isClosed) =>
+          Json.obj(
+            "deal_id"      -> id.asJson,
+            "company_name" -> company.asJson,
+            "segment"      -> seg.asJson,
+            "pipeline"     -> pipe.asJson,
+            "amount"       -> amount.map(_.toString).asJson,
+            "created_at"   -> created.map(_.toString).asJson,
+            "closed_at"    -> closed.map(_.toString).asJson,
+            "won"          -> won_.asJson,
+            "is_closed"    -> isClosed.asJson,
+            "status"       -> (if (!isClosed) "open" else if (won_) "won" else "lost").asJson
+          )
+      })
+
+  def dealsCount(segment: Option[String], won: Option[Boolean], q: Option[String]): doobie.ConnectionIO[Long] =
+    (fr"SELECT count(*) FROM deal_snapshot" ++ Fragments.whereAndOpt(dealFilters(segment, won, q)))
+      .query[Long]
+      .unique
+
+  def dealsSummary: doobie.ConnectionIO[Json] =
+    sql"""SELECT COALESCE(segment, 'unattributed'), count(*), count(*) FILTER (WHERE is_won),
+                 COALESCE(sum(amount) FILTER (WHERE is_won), 0), count(*) FILTER (WHERE company_id IS NOT NULL)
+          FROM deal_snapshot GROUP BY 1 ORDER BY 2 DESC"""
+      .query[(String, Long, Long, BigDecimal, Long)]
+      .to[List]
+      .map(rs =>
+        Json.fromValues(rs.map {
+          case (seg, n, wonN, wonValue, attributed) =>
+            Json.obj(
+              "segment"        -> seg.asJson,
+              "deals"          -> n.asJson,
+              "won"            -> wonN.asJson,
+              "won_value"      -> wonValue.toString.asJson,
+              "attributed"     -> attributed.asJson
+            )
+        })
+      )
 }

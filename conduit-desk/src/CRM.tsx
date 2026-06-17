@@ -113,7 +113,10 @@ export function CRM({ role, ctx, toast }: { role: any; ctx: any; toast: (m: stri
   const hasPii = layers.indexOf('pii') >= 0;
   const market = c.market ? marketId(c.market) : '';
 
-  const [tab, setTab] = useState<'parties' | 'pipeline'>('parties');
+  const [tab, setTab] = useState<'parties' | 'pipeline' | 'deals'>('parties');
+  const [dealSeg, setDealSeg] = useState('all');
+  const [dealQ, setDealQ] = useState('');
+  const [dealPage, setDealPage] = useState(0);
   const [sector, setSector] = useState('all');
   const [sel, setSel] = useState<Party | null>(null);
 
@@ -138,6 +141,22 @@ export function CRM({ role, ctx, toast }: { role: any; ctx: any; toast: (m: stri
     ['crm', 'pipeline', c.entity, market],
     `/api/v1/crm/pipeline${pipeQ.toString() ? `?${pipeQ}` : ''}`,
     { enabled: tab === 'pipeline' },
+  );
+
+  // The attributed deal/PO book — every customer deal tied to the installer/wholesaler/retail company that placed it.
+  const DEAL_PAGE = 50;
+  const dealQs = new URLSearchParams({ limit: String(DEAL_PAGE), offset: String(dealPage * DEAL_PAGE) });
+  if (dealSeg !== 'all') dealQs.set('segment', dealSeg);
+  if (dealQ.trim()) dealQs.set('q', dealQ.trim());
+  const dealBook = useApi<{ rows?: DealRow[]; total?: number }>(
+    ['crm', 'deals', dealSeg, dealQ, dealPage],
+    `/api/v1/crm/deals?${dealQs}`,
+    { enabled: tab === 'deals' },
+  );
+  const dealSummary = useApi<{ segments?: DealSeg[] }>(
+    ['crm', 'deals-summary'],
+    '/api/v1/crm/deals/summary',
+    { enabled: tab === 'deals' },
   );
 
   const submitLimit = (p: Party) => {
@@ -181,6 +200,7 @@ export function CRM({ role, ctx, toast }: { role: any; ctx: any; toast: (m: stri
       <div className="seg" style={{ marginBottom: 18 }}>
         <button className={tab === 'parties' ? 'on' : ''} data-testid="crm-tab-parties" onClick={() => setTab('parties')}>Parties</button>
         <button className={tab === 'pipeline' ? 'on' : ''} data-testid="crm-tab-pipeline" onClick={() => setTab('pipeline')}>Pipeline</button>
+        <button className={tab === 'deals' ? 'on' : ''} data-testid="crm-tab-deals" onClick={() => setTab('deals')}>Deal book</button>
       </div>
 
       {tab === 'parties' ? (
@@ -188,8 +208,14 @@ export function CRM({ role, ctx, toast }: { role: any; ctx: any; toast: (m: stri
           q={parties} role={r} hasCommercial={hasCommercial} hasPii={hasPii}
           sector={sector} setSector={setSector} onSelect={setSel}
         />
-      ) : (
+      ) : tab === 'pipeline' ? (
         <PipelineView q={pipeline} hasCommercial={hasCommercial} />
+      ) : (
+        <DealBook
+          book={dealBook} summary={dealSummary} seg={dealSeg} setSeg={(s) => { setDealSeg(s); setDealPage(0); }}
+          q={dealQ} setQ={(v) => { setDealQ(v); setDealPage(0); }} page={dealPage} setPage={setDealPage} pageSize={DEAL_PAGE}
+          hasCommercial={hasCommercial}
+        />
       )}
 
       <PartyDrawer
@@ -580,5 +606,75 @@ function CreditLimitRequest({ party, draft, setDraft, submitting, onCancel, onSu
         </div>
       </div>
     </>
+  );
+}
+
+// ============================================================ DEAL BOOK (attributed customer POs)
+interface DealRow {
+  deal_id: string; company_name?: string | null; segment?: string | null; pipeline?: string | null;
+  amount?: string | null; created_at?: string | null; closed_at?: string | null; won?: boolean; status?: string;
+}
+interface DealSeg { segment: string; deals: number; won: number; won_value: string; attributed: number }
+
+function DealBook({ book, summary, seg, setSeg, q, setQ, page, setPage, pageSize, hasCommercial }: {
+  book: ReturnType<typeof useApi<{ rows?: DealRow[]; total?: number }>>;
+  summary: ReturnType<typeof useApi<{ segments?: DealSeg[] }>>;
+  seg: string; setSeg: (s: string) => void; q: string; setQ: (v: string) => void;
+  page: number; setPage: (n: number) => void; pageSize: number; hasCommercial: boolean;
+}) {
+  const segs = summary.data?.segments ?? [];
+  const rows = book.data?.rows ?? [];
+  const total = book.data?.total ?? 0;
+  const pages = Math.max(1, Math.ceil(total / pageSize));
+  const tone: Record<string, string> = { won: 'ok', lost: 'danger', open: 'warn' };
+  return (
+    <div>
+      {/* per-segment summary */}
+      <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 12, marginBottom: 16 }}>
+        {summary.isLoading && <SkeletonRow cols={1} />}
+        {segs.map((s) => (
+          <Card key={s.segment} title={s.segment} style={{ padding: '12px 14px' }}>
+            <div style={{ fontFamily: 'var(--font-disp)', fontSize: 22, fontWeight: 600 }}>{num(s.deals)}</div>
+            <div className="dim" style={{ fontSize: 11.5 }}>{num(s.won)} won{hasCommercial && Number(s.won_value) > 0 ? ` · ${gbp(s.won_value, 'GBP')}` : ''}</div>
+          </Card>
+        ))}
+      </div>
+
+      <div className="loadbar" style={{ marginBottom: 12, gap: 8 }}>
+        <select className="cellinput" value={seg} onChange={(e) => setSeg(e.target.value)} data-testid="deal-seg">
+          <option value="all">All segments</option>
+          {segs.map((s) => <option key={s.segment} value={s.segment}>{s.segment}</option>)}
+        </select>
+        <input className="cellinput" style={{ width: 240, textAlign: 'left' }} value={q} data-testid="deal-search"
+          onChange={(e) => setQ(e.target.value)} placeholder="Search company or pipeline…" />
+        <span className="dim" style={{ fontSize: 12, marginLeft: 'auto' }}>{num(total)} deals</span>
+      </div>
+
+      <Card title="Customer deal / PO book" icon={I.list} aux={<span className="dim" style={{ fontSize: 11.5 }}>attributed to the installer / wholesaler / retail customer</span>} className="tablewrap" style={{ padding: 0 }}>
+        <table className="tbl">
+          <thead><tr><th>Company</th><th>Segment</th><th>Pipeline</th><th style={{ textAlign: 'right' }}>Amount</th><th>Created</th><th>Status</th></tr></thead>
+          <tbody>
+            {book.isLoading && <><SkeletonRow cols={6} /><SkeletonRow cols={6} /><SkeletonRow cols={6} /></>}
+            {!book.isLoading && rows.length === 0 && <EmptyRow cols={6}>No deals match.</EmptyRow>}
+            {rows.map((d) => (
+              <tr key={d.deal_id} data-testid="deal-row">
+                <td>{d.company_name || <span className="dim">unattributed</span>}</td>
+                <td><span className="dim">{d.segment || '—'}</span></td>
+                <td className="dim" style={{ fontSize: 12 }}>{d.pipeline || '—'}</td>
+                <td style={{ textAlign: 'right' }}>{hasCommercial ? gbp(d.amount, 'GBP') : <span className="dim">·</span>}</td>
+                <td className="dim" style={{ fontSize: 12 }}>{d.created_at || '—'}</td>
+                <td><Chip s={tone[d.status || ''] || 'neutral'}>{d.status || '—'}</Chip></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </Card>
+
+      <div className="row g8" style={{ marginTop: 12, justifyContent: 'flex-end', alignItems: 'center' }}>
+        <button className="btn sm" disabled={page <= 0} onClick={() => setPage(page - 1)} data-testid="deal-prev">Prev</button>
+        <span className="dim" style={{ fontSize: 12 }}>Page {page + 1} of {pages}</span>
+        <button className="btn sm" disabled={page + 1 >= pages} onClick={() => setPage(page + 1)} data-testid="deal-next">Next</button>
+      </div>
+    </div>
   );
 }

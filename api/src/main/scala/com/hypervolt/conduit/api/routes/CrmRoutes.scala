@@ -83,6 +83,46 @@ final class CrmRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
           else CrmReadRepo.pipeline(limit.getOrElse(200).min(500).max(1)).transact(xa).map(Right(_))
       })
 
+  // The attributed deal/PO book — every historical customer deal tied to the installer/wholesaler/retail company
+  // that placed it, paginated + filterable by segment / won / company search.
+  private val deals =
+    base.get
+      .in("api" / "v1" / "crm" / "deals")
+      .in(query[Option[String]]("segment"))
+      .in(query[Option[String]]("won"))
+      .in(query[Option[String]]("q"))
+      .in(query[Option[Int]]("limit"))
+      .in(query[Option[Int]]("offset"))
+      .out(jsonBody[Json])
+      .serverLogic(p => {
+        case (segment, wonS, q, limitF, offsetF) =>
+          if (!gate(p)) Async[F].pure(Left(denied))
+          else {
+            val lim = limitF.getOrElse(50).min(200).max(1)
+            val off = offsetF.getOrElse(0).max(0)
+            val won = wonS.flatMap(s => Try(s.toBoolean).toOption)
+            (
+              CrmReadRepo.deals(segment.filter(_.nonEmpty), won, q.filter(_.nonEmpty), lim, off),
+              CrmReadRepo.dealsCount(segment.filter(_.nonEmpty), won, q.filter(_.nonEmpty))
+            ).tupled
+              .transact(xa)
+              .map {
+                case (rows, total) =>
+                  Right(Json.obj("rows" -> Json.fromValues(rows), "total" -> total.asJson, "limit" -> lim.asJson, "offset" -> off.asJson))
+              }
+          }
+      })
+
+  private val dealsSummary =
+    base.get
+      .in("api" / "v1" / "crm" / "deals" / "summary")
+      .out(jsonBody[Json])
+      .serverLogic(p =>
+        _ =>
+          if (!gate(p)) Async[F].pure(Left(denied))
+          else CrmReadRepo.dealsSummary.transact(xa).map(s => Right(Json.obj("segments" -> s)))
+      )
+
   val routes: HttpRoutes[F] =
-    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(List(parties, pipeline))
+    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(List(parties, pipeline, dealsSummary, deals))
 }

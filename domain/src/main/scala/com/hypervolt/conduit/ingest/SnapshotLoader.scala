@@ -222,6 +222,7 @@ object SnapshotLoader {
   // deals_won.ndjson is the older won-only scrape — lifecycle supersedes it, so it is skipped here.
   private def hubspot(dataset: String, row: Json): ConnectionIO[Int] =
     if (dataset == "rma_tickets") hubspotRmaTicket(row)
+    else if (dataset == "deals_attributed") hubspotAttributedDeal(row)
     else if (dataset != "deals_lifecycle") 0.pure[ConnectionIO]
     else {
       val c = row.hcursor
@@ -247,6 +248,36 @@ object SnapshotLoader {
                   payment_method = EXCLUDED.payment_method""".update.run
       }
     }
+
+  // ingest/hubspot/deals_attributed.ndjson → deal_snapshot WITH company attribution (deal → installer/wholesaler/
+  // retail customer). Supersedes deals_lifecycle: same substrate plus company_id/company_name/segment, so the desk
+  // shows a per-company deal/PO book and demand attributes to a customer. Idempotent on deal_id.
+  private def hubspotAttributedDeal(row: Json): ConnectionIO[Int] = {
+    val c = row.hcursor
+    (
+      c.get[String]("deal_id").toOption,
+      c.get[String]("created").toOption.flatMap(s => scala.util.Try(LocalDate.parse(s)).toOption),
+      c.get[String]("pipeline").toOption
+    ).tupled match {
+      case None => 0.pure[ConnectionIO]
+      case Some((dealId, created, pipeline)) =>
+        val closed = c.get[String]("closed").toOption.flatMap(s => scala.util.Try(LocalDate.parse(s)).toOption)
+        val won    = c.get[Boolean]("won").toOption.getOrElse(false)
+        val isClosed = c.get[Boolean]("is_closed").toOption.getOrElse(false) || won
+        val amount = c.get[String]("amount").toOption.flatMap(s => scala.util.Try(BigDecimal(s)).toOption)
+        val companyId   = c.get[String]("company_id").toOption
+        val companyName = c.get[String]("company_name").toOption
+        val segment     = c.get[String]("segment").toOption
+        sql"""INSERT INTO deal_snapshot
+                (deal_id, pipeline, created_at, closed_at, is_won, is_closed, amount, company_id, company_name, segment)
+              VALUES ($dealId, $pipeline, $created, $closed, $won, $isClosed,
+                      ${amount.getOrElse(BigDecimal(0))}, $companyId, $companyName, $segment)
+              ON CONFLICT (deal_id) DO UPDATE SET
+                pipeline = EXCLUDED.pipeline, created_at = EXCLUDED.created_at, closed_at = EXCLUDED.closed_at,
+                is_won = EXCLUDED.is_won, is_closed = EXCLUDED.is_closed, amount = EXCLUDED.amount,
+                company_id = EXCLUDED.company_id, company_name = EXCLUDED.company_name, segment = EXCLUDED.segment""".update.run
+    }
+  }
 
   // ingest/ghostbusters/activations.ndjson — the SELL-THROUGH half of the serial ledger (prod Athena
   // charger_activation, first activation per V3 serial). The ship guard tolerates a 7-day clock skew but
