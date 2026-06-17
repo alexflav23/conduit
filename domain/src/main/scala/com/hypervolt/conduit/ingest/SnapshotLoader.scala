@@ -224,7 +224,22 @@ object SnapshotLoader {
     if (dataset == "rma_tickets") hubspotRmaTicket(row)
     else if (dataset == "deals_attributed") hubspotAttributedDeal(row)
     else if (dataset == "contacts") hubspotContact(row)
+    else if (dataset == "companies") hubspotCompany(row)
     else 0.pure[ConnectionIO]
+
+  // ingest/hubspot/companies.ndjson → hubspot_company_raw staging (the canonical company universe for correlation).
+  private def hubspotCompany(row: Json): ConnectionIO[Int] = {
+    val c = row.hcursor
+    c.get[String]("company_id").toOption match {
+      case None => 0.pure[ConnectionIO]
+      case Some(id) =>
+        val s = (k: String) => c.get[String](k).toOption.filter(_.nonEmpty)
+        sql"""INSERT INTO hubspot_company_raw (company_id, name, domain, industry, country)
+              VALUES ($id, ${s("name")}, ${s("domain")}, ${s("industry")}, ${s("country")})
+              ON CONFLICT (company_id) DO UPDATE SET
+                name = EXCLUDED.name, domain = EXCLUDED.domain, industry = EXCLUDED.industry, country = EXCLUDED.country""".update.run
+    }
+  }
 
   // ingest/hubspot/contacts.ndjson → hubspot_contact_raw staging. The MDM correlation step materializes these into
   // `contact` once each contact's HubSpot company is bound to a master party. Idempotent on contact_id.

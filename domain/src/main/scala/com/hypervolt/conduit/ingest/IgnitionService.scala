@@ -256,10 +256,13 @@ final class IgnitionService[F[_]: Async](xa: Transactor[F]) {
     val linkExact =
       sql"""INSERT INTO account_source_link (party_id, source_system, source_id, source_name, match_method, confidence, status)
             SELECT DISTINCT ON (hc.cid) p.id, 'hubspot_company', hc.cid, hc.cname, 'exact', 1.000, 'linked'
-            FROM (SELECT DISTINCT company_id AS cid, company_name AS cname, segment AS seg,
-                    btrim(regexp_replace(regexp_replace(regexp_replace(lower(company_name),'^mrp:\s*','','g'),
+            FROM (SELECT c.company_id AS cid, c.name AS cname, coalesce(ds.seg, 'other') AS seg,
+                    btrim(regexp_replace(regexp_replace(regexp_replace(lower(c.name),'^mrp:\s*','','g'),
                       '\y(ltd|limited|plc|llp|llc|inc|the|group|holdings|uk)\y','','g'),'[^a-z0-9]+',' ','g')) AS nn
-                  FROM deal_snapshot WHERE company_id IS NOT NULL AND company_name IS NOT NULL) hc
+                  FROM hubspot_company_raw c
+                  LEFT JOIN (SELECT DISTINCT company_id, segment AS seg FROM deal_snapshot WHERE company_id IS NOT NULL) ds
+                    ON ds.company_id = c.company_id
+                  WHERE c.name IS NOT NULL AND c.name <> '') hc
             JOIN party p ON p.normalized_name = hc.nn AND hc.nn <> ''
             ORDER BY hc.cid, p.created_at
             ON CONFLICT (source_system, source_id) DO NOTHING""".update.run
@@ -275,8 +278,11 @@ final class IgnitionService[F[_]: Async](xa: Transactor[F]) {
                                WHEN 'automotive' THEN 'fleet' ELSE 'other' END,
                    true, hc.seg, (SELECT id FROM market WHERE code = 'UK'),
                    jsonb_build_object('hubspot_company', hc.cid)
-            FROM (SELECT DISTINCT company_id AS cid, company_name AS cname, segment AS seg
-                  FROM deal_snapshot WHERE company_id IS NOT NULL AND company_name IS NOT NULL) hc
+            FROM (SELECT c.company_id AS cid, c.name AS cname, coalesce(ds.seg, 'other') AS seg
+                  FROM hubspot_company_raw c
+                  LEFT JOIN (SELECT DISTINCT company_id, segment AS seg FROM deal_snapshot WHERE company_id IS NOT NULL) ds
+                    ON ds.company_id = c.company_id
+                  WHERE c.name IS NOT NULL AND c.name <> '') hc
             WHERE NOT EXISTS (SELECT 1 FROM account_source_link asl WHERE asl.source_system = 'hubspot_company' AND asl.source_id = hc.cid)""".update.run
     val linkNew =
       sql"""INSERT INTO account_source_link (party_id, source_system, source_id, source_name, match_method, confidence, status)
