@@ -798,7 +798,7 @@ function AccountsView({ list, detail, seg, setSeg, q, setQ, page, setPage, pageS
   const total = list.data?.total ?? 0;
   const pages = Math.max(1, Math.ceil(total / pageSize));
   const d = detail.data ?? null;
-  const segs = ['all', 'installer', 'wholesaler', 'retail', 'energy', 'automotive', 'commercial', 'other'];
+  const segs = ['all', 'consumer', 'installer', 'wholesaler', 'retail', 'energy', 'automotive', 'commercial', 'other'];
 
   return (
     <div className="grid" style={{ gridTemplateColumns: sel ? '1.3fr 1fr' : '1fr', gap: 16, alignItems: 'start' }}>
