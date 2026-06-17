@@ -48,7 +48,8 @@ final class IgnitionService[F[_]: Async](xa: Transactor[F]) {
             branches <- detectBranches
             owners  <- materializeOwners
             soldVia <- phonePreAssociate
-          } yield s"stamped=$stamped lots=$lots legacy_lots=$legacyLots serials_linked=$linked periods=$periods stock_items=$stock exposure_rows=$exp price_lost_lines_fixed=$repriced order_placed_events=$placed recognition_events=$emitted opening_inv_event=$invOpen warranty_windows=$warr replacements_linked=$repl $mdm $merged branches_linked=$branches $owners customer_installer_phone_links=$soldVia"
+            fcOwn   <- seedForecastOwnership
+          } yield s"stamped=$stamped lots=$lots legacy_lots=$legacyLots serials_linked=$linked periods=$periods stock_items=$stock exposure_rows=$exp price_lost_lines_fixed=$repriced order_placed_events=$placed recognition_events=$emitted opening_inv_event=$invOpen warranty_windows=$warr replacements_linked=$repl $mdm $merged branches_linked=$branches $owners customer_installer_phone_links=$soldVia forecastable_accounts=$fcOwn"
       }
       .transact(xa)
 
@@ -512,6 +513,19 @@ final class IgnitionService[F[_]: Async](xa: Transactor[F]) {
       _  <- linkConsumerSources
     } yield s"owner_accounts=$o serials_owner_linked=$ls consumer_contacts_unified=$cc"
   }
+
+  // Bootstrap the H6Q bottom-up spine (doc 12): the cycle only generates capture slots for accounts that are
+  // `forecastable` and owned by someone. No account-manager delegation exists in the imported book, so seed the
+  // material trade accounts (≥ £100k lifetime order value — the ones worth a manual forecast) as forecastable,
+  // owned by the operator until AMs are delegated. Top-level orgs only (a master rolls up from its branches).
+  // Real accounts + the real operator — no fabricated owners. Idempotent (skips ones already forecastable).
+  private def seedForecastOwnership: ConnectionIO[Int] =
+    sql"""UPDATE party p
+          SET roles = (SELECT array_agg(DISTINCT r) FROM unnest(COALESCE(p.roles, '{}'::text[]) || ARRAY['forecastable']) r),
+              owner_user_id = COALESCE(p.owner_user_id, (SELECT id FROM app_user WHERE email = 'flavian@hypervolt.co.uk'))
+          WHERE p.parent_party_id IS NULL AND p.status = 'active' AND p.is_organization
+            AND NOT ('forecastable' = ANY(COALESCE(p.roles, '{}'::text[])))
+            AND (SELECT COALESCE(sum(o.total_inc_vat), 0) FROM "order" o WHERE o.sold_to_party_id = p.id) >= 100000""".update.run
 
   // Phone pre-association (doc 02 §C): a phone number is a person-level identity key. Where email did NOT already
   // unify a consumer with the installer/wholesaler who sold or fitted their charger, an exact phone match does —

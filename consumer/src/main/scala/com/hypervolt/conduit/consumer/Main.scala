@@ -154,6 +154,17 @@ object Main extends IOApp.Simple {
               .flatMap(_ => logger.info("forecast-cycle: rolling-origin run complete"))
               .handleErrorWith(e => logger.error(e)(s"forecast-cycle failed: ${e.getMessage}")) *>
               IO.sleep(6.hours)).foreverM
+          // The H6Q bottom-up capture cycle (doc 12 §2.2): open the current ISO-week cycle and generate the
+          // outstanding capture slots for owned forecastable accounts. Idempotent on the week code; runs on boot
+          // and weekly thereafter. The statistical forecastLoop above is the TOP-DOWN engine — this is the spine
+          // owners submit into.
+          val forecastService = new com.hypervolt.conduit.forecast.ForecastService[IO](xa)
+          val h6qCycleLoop: IO[Unit] =
+            (IO(java.time.LocalDate.now())
+              .flatMap(forecastService.openCycle(_, "weekly"))
+              .flatMap { case (id, created) => logger.info(s"h6q-cycle: cycle $id open, $created outstanding slots") }
+              .handleErrorWith(e => logger.error(e)(s"h6q-cycle failed: ${e.getMessage}")) *>
+              IO.sleep(6.hours)).foreverM
           PulsarEventPublisher.create[IO](pulsar).flatMap { publisher =>
             val relay                                           = new OutboxRelay[IO](xa, publisher)
             val relayLoop: IO[Unit]                             = (relay.runOnce() *> IO.sleep(1.second)).foreverM
@@ -178,7 +189,8 @@ object Main extends IOApp.Simple {
                 Supervised("order-commitment", commitmentConsumer.runForever),
                 Supervised("shadow-validation", shadowLoop),
                 Supervised("notification-delivery", notifyLoop),
-                Supervised("forecast-cycle", forecastLoop)
+                Supervised("forecast-cycle", forecastLoop),
+                Supervised("h6q-cycle", h6qCycleLoop)
               ).parSequence_
           }
         }
