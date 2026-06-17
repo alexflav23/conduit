@@ -320,6 +320,42 @@ final class IgnitionService[F[_]: Async](xa: Transactor[F]) {
             FROM hubspot_contact_raw r
             JOIN account_source_link asl ON asl.source_system = 'hubspot_company' AND asl.source_id = r.company_id AND asl.status = 'linked'
             ON CONFLICT (hs_contact_id) WHERE hs_contact_id IS NOT NULL DO NOTHING""".update.run
+    // Orphan contacts (no HubSpot company association) attributed by a SAFE signal: (a) the free-text company they
+    // typed matches a master account by normalized name, or (b) a business email domain that resolves to exactly
+    // one account (free-email domains excluded — gmail etc. are individuals, never a company). Free-email + no
+    // company stays a genuine individual consumer, never force-fitted to a B2B account.
+    val freeDomains =
+      "('gmail.com','googlemail.com','hotmail.com','hotmail.co.uk','outlook.com','outlook.co.uk','yahoo.com','yahoo.co.uk'," +
+        "'icloud.com','live.co.uk','live.com','btinternet.com','me.com','aol.com','sky.com','mail.com','protonmail.com')"
+    val orphanByName =
+      (fr"""INSERT INTO contact (party_id, first_name, last_name, role, email, phone, hs_contact_id)
+            SELECT DISTINCT ON (r.contact_id) p.id, r.first_name, r.last_name, r.job_title, nullif(r.email,''), r.phone, r.contact_id
+            FROM hubspot_contact_raw r
+            JOIN party p ON p.status <> 'merged' AND p.normalized_name <> ''
+              AND p.normalized_name = btrim(regexp_replace(regexp_replace(regexp_replace(lower(r.company),'^mrp:\s*','','g'),
+                  '\y(ltd|limited|plc|llp|llc|inc|the|group|holdings|uk)\y','','g'),'[^a-z0-9]+',' ','g'))
+            WHERE r.company_id IS NULL AND coalesce(r.company,'') <> ''
+            ON CONFLICT (hs_contact_id) WHERE hs_contact_id IS NOT NULL DO NOTHING""").update.run
+    val orphanByDomain =
+      (sql"""INSERT INTO contact (party_id, first_name, last_name, role, email, phone, hs_contact_id)
+            SELECT dom.party_id, r.first_name, r.last_name, r.job_title, nullif(r.email,''), r.phone, r.contact_id
+            FROM hubspot_contact_raw r
+            JOIN (
+              SELECT lower(hcr.domain) AS domain, min(asl.party_id::text)::uuid AS party_id
+              FROM hubspot_company_raw hcr
+              JOIN account_source_link asl ON asl.source_system='hubspot_company' AND asl.source_id=hcr.company_id AND asl.status='linked'
+              WHERE hcr.domain IS NOT NULL AND hcr.domain <> '' AND lower(hcr.domain) NOT IN """ ++ Fragment.const(freeDomains) ++ fr"""
+              GROUP BY 1 HAVING count(DISTINCT asl.party_id) = 1
+            ) dom ON dom.domain = lower(split_part(r.email,'@',2))
+            WHERE r.company_id IS NULL AND r.email LIKE '%@%'
+            ON CONFLICT (hs_contact_id) WHERE hs_contact_id IS NOT NULL DO NOTHING""").update.run
+    // link every materialized contact's identity to its master party (idempotent), covering company + orphan paths
+    val linkAllContacts =
+      sql"""INSERT INTO account_source_link (party_id, source_system, source_id, source_name, match_method, confidence, status)
+            SELECT ct.party_id, 'hubspot_contact', ct.hs_contact_id,
+                   btrim(coalesce(ct.first_name,'') || ' ' || coalesce(ct.last_name,'')), 'exact', 1.000, 'linked'
+            FROM contact ct WHERE ct.hs_contact_id IS NOT NULL
+            ON CONFLICT (source_system, source_id) DO NOTHING""".update.run
     for {
       ex   <- linkExact
       _    <- stampExact
@@ -328,7 +364,10 @@ final class IgnitionService[F[_]: Async](xa: Transactor[F]) {
       cand <- candidates
       _    <- linkContacts
       ct   <- materializeContacts
-    } yield s"mdm_company_exact=$ex mdm_new_parties=$np mdm_candidates=$cand contacts_materialized=$ct"
+      obn  <- orphanByName
+      obd  <- orphanByDomain
+      _    <- linkAllContacts
+    } yield s"mdm_company_exact=$ex mdm_new_parties=$np mdm_candidates=$cand contacts_materialized=$ct orphan_by_name=$obn orphan_by_domain=$obd"
   }
 
   // Apply account matches → merge with perfect lineage (doc 02). Picks = committed model verdicts (confidence>=0.9,
