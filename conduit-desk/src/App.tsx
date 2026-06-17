@@ -25,6 +25,7 @@ import { Documents } from './Documents';
 import { Lifecycle } from './Lifecycle';
 import { Warranty } from './Warranty';
 import { Shadow } from './Shadow';
+import { Backlog } from './Backlog';
 import { Tax } from './Tax';
 import { Intercompany } from './Intercompany';
 import { Procurement } from './Procurement';
@@ -53,7 +54,7 @@ type TabId =
   | 'order' | 'dealdesk' | 'returns' | 'crm' | 'reseller'
   | 'h6q' | 'flow' | 'supply' | 'shelf' | 'engine' | 'runs'
   | 'inventory' | 'purchasing' | 'batch' | 'activation' | 'warranty'
-  | 'finance' | 'commission' | 'docs' | 'lifecycle' | 'tax'
+  | 'finance' | 'commission' | 'docs' | 'lifecycle' | 'tax' | 'backlog'
   | 'intercompany' | 'procurement' | 'treasury'
   | 'audit' | 'period' | 'sync' | 'shadow' | 'proof' | 'access' | 'notifications';
 
@@ -84,6 +85,7 @@ const GROUPS: { sec: string; items: NavItem[] }[] = [
   ]},
   { sec: 'Finance', items: [
     { id: 'finance', label: 'Finance', icon: 'sessions' },
+    { id: 'backlog', label: 'Backlog', icon: 'trend' },
     { id: 'commission', label: 'Commission', icon: 'up' },
     { id: 'docs', label: 'Documents', icon: 'list' },
     { id: 'lifecycle', label: 'Lifecycle', icon: 'clock' },
@@ -112,7 +114,7 @@ const PAGES: Record<TabId, React.ComponentType<any>> = {
   order: OrderDesk, dealdesk: DealDesk, returns: Returns, crm: CRM, reseller: Reseller,
   h6q: H6Q, flow: Flow, supply: SupplyWindow, shelf: Shelf, engine: Forecasting, runs: ForecastRuns,
   inventory: Inventory, purchasing: Purchasing, batch: BatchGenealogy, activation: Activation,
-  finance: Finance, commission: Commission, docs: Documents, lifecycle: Lifecycle, warranty: Warranty, tax: Tax, shadow: Shadow,
+  finance: Finance, commission: Commission, docs: Documents, lifecycle: Lifecycle, warranty: Warranty, tax: Tax, shadow: Shadow, backlog: Backlog,
   intercompany: Intercompany, procurement: Procurement, treasury: Treasury,
   audit: Auditability, period: Period, sync: Sync, proof: Proof, access: Access, notifications: Notifications,
 };

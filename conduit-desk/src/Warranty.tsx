@@ -33,9 +33,12 @@ function Stat({ label, value, sub }: { label: string; value: React.ReactNode; su
   );
 }
 
+interface TrendRow { month: string; category: string; shipments: number; cogs: number }
+
 export function Warranty(_props: any) {
   const stats = useApi<RmaStats>(['rma-stats'], '/api/v1/warranty/rma-stats');
   const free = useApi<FreeCat[]>(['free-ship-summary'], '/api/v1/free-shipments/summary');
+  const trend = useApi<TrendRow[]>(['free-ship-trend'], '/api/v1/free-shipments/trend');
   const [input, setInput] = useState('');
   const [serial, setSerial] = useState('');
   const life = useApi<Lifecycle>(['serial-life', serial], `/api/v1/serials/${encodeURIComponent(serial)}/lifecycle`, { enabled: !!serial });
@@ -88,6 +91,29 @@ export function Warranty(_props: any) {
               </tbody>
             </table>
           </Card>
+
+          {/* ---- monthly trend ---- */}
+          {(() => {
+            const rows = Array.isArray(trend.data) ? trend.data : [];
+            const byMonth = new Map<string, number>();
+            rows.forEach((r) => byMonth.set(r.month, (byMonth.get(r.month) ?? 0) + r.shipments));
+            const months = Array.from(byMonth.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+            const max = Math.max(1, ...months.map((m) => m[1]));
+            return (
+              <Card title="Free shipments — monthly trend" icon={I.trend} aux={<span className="dim" style={{ fontSize: 12 }}>units shipped free, by month</span>}>
+                {trend.isLoading && <SkeletonRow cols={1} />}
+                {!trend.isLoading && months.length === 0 && <EmptyRow cols={1}>No trend data.</EmptyRow>}
+                <div style={{ display: 'flex', alignItems: 'flex-end', gap: 3, height: 120, marginTop: 8 }}>
+                  {months.map(([m, n]) => (
+                    <div key={m} title={`${m}: ${n}`} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+                      <div style={{ width: '100%', height: `${Math.round((n / max) * 100)}%`, minHeight: 2, background: 'var(--accent)', borderRadius: '3px 3px 0 0' }} />
+                      <span className="dim" style={{ fontSize: 9, transform: 'rotate(-60deg)', whiteSpace: 'nowrap', transformOrigin: 'center' }}>{m.slice(2)}</span>
+                    </div>
+                  ))}
+                </div>
+              </Card>
+            );
+          })()}
 
           {/* ---- serial lifecycle lookup ---- */}
           <Card title="Unit lifecycle" icon={I.clock} aux={<span className="dim" style={{ fontSize: 12 }}>family timeline · shared warranty · RMA tickets</span>}>
