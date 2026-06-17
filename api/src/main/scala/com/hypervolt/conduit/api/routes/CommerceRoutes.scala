@@ -275,9 +275,10 @@ final class CommerceRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F])
       .in(query[Option[String]]("status"))
       .in(query[Option[String]]("q"))
       .in(query[Option[Int]]("limit"))
+      .in(query[Option[Int]]("offset"))
       .out(jsonBody[Json])
       .serverLogic(principal => {
-        case (market, status, q, limit) =>
+        case (market, status, q, limit, offset) =>
           if (!PolicyEngine.hasPermission(principal, Action.View, "order"))
             Async[F].pure(Left(err(StatusCode.Forbidden, "forbidden", "requires view:order")))
           else
@@ -285,10 +286,20 @@ final class CommerceRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F])
               case Left(e) => Async[F].pure(Left(e))
               case Right(mk) =>
                 val cap = limit.getOrElse(100).min(500).max(1)
-                OrderRepo
-                  .list(mk, status.filter(_.nonEmpty), q.filter(_.nonEmpty), cap)
+                val off = offset.getOrElse(0).max(0)
+                val st  = status.filter(_.nonEmpty)
+                val qq  = q.filter(_.nonEmpty)
+                (OrderRepo.list(mk, st, qq, cap, off), OrderRepo.listCount(mk, st, qq)).tupled
                   .transact(xa)
-                  .map(rows => Right(Json.fromValues(rows.map(r => Projection.projectFor(principal, "order", r)))))
+                  .map {
+                    case (rows, total) =>
+                      Right(Json.obj(
+                        "rows"   -> Json.fromValues(rows.map(r => Projection.projectFor(principal, "order", r))),
+                        "total"  -> total.asJson,
+                        "limit"  -> cap.asJson,
+                        "offset" -> off.asJson
+                      ))
+                  }
             }
       })
 

@@ -104,7 +104,7 @@ final class TaxRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
       run: A => doobie.ConnectionIO[List[Json]]
   ) =
     base.get
-      .in("api" / "v1" / "tax" / seg)
+      .in(seg.split("/").foldLeft(("api" / "v1" / "tax"): EndpointInput[Unit])(_ / _))
       .in(q)
       .out(jsonBody[Json])
       .serverLogic(principal =>
