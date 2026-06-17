@@ -214,6 +214,7 @@ object CrmReadRepo {
   private def accountWhere(segment: Option[String], q: Option[String]): doobie.Fragment =
     fr"WHERE " ++ List(
       Some(fr"p.parent_party_id IS NULL"),
+      Some(fr"p.status <> 'merged'"),
       segment.map(s => fr"p.segment = $s"),
       q.map(t => fr"p.display_name ILIKE ${"%" + t + "%"}")
     ).flatten.reduce(_ ++ fr" AND " ++ _)
