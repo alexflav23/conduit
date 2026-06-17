@@ -122,6 +122,7 @@ services:
       CONDUIT_DB_HOST: conduit-postgres
       CONDUIT_DB_PORT: "5432"
       CONDUIT_PULSAR_URL: pulsar://conduit-pulsar:6650
+      JAVA_TOOL_OPTIONS: "-Dsun.net.inetaddr.ttl=30 -Dsun.net.inetaddr.negative.ttl=0"
       CONDUIT_TB_ADDRESSES: 172.31.250.10:3000
       INGEST_DIR: /app/ingest
       # Google Workspace sign-in (flows in from direnv via the shell). Empty = verifier off, dev:<id> tokens only.
@@ -148,6 +149,7 @@ services:
       CONDUIT_DB_HOST: conduit-postgres
       CONDUIT_DB_PORT: "5432"
       CONDUIT_PULSAR_URL: pulsar://conduit-pulsar:6650
+      JAVA_TOOL_OPTIONS: "-Dsun.net.inetaddr.ttl=30 -Dsun.net.inetaddr.negative.ttl=0"
       CONDUIT_TB_ADDRESSES: 172.31.250.10:3000
       CONDUIT_TB_CLUSTER: "1"
       PROMETHEUS_PORT: "9465"
