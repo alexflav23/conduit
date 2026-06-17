@@ -25,10 +25,12 @@ final class IgnitionService[F[_]: Async](xa: Transactor[F]) {
         case None => "no operating entity — ignition skipped".pure[ConnectionIO]
         case Some(eid) =>
           for {
-            _       <- ensureVolexSupplier
-            stamped <- stampOrders(eid)
-            lots    <- createCostedLots
-            linked  <- linkSerials
+            _         <- ensureVolexSupplier
+            _         <- ensureInHouseSupplier
+            stamped   <- stampOrders(eid)
+            lots      <- createCostedLots
+            legacyLots <- createLegacyLots
+            linked    <- linkSerials
             periods <- openPeriods(eid)
             _       <- ensureLocation(eid)
             stock   <- createStockItems(eid)
@@ -41,7 +43,7 @@ final class IgnitionService[F[_]: Async](xa: Transactor[F]) {
             invOpen <- emitOpeningInventory(eid)
             warr    <- backfillWarrantyWindows
             repl    <- applyRmaTickets
-          } yield s"stamped=$stamped lots=$lots serials_linked=$linked periods=$periods stock_items=$stock exposure_rows=$exp price_lost_lines_fixed=$repriced order_placed_events=$placed recognition_events=$emitted opening_inv_event=$invOpen warranty_windows=$warr replacements_linked=$repl"
+          } yield s"stamped=$stamped lots=$lots legacy_lots=$legacyLots serials_linked=$linked periods=$periods stock_items=$stock exposure_rows=$exp price_lost_lines_fixed=$repriced order_placed_events=$placed recognition_events=$emitted opening_inv_event=$invOpen warranty_windows=$warr replacements_linked=$repl"
       }
       .transact(xa)
 
@@ -49,6 +51,26 @@ final class IgnitionService[F[_]: Async](xa: Transactor[F]) {
   private def ensureVolexSupplier: ConnectionIO[Int] =
     sql"""INSERT INTO supplier (name, billing_currency, supplier_entity, is_contract_manufacturer)
           SELECT 'Volex', 'USD', 'Volex PLC', TRUE WHERE NOT EXISTS (SELECT 1 FROM supplier WHERE name = 'Volex')""".update.run
+
+  // The legacy Home Pro / Home 3.0 units were made in-house before Volex contract manufacturing — their cost is
+  // MRPeasy's avg_cost (GBP, native), so the supplier is Hypervolt itself.
+  private def ensureInHouseSupplier: ConnectionIO[Int] =
+    sql"""INSERT INTO supplier (name, billing_currency, supplier_entity, is_contract_manufacturer)
+          SELECT 'Hypervolt In-House', 'GBP', 'Hypervolt Ltd', FALSE WHERE NOT EXISTS (SELECT 1 FROM supplier WHERE name = 'Hypervolt In-House')""".update.run
+
+  // One costed opening lot per legacy variant from MRPeasy's GBP avg_cost (no FX, no shipping uplift — it's the
+  // native in-house cost). Mirrors createCostedLots but GBP-native; covers the HV-PR-117x Home Pro fleet that Volex
+  // never made. Guarded: only variants with serials + no existing lot.
+  private def createLegacyLots: ConnectionIO[Int] =
+    sql"""INSERT INTO lot_batch (batch_no, supplier_id, product_variant_id, qty, unit_cost_usd, fx_rate, fx_basis,
+            shipping_alloc, duty_alloc, landed_unit_cost, currency, received_date)
+          SELECT 'INHOUSE-OPEN-' || v.sku, (SELECT id FROM supplier WHERE name = 'Hypervolt In-House'), v.id,
+                 (SELECT count(*) FROM serial_unit s WHERE s.product_variant_id = v.id),
+                 sc.unit_cost, 1, 'gbp_native', 0, 0, round(sc.unit_cost, 4), 'GBP', DATE '2024-01-01'
+          FROM product_variant v
+          JOIN supplier_cost sc ON sc.sku = v.sku AND sc.supplier = 'MRPeasy' AND sc.min_qty_per_quarter = 0
+          WHERE EXISTS (SELECT 1 FROM serial_unit s WHERE s.product_variant_id = v.id)
+            AND NOT EXISTS (SELECT 1 FROM lot_batch lb WHERE lb.product_variant_id = v.id)""".update.run
 
   // Orders predate the operating entity (MRP import) — attribute them to it (idempotent on the NULL guard).
   private def stampOrders(eid: UUID): ConnectionIO[Int] =

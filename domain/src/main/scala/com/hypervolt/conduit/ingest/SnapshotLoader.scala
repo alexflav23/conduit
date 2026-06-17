@@ -129,21 +129,29 @@ object SnapshotLoader {
         val duty  = c.get[BigDecimal]("duty_pct").toOption.getOrElse(BigDecimal(0))
         val src   = c.get[String]("source").toOption
         val bands = c.downField("cost_bands").values.toList.flatten
-        bands
-          .traverse { b =>
-            val bc = b.hcursor
-            (bc.get[Int]("min_qty_per_quarter").toOption, bc.get[BigDecimal]("unit_cost_usd").toOption).tupled match {
-              case None => 0.pure[ConnectionIO]
-              case Some((minQ, unitCost)) =>
-                sql"""INSERT INTO supplier_cost (supplier, sku, currency, min_qty_per_quarter, unit_cost, shipping_gbp, duty_pct, source, as_of)
-                    SELECT $supplier, $sku, $ccy, $minQ, $unitCost, $ship, $duty, $src, $asOf
-                    WHERE NOT EXISTS (
-                      SELECT 1 FROM supplier_cost WHERE supplier = $supplier AND sku = $sku
-                        AND min_qty_per_quarter = $minQ AND as_of = $asOf
-                    )""".update.run
+        val flat  = c.get[BigDecimal]("unit_cost_gbp").toOption // legacy (MRPeasy avg_cost): one flat GBP band
+        if (bands.nonEmpty)
+          bands
+            .traverse { b =>
+              val bc = b.hcursor
+              (bc.get[Int]("min_qty_per_quarter").toOption, bc.get[BigDecimal]("unit_cost_usd").toOption).tupled match {
+                case None => 0.pure[ConnectionIO]
+                case Some((minQ, unitCost)) =>
+                  sql"""INSERT INTO supplier_cost (supplier, sku, currency, min_qty_per_quarter, unit_cost, shipping_gbp, duty_pct, source, as_of)
+                      SELECT $supplier, $sku, $ccy, $minQ, $unitCost, $ship, $duty, $src, $asOf
+                      WHERE NOT EXISTS (
+                        SELECT 1 FROM supplier_cost WHERE supplier = $supplier AND sku = $sku
+                          AND min_qty_per_quarter = $minQ AND as_of = $asOf
+                      )""".update.run
+              }
             }
-          }
-          .map(_.sum)
+            .map(_.sum)
+        else
+          flat.fold(0.pure[ConnectionIO])(uc =>
+            sql"""INSERT INTO supplier_cost (supplier, sku, currency, min_qty_per_quarter, unit_cost, shipping_gbp, duty_pct, source, as_of)
+                  SELECT $supplier, $sku, $ccy, 0, $uc, 0, 0, $src, $asOf
+                  WHERE NOT EXISTS (SELECT 1 FROM supplier_cost WHERE supplier = $supplier AND sku = $sku AND min_qty_per_quarter = 0 AND as_of = $asOf)""".update.run
+          )
     }
   }
 
