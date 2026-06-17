@@ -13,6 +13,18 @@ Companion to [`spec/07`](./07_BUILD_PLAN.md) (the acceptance source of truth) an
 > (M4)** section after the table. This is net-new beyond the 2026-06-16 ignition plan and is the
 > bulk of recent work.
 
+> **Update 2026-06-18 — Home 3.0 cost gap sourced + staged** (B2 tail). The last COGS hole — the
+> Home 3.0 family (`hv-350/375/310`, 9,116 dispatched serials) — had no MRPeasy `avg_cost` (it's
+> drop-shipped, 0 stock), but the units were built in-house and each carries real **manufacturing
+> orders** with the actual production `item_cost`. Pulled the quantity-weighted MO build cost per
+> SKU (£204–285, 1,200+ finished units each) → committed `ingest/cost/mrpeasy_home3_buildcost.ndjson`
+> (no proxy). Wired with zero code change (the `cost` handler + `createLegacyLots` already cost
+> `supplier='MRPeasy'` SKUs). Applied to the live DB as **cost + lots + serial links** (all 9,116
+> now costed; inventory stays £0.00 — all dispatched, none on-hand). **NOT yet released into the
+> ledger**: 7,006/7,019 Home 3.0 dispatches are gated out of recognition, so releasing them restates
+> the P&L materially (+~£3.5m revenue / +~£1.8m COGS via immutable TigerBeetle postings) — held for
+> explicit go-ahead or a clean `RELOAD` boot (which replays it automatically).
+
 ## TL;DR
 
 **The code is built and CI-proven across essentially every milestone (M0–M13b + M-Pricing +
