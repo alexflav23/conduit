@@ -154,13 +154,20 @@ final class IgnitionService[F[_]: Async](xa: Transactor[F]) {
   // propagate the ROOT original's warranty_end down each replacement chain (a replacement always inherits the
   // original's warranty — the clock never resets, transitively). Idempotent; a no-op until real tickets land.
   private def applyRmaTickets: ConnectionIO[Int] =
-    // 1. Materialise the RMA units the ledger never had (V2 originals + replacement stock) — real serials from real
-    //    tickets, classified V3 (0301-hex) / V2 (long decimal MAC or HYPV2 code), provenance 'hubspot_rma'.
-    sql"""INSERT INTO serial_unit (serial_no, generation, product_variant_id, status, source)
+    // 0. Ensure the placeholder variant exists (the V1_0_96 migration can't create it on a FRESH boot — product
+    //    variants don't exist until the ingest runs, after migrations). Idempotent.
+    sql"""INSERT INTO product_variant (family_id, sku, generation, is_serialised, product_class, status)
+          SELECT family_id, 'HV3-RMA-UNSPECIFIED', 'v3', true, 'charger', 'active'
+          FROM product_variant WHERE generation = 'v3' LIMIT 1
+          ON CONFLICT (sku) DO NOTHING""".update.run *>
+      // 1. Materialise the RMA units the ledger never had (V2 originals + replacement stock) — real serials from real
+      //    tickets, classified V3 (0301-hex) / V2 (long decimal MAC or HYPV2 code), provenance 'hubspot_rma'.
+      sql"""INSERT INTO serial_unit (serial_no, generation, product_variant_id, status, source)
           SELECT DISTINCT ns,
             CASE WHEN ns ~ '^0301[0-9a-f]{12}$$' THEN 'v3' ELSE 'v2' END,
             CASE WHEN ns ~ '^0301[0-9a-f]{12}$$' THEN (SELECT id FROM product_variant WHERE sku = 'HV3-RMA-UNSPECIFIED')
-                 ELSE (SELECT id FROM product_variant WHERE sku = 'hv-2.0-uwt-t2') END,
+                 ELSE COALESCE((SELECT id FROM product_variant WHERE sku = 'hv-2.0-uwt-t2'),
+                               (SELECT id FROM product_variant WHERE sku = 'HV3-RMA-UNSPECIFIED')) END,
             'rma_unit', 'hubspot_rma'
           FROM (
             SELECT lower(regexp_replace(original_serial, '[^0-9A-Za-z]', '', 'g')) AS ns FROM rma_ticket WHERE original_serial IS NOT NULL
