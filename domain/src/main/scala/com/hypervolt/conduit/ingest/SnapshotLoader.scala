@@ -235,14 +235,14 @@ object SnapshotLoader {
     c.get[String]("hs_company_id").toOption match {
       case None => 0.pure[ConnectionIO]
       case Some(id) =>
-        val target = c.get[String]("merge_into_party_id").toOption.filter(_.nonEmpty)
-          .flatMap(s => scala.util.Try(java.util.UUID.fromString(s)).toOption)
+        val target = c.get[String]("merge_into_name").toOption.filter(_.nonEmpty)
         val conf   = c.get[BigDecimal]("confidence").toOption.orElse(c.get[Double]("confidence").toOption.map(BigDecimal(_)))
         val reason = c.get[String]("reason").toOption
-        sql"""INSERT INTO hubspot_match_verdict (hs_company_id, merge_into_party_id, confidence, reason, model)
-              VALUES ($id, $target, ${conf.getOrElse(BigDecimal(0))}, $reason, 'bedrock')
+        val model  = c.get[String]("model").toOption.getOrElse("model")
+        sql"""INSERT INTO hubspot_match_verdict (hs_company_id, merge_into_name, confidence, reason, model)
+              VALUES ($id, $target, ${conf.getOrElse(BigDecimal(0))}, $reason, $model)
               ON CONFLICT (hs_company_id) DO UPDATE SET
-                merge_into_party_id = EXCLUDED.merge_into_party_id, confidence = EXCLUDED.confidence,
+                merge_into_name = EXCLUDED.merge_into_name, confidence = EXCLUDED.confidence,
                 reason = EXCLUDED.reason, model = EXCLUDED.model""".update.run
     }
   }

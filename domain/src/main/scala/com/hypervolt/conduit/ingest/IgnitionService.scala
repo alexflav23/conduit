@@ -360,8 +360,9 @@ final class IgnitionService[F[_]: Async](xa: Transactor[F]) {
                    (SELECT asl.party_id FROM account_source_link asl
                     WHERE asl.source_system = 'hubspot_company' AND asl.source_id = x.hs_id LIMIT 1) AS loser
             FROM (
-              SELECT v.hs_company_id AS hs_id, v.merge_into_party_id AS winner, 'model' AS method, v.confidence, 1 AS pri
-              FROM hubspot_match_verdict v WHERE v.merge_into_party_id IS NOT NULL AND v.confidence >= 0.9
+              SELECT v.hs_company_id AS hs_id, w.id AS winner, 'model' AS method, v.confidence, 1 AS pri
+              FROM hubspot_match_verdict v JOIN party w ON w.display_name = 'MRP: ' || v.merge_into_name
+              WHERE v.merge_into_name IS NOT NULL AND v.confidence >= 0.9
               UNION ALL
               SELECT h.source_id, h.party_id, 'heuristic', h.score, 2 FROM (
                 SELECT DISTINCT ON (c.source_id) c.source_id, c.party_id, c.score

@@ -109,6 +109,9 @@ def main():
     with urllib.request.urlopen(req, timeout=180) as r:
         lines = r.read().decode().splitlines()
 
+    # stable key: map the model's chosen party_id back to the survivor's MRPeasy NAME (UUIDs differ per machine;
+    # names are minted from committed ingest, so a verdict keyed on the name re-applies anywhere without the API).
+    id2name = {x["party_id"]: x["name"] for c in companies for x in (c.get("candidates") or [])}
     n = 0
     with open(OUT, "w") as f:
         for line in lines:
@@ -126,13 +129,14 @@ def main():
                 v = json.loads(text)
             except Exception:
                 continue
-            f.write(json.dumps({"hs_company_id": cid, "merge_into_party_id": v.get("merge_into_party_id"),
+            pid = v.get("merge_into_party_id")
+            f.write(json.dumps({"hs_company_id": cid, "merge_into_name": id2name.get(pid) if pid else None,
                                 "confidence": v.get("confidence"), "reason": v.get("reason"), "model": MODEL}) + "\n")
             n += 1
     merges = 0
     for line in open(OUT):
         v = json.loads(line)
-        if v.get("merge_into_party_id") and float(v.get("confidence") or 0) >= 0.9:
+        if v.get("merge_into_name") and float(v.get("confidence") or 0) >= 0.9:
             merges += 1
     sys.stderr.write(f"wrote {n} verdicts ({merges} auto-merge >=0.9) → {OUT}\n")
 
