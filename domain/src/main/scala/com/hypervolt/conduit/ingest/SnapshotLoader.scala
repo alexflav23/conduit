@@ -68,8 +68,50 @@ object SnapshotLoader {
     "ghostbusters" -> ghostbusters,
     "h6q"          -> h6q,
     "fx"           -> fx,
-    "cost"         -> cost
+    "cost"         -> cost,
+    "pricing"      -> pricing
   )
+
+  // ingest/pricing/*.ndjson — the real customer price book (doc 24): a governed price_agreement per channel/customer
+  // + a price_rule (tier) per (agreement, variant). open_list = the default everyone gets (Retail); segment scopes
+  // to party.segment (Installers); customer_set links the named accounts (Octopus, YESSS, …) by name. Nobody types
+  // a price — the order line binds to one of these tiers. Idempotent (agreement keyed on name+currency; rule on
+  // agreement+variant). Loads after mrpeasy so variants + parties exist.
+  private def pricing(@scala.annotation.unused dataset: String, row: Json): ConnectionIO[Int] = {
+    val c = row.hcursor
+    (
+      c.get[String]("agreement").toOption,
+      c.get[String]("applies_to").toOption,
+      c.get[String]("sku").toOption,
+      c.get[String]("currency").toOption,
+      c.get[BigDecimal]("price").toOption
+    ).tupled match {
+      case None => 0.pure[ConnectionIO]
+      case Some((agr, applies, sku, ccy, price)) =>
+        val scope     = c.get[String]("segment").toOption
+        val kw        = c.get[String]("customer_kw").toOption
+        val taxRegime = if (ccy == "GBP") "GB_STANDARD" else "IE_STANDARD"
+        sql"SELECT id FROM product_variant WHERE sku = $sku".query[UUID].option.flatMap {
+          case None => 0.pure[ConnectionIO]
+          case Some(vid) =>
+            for {
+              _ <- sql"""INSERT INTO price_agreement (name, surface, currency, applies_to, base_volume_basis, valid_from, valid_to, terms, status, version, scope_value)
+                         SELECT $agr, 'customer', $ccy, $applies, 'per_order', DATE '2026-01-01', DATE '2026-12-31', '{}'::jsonb, 'active', 1, $scope
+                         WHERE NOT EXISTS (SELECT 1 FROM price_agreement WHERE name = $agr AND currency = $ccy)""".update.run
+              agrId <- sql"SELECT id FROM price_agreement WHERE name = $agr AND currency = $ccy ORDER BY created_at LIMIT 1".query[UUID].unique
+              _ <- if (applies == "customer_set" && kw.isDefined)
+                sql"""INSERT INTO price_agreement_customer (agreement_id, party_id)
+                      SELECT $agrId, p.id FROM party p
+                      WHERE p.display_name ILIKE ${"%" + kw.get + "%"}
+                        AND NOT EXISTS (SELECT 1 FROM price_agreement_customer pac WHERE pac.agreement_id = $agrId AND pac.party_id = p.id)""".update.run
+              else 0.pure[ConnectionIO]
+              n <- sql"""INSERT INTO price_rule (surface, product_variant_id, currency, tax_regime, authorised_price, max_discount_pct, min_qty, version, effective_from, status, price_agreement_id)
+                         SELECT 'customer', $vid, $ccy, $taxRegime, $price, 0, 1, 1, DATE '2026-01-01', 'active', $agrId
+                         WHERE NOT EXISTS (SELECT 1 FROM price_rule WHERE price_agreement_id = $agrId AND product_variant_id = $vid AND min_qty = 1)""".update.run
+            } yield n
+        }
+    }
+  }
 
   // ingest/cost/*.ndjson — per-SKU supplier cost (USD) with quarterly volume-discount bands. One NDJSON row fans
   // out to one supplier_cost row per band. Idempotent on (supplier, sku, min_qty_per_quarter, as_of).

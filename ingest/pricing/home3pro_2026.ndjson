@@ -1,0 +1,198 @@
+{"agreement": "Retail", "applies_to": "open_list", "segment": null, "customer_kw": null, "sku": "HV3PROAAUW050T2", "currency": "GBP", "price": 575.0}
+{"agreement": "Retail", "applies_to": "open_list", "segment": null, "customer_kw": null, "sku": "HV3PROAAUW075T2", "currency": "GBP", "price": 610.0}
+{"agreement": "Retail", "applies_to": "open_list", "segment": null, "customer_kw": null, "sku": "HV3PROAAUW100T2", "currency": "GBP", "price": 650.0}
+{"agreement": "Retail", "applies_to": "open_list", "segment": null, "customer_kw": null, "sku": "HV3PROAASG050T2", "currency": "GBP", "price": 575.0}
+{"agreement": "Retail", "applies_to": "open_list", "segment": null, "customer_kw": null, "sku": "HV3PROAASG075T2", "currency": "GBP", "price": 610.0}
+{"agreement": "Retail", "applies_to": "open_list", "segment": null, "customer_kw": null, "sku": "HV3PROAASG100T2", "currency": "GBP", "price": 650.0}
+{"agreement": "Retail", "applies_to": "open_list", "segment": null, "customer_kw": null, "sku": "HV3PROAAUB050T2", "currency": "GBP", "price": 575.0}
+{"agreement": "Retail", "applies_to": "open_list", "segment": null, "customer_kw": null, "sku": "HV3PROAAUB075T2", "currency": "GBP", "price": 610.0}
+{"agreement": "Retail", "applies_to": "open_list", "segment": null, "customer_kw": null, "sku": "HV3PROAAUB100T2", "currency": "GBP", "price": 650.0}
+{"agreement": "Installers - Smart Home Charge and ChargedEV get rebate upfr", "applies_to": "segment", "segment": "installers", "customer_kw": null, "sku": "HV3PROAAUW050T2", "currency": "GBP", "price": 525.0}
+{"agreement": "Installers - Smart Home Charge and ChargedEV get rebate upfr", "applies_to": "segment", "segment": "installers", "customer_kw": null, "sku": "HV3PROAAUW075T2", "currency": "GBP", "price": 560.0}
+{"agreement": "Installers - Smart Home Charge and ChargedEV get rebate upfr", "applies_to": "segment", "segment": "installers", "customer_kw": null, "sku": "HV3PROAAUW100T2", "currency": "GBP", "price": 600.0}
+{"agreement": "Installers - Smart Home Charge and ChargedEV get rebate upfr", "applies_to": "segment", "segment": "installers", "customer_kw": null, "sku": "HV3PROAASG050T2", "currency": "GBP", "price": 525.0}
+{"agreement": "Installers - Smart Home Charge and ChargedEV get rebate upfr", "applies_to": "segment", "segment": "installers", "customer_kw": null, "sku": "HV3PROAASG075T2", "currency": "GBP", "price": 560.0}
+{"agreement": "Installers - Smart Home Charge and ChargedEV get rebate upfr", "applies_to": "segment", "segment": "installers", "customer_kw": null, "sku": "HV3PROAASG100T2", "currency": "GBP", "price": 600.0}
+{"agreement": "Installers - Smart Home Charge and ChargedEV get rebate upfr", "applies_to": "segment", "segment": "installers", "customer_kw": null, "sku": "HV3PROAAUB050T2", "currency": "GBP", "price": 525.0}
+{"agreement": "Installers - Smart Home Charge and ChargedEV get rebate upfr", "applies_to": "segment", "segment": "installers", "customer_kw": null, "sku": "HV3PROAAUB075T2", "currency": "GBP", "price": 560.0}
+{"agreement": "Installers - Smart Home Charge and ChargedEV get rebate upfr", "applies_to": "segment", "segment": "installers", "customer_kw": null, "sku": "HV3PROAAUB100T2", "currency": "GBP", "price": 600.0}
+{"agreement": "Octopus", "applies_to": "customer_set", "segment": null, "customer_kw": "octopus", "sku": "HV3PROAAUW050T2", "currency": "GBP", "price": 435.0}
+{"agreement": "Octopus", "applies_to": "customer_set", "segment": null, "customer_kw": "octopus", "sku": "HV3PROAAUW075T2", "currency": "GBP", "price": 455.0}
+{"agreement": "Octopus", "applies_to": "customer_set", "segment": null, "customer_kw": "octopus", "sku": "HV3PROAAUW100T2", "currency": "GBP", "price": 475.0}
+{"agreement": "Octopus", "applies_to": "customer_set", "segment": null, "customer_kw": "octopus", "sku": "HV3PROAASG050T2", "currency": "GBP", "price": 435.0}
+{"agreement": "Octopus", "applies_to": "customer_set", "segment": null, "customer_kw": "octopus", "sku": "HV3PROAASG075T2", "currency": "GBP", "price": 455.0}
+{"agreement": "Octopus", "applies_to": "customer_set", "segment": null, "customer_kw": "octopus", "sku": "HV3PROAASG100T2", "currency": "GBP", "price": 475.0}
+{"agreement": "Octopus", "applies_to": "customer_set", "segment": null, "customer_kw": "octopus", "sku": "HV3PROAAUB050T2", "currency": "GBP", "price": 417.0}
+{"agreement": "Octopus", "applies_to": "customer_set", "segment": null, "customer_kw": "octopus", "sku": "HV3PROAAUB075T2", "currency": "GBP", "price": 455.0}
+{"agreement": "Octopus", "applies_to": "customer_set", "segment": null, "customer_kw": "octopus", "sku": "HV3PROAAUB100T2", "currency": "GBP", "price": 473.0}
+{"agreement": "Ovo", "applies_to": "customer_set", "segment": null, "customer_kw": "ovo", "sku": "HV3PROAAUW050T2", "currency": "GBP", "price": 435.18}
+{"agreement": "Ovo", "applies_to": "customer_set", "segment": null, "customer_kw": "ovo", "sku": "HV3PROAAUW075T2", "currency": "GBP", "price": 455.16}
+{"agreement": "Ovo", "applies_to": "customer_set", "segment": null, "customer_kw": "ovo", "sku": "HV3PROAAUW100T2", "currency": "GBP", "price": 475.89}
+{"agreement": "Ovo", "applies_to": "customer_set", "segment": null, "customer_kw": "ovo", "sku": "HV3PROAASG050T2", "currency": "GBP", "price": 435.18}
+{"agreement": "Ovo", "applies_to": "customer_set", "segment": null, "customer_kw": "ovo", "sku": "HV3PROAASG075T2", "currency": "GBP", "price": 455.16}
+{"agreement": "Ovo", "applies_to": "customer_set", "segment": null, "customer_kw": "ovo", "sku": "HV3PROAASG100T2", "currency": "GBP", "price": 475.89}
+{"agreement": "Ovo", "applies_to": "customer_set", "segment": null, "customer_kw": "ovo", "sku": "HV3PROAAUB050T2", "currency": "GBP", "price": 435.18}
+{"agreement": "Ovo", "applies_to": "customer_set", "segment": null, "customer_kw": "ovo", "sku": "HV3PROAAUB075T2", "currency": "GBP", "price": 455.16}
+{"agreement": "Ovo", "applies_to": "customer_set", "segment": null, "customer_kw": "ovo", "sku": "HV3PROAAUB100T2", "currency": "GBP", "price": 475.89}
+{"agreement": "Centrica", "applies_to": "customer_set", "segment": null, "customer_kw": "centrica", "sku": "HV3PROAAUW050T2", "currency": "GBP", "price": 465.0}
+{"agreement": "Centrica", "applies_to": "customer_set", "segment": null, "customer_kw": "centrica", "sku": "HV3PROAAUW075T2", "currency": "GBP", "price": 493.31}
+{"agreement": "Centrica", "applies_to": "customer_set", "segment": null, "customer_kw": "centrica", "sku": "HV3PROAAUW100T2", "currency": "GBP", "price": 525.66}
+{"agreement": "Centrica", "applies_to": "customer_set", "segment": null, "customer_kw": "centrica", "sku": "HV3PROAASG050T2", "currency": "GBP", "price": 465.0}
+{"agreement": "Centrica", "applies_to": "customer_set", "segment": null, "customer_kw": "centrica", "sku": "HV3PROAASG075T2", "currency": "GBP", "price": 493.31}
+{"agreement": "Centrica", "applies_to": "customer_set", "segment": null, "customer_kw": "centrica", "sku": "HV3PROAASG100T2", "currency": "GBP", "price": 525.66}
+{"agreement": "Centrica", "applies_to": "customer_set", "segment": null, "customer_kw": "centrica", "sku": "HV3PROAAUB050T2", "currency": "GBP", "price": 465.0}
+{"agreement": "Centrica", "applies_to": "customer_set", "segment": null, "customer_kw": "centrica", "sku": "HV3PROAAUB075T2", "currency": "GBP", "price": 493.31}
+{"agreement": "Centrica", "applies_to": "customer_set", "segment": null, "customer_kw": "centrica", "sku": "HV3PROAAUB100T2", "currency": "GBP", "price": 525.66}
+{"agreement": "YESSS Electrical", "applies_to": "customer_set", "segment": null, "customer_kw": "yesss", "sku": "HV3PROAAUW050T2", "currency": "GBP", "price": 450.0}
+{"agreement": "YESSS Electrical", "applies_to": "customer_set", "segment": null, "customer_kw": "yesss", "sku": "HV3PROAAUW075T2", "currency": "GBP", "price": 470.0}
+{"agreement": "YESSS Electrical", "applies_to": "customer_set", "segment": null, "customer_kw": "yesss", "sku": "HV3PROAAUW100T2", "currency": "GBP", "price": 495.0}
+{"agreement": "YESSS Electrical", "applies_to": "customer_set", "segment": null, "customer_kw": "yesss", "sku": "HV3PROAASG050T2", "currency": "GBP", "price": 450.0}
+{"agreement": "YESSS Electrical", "applies_to": "customer_set", "segment": null, "customer_kw": "yesss", "sku": "HV3PROAASG075T2", "currency": "GBP", "price": 470.0}
+{"agreement": "YESSS Electrical", "applies_to": "customer_set", "segment": null, "customer_kw": "yesss", "sku": "HV3PROAASG100T2", "currency": "GBP", "price": 495.0}
+{"agreement": "YESSS Electrical", "applies_to": "customer_set", "segment": null, "customer_kw": "yesss", "sku": "HV3PROAAUB050T2", "currency": "GBP", "price": 450.0}
+{"agreement": "YESSS Electrical", "applies_to": "customer_set", "segment": null, "customer_kw": "yesss", "sku": "HV3PROAAUB075T2", "currency": "GBP", "price": 470.0}
+{"agreement": "YESSS Electrical", "applies_to": "customer_set", "segment": null, "customer_kw": "yesss", "sku": "HV3PROAAUB100T2", "currency": "GBP", "price": 495.0}
+{"agreement": "CEF", "applies_to": "customer_set", "segment": null, "customer_kw": "cef", "sku": "HV3PROAAUW050T2", "currency": "GBP", "price": 475.0}
+{"agreement": "CEF", "applies_to": "customer_set", "segment": null, "customer_kw": "cef", "sku": "HV3PROAAUW075T2", "currency": "GBP", "price": 495.0}
+{"agreement": "CEF", "applies_to": "customer_set", "segment": null, "customer_kw": "cef", "sku": "HV3PROAAUW100T2", "currency": "GBP", "price": 530.0}
+{"agreement": "CEF", "applies_to": "customer_set", "segment": null, "customer_kw": "cef", "sku": "HV3PROAASG050T2", "currency": "GBP", "price": 475.0}
+{"agreement": "CEF", "applies_to": "customer_set", "segment": null, "customer_kw": "cef", "sku": "HV3PROAASG075T2", "currency": "GBP", "price": 495.0}
+{"agreement": "CEF", "applies_to": "customer_set", "segment": null, "customer_kw": "cef", "sku": "HV3PROAASG100T2", "currency": "GBP", "price": 530.0}
+{"agreement": "CEF", "applies_to": "customer_set", "segment": null, "customer_kw": "cef", "sku": "HV3PROAAUB050T2", "currency": "GBP", "price": 475.0}
+{"agreement": "CEF", "applies_to": "customer_set", "segment": null, "customer_kw": "cef", "sku": "HV3PROAAUB075T2", "currency": "GBP", "price": 495.0}
+{"agreement": "CEF", "applies_to": "customer_set", "segment": null, "customer_kw": "cef", "sku": "HV3PROAAUB100T2", "currency": "GBP", "price": 530.0}
+{"agreement": "CEF Online", "applies_to": "customer_set", "segment": null, "customer_kw": "cef", "sku": "HV3PROAAUW050T2", "currency": "GBP", "price": 475.0}
+{"agreement": "CEF Online", "applies_to": "customer_set", "segment": null, "customer_kw": "cef", "sku": "HV3PROAAUW075T2", "currency": "GBP", "price": 495.0}
+{"agreement": "CEF Online", "applies_to": "customer_set", "segment": null, "customer_kw": "cef", "sku": "HV3PROAAUW100T2", "currency": "GBP", "price": 530.0}
+{"agreement": "CEF Online", "applies_to": "customer_set", "segment": null, "customer_kw": "cef", "sku": "HV3PROAASG050T2", "currency": "GBP", "price": 475.0}
+{"agreement": "CEF Online", "applies_to": "customer_set", "segment": null, "customer_kw": "cef", "sku": "HV3PROAASG075T2", "currency": "GBP", "price": 495.0}
+{"agreement": "CEF Online", "applies_to": "customer_set", "segment": null, "customer_kw": "cef", "sku": "HV3PROAASG100T2", "currency": "GBP", "price": 530.0}
+{"agreement": "CEF Online", "applies_to": "customer_set", "segment": null, "customer_kw": "cef", "sku": "HV3PROAAUB050T2", "currency": "GBP", "price": 475.0}
+{"agreement": "CEF Online", "applies_to": "customer_set", "segment": null, "customer_kw": "cef", "sku": "HV3PROAAUB075T2", "currency": "GBP", "price": 495.0}
+{"agreement": "CEF Online", "applies_to": "customer_set", "segment": null, "customer_kw": "cef", "sku": "HV3PROAAUB100T2", "currency": "GBP", "price": 530.0}
+{"agreement": "Rexel", "applies_to": "customer_set", "segment": null, "customer_kw": "rexel", "sku": "HV3PROAAUW050T2", "currency": "GBP", "price": 465.0}
+{"agreement": "Rexel", "applies_to": "customer_set", "segment": null, "customer_kw": "rexel", "sku": "HV3PROAAUW075T2", "currency": "GBP", "price": 485.0}
+{"agreement": "Rexel", "applies_to": "customer_set", "segment": null, "customer_kw": "rexel", "sku": "HV3PROAAUW100T2", "currency": "GBP", "price": 520.0}
+{"agreement": "Rexel", "applies_to": "customer_set", "segment": null, "customer_kw": "rexel", "sku": "HV3PROAASG050T2", "currency": "GBP", "price": 465.0}
+{"agreement": "Rexel", "applies_to": "customer_set", "segment": null, "customer_kw": "rexel", "sku": "HV3PROAASG075T2", "currency": "GBP", "price": 485.0}
+{"agreement": "Rexel", "applies_to": "customer_set", "segment": null, "customer_kw": "rexel", "sku": "HV3PROAASG100T2", "currency": "GBP", "price": 520.0}
+{"agreement": "Rexel", "applies_to": "customer_set", "segment": null, "customer_kw": "rexel", "sku": "HV3PROAAUB050T2", "currency": "GBP", "price": 465.0}
+{"agreement": "Rexel", "applies_to": "customer_set", "segment": null, "customer_kw": "rexel", "sku": "HV3PROAAUB075T2", "currency": "GBP", "price": 485.0}
+{"agreement": "Rexel", "applies_to": "customer_set", "segment": null, "customer_kw": "rexel", "sku": "HV3PROAAUB100T2", "currency": "GBP", "price": 520.0}
+{"agreement": "Edmunson Electrical", "applies_to": "customer_set", "segment": null, "customer_kw": "edmunson", "sku": "HV3PROAAUW050T2", "currency": "GBP", "price": 475.0}
+{"agreement": "Edmunson Electrical", "applies_to": "customer_set", "segment": null, "customer_kw": "edmunson", "sku": "HV3PROAAUW075T2", "currency": "GBP", "price": 495.0}
+{"agreement": "Edmunson Electrical", "applies_to": "customer_set", "segment": null, "customer_kw": "edmunson", "sku": "HV3PROAAUW100T2", "currency": "GBP", "price": 530.0}
+{"agreement": "Edmunson Electrical", "applies_to": "customer_set", "segment": null, "customer_kw": "edmunson", "sku": "HV3PROAASG050T2", "currency": "GBP", "price": 475.0}
+{"agreement": "Edmunson Electrical", "applies_to": "customer_set", "segment": null, "customer_kw": "edmunson", "sku": "HV3PROAASG075T2", "currency": "GBP", "price": 495.0}
+{"agreement": "Edmunson Electrical", "applies_to": "customer_set", "segment": null, "customer_kw": "edmunson", "sku": "HV3PROAASG100T2", "currency": "GBP", "price": 530.0}
+{"agreement": "Edmunson Electrical", "applies_to": "customer_set", "segment": null, "customer_kw": "edmunson", "sku": "HV3PROAAUB050T2", "currency": "GBP", "price": 475.0}
+{"agreement": "Edmunson Electrical", "applies_to": "customer_set", "segment": null, "customer_kw": "edmunson", "sku": "HV3PROAAUB075T2", "currency": "GBP", "price": 495.0}
+{"agreement": "Edmunson Electrical", "applies_to": "customer_set", "segment": null, "customer_kw": "edmunson", "sku": "HV3PROAAUB100T2", "currency": "GBP", "price": 530.0}
+{"agreement": "EcoWizard", "applies_to": "customer_set", "segment": null, "customer_kw": "ecowizard", "sku": "HV3PROAAUW050T2", "currency": "GBP", "price": 455.0}
+{"agreement": "EcoWizard", "applies_to": "customer_set", "segment": null, "customer_kw": "ecowizard", "sku": "HV3PROAAUW075T2", "currency": "GBP", "price": 475.0}
+{"agreement": "EcoWizard", "applies_to": "customer_set", "segment": null, "customer_kw": "ecowizard", "sku": "HV3PROAAUW100T2", "currency": "GBP", "price": 510.0}
+{"agreement": "EcoWizard", "applies_to": "customer_set", "segment": null, "customer_kw": "ecowizard", "sku": "HV3PROAASG050T2", "currency": "GBP", "price": 455.0}
+{"agreement": "EcoWizard", "applies_to": "customer_set", "segment": null, "customer_kw": "ecowizard", "sku": "HV3PROAASG075T2", "currency": "GBP", "price": 475.0}
+{"agreement": "EcoWizard", "applies_to": "customer_set", "segment": null, "customer_kw": "ecowizard", "sku": "HV3PROAASG100T2", "currency": "GBP", "price": 510.0}
+{"agreement": "EcoWizard", "applies_to": "customer_set", "segment": null, "customer_kw": "ecowizard", "sku": "HV3PROAAUB050T2", "currency": "GBP", "price": 455.0}
+{"agreement": "EcoWizard", "applies_to": "customer_set", "segment": null, "customer_kw": "ecowizard", "sku": "HV3PROAAUB075T2", "currency": "GBP", "price": 475.0}
+{"agreement": "EcoWizard", "applies_to": "customer_set", "segment": null, "customer_kw": "ecowizard", "sku": "HV3PROAAUB100T2", "currency": "GBP", "price": 510.0}
+{"agreement": "Medlocks", "applies_to": "customer_set", "segment": null, "customer_kw": "medlocks", "sku": "HV3PROAAUW050T2", "currency": "GBP", "price": 455.0}
+{"agreement": "Medlocks", "applies_to": "customer_set", "segment": null, "customer_kw": "medlocks", "sku": "HV3PROAAUW075T2", "currency": "GBP", "price": 475.0}
+{"agreement": "Medlocks", "applies_to": "customer_set", "segment": null, "customer_kw": "medlocks", "sku": "HV3PROAAUW100T2", "currency": "GBP", "price": 510.0}
+{"agreement": "Medlocks", "applies_to": "customer_set", "segment": null, "customer_kw": "medlocks", "sku": "HV3PROAASG050T2", "currency": "GBP", "price": 455.0}
+{"agreement": "Medlocks", "applies_to": "customer_set", "segment": null, "customer_kw": "medlocks", "sku": "HV3PROAASG075T2", "currency": "GBP", "price": 475.0}
+{"agreement": "Medlocks", "applies_to": "customer_set", "segment": null, "customer_kw": "medlocks", "sku": "HV3PROAASG100T2", "currency": "GBP", "price": 510.0}
+{"agreement": "Medlocks", "applies_to": "customer_set", "segment": null, "customer_kw": "medlocks", "sku": "HV3PROAAUB050T2", "currency": "GBP", "price": 455.0}
+{"agreement": "Medlocks", "applies_to": "customer_set", "segment": null, "customer_kw": "medlocks", "sku": "HV3PROAAUB075T2", "currency": "GBP", "price": 475.0}
+{"agreement": "Medlocks", "applies_to": "customer_set", "segment": null, "customer_kw": "medlocks", "sku": "HV3PROAAUB100T2", "currency": "GBP", "price": 510.0}
+{"agreement": "Volta", "applies_to": "customer_set", "segment": null, "customer_kw": "volta", "sku": "HV3PROAAUW050T2", "currency": "GBP", "price": 465.0}
+{"agreement": "Volta", "applies_to": "customer_set", "segment": null, "customer_kw": "volta", "sku": "HV3PROAAUW075T2", "currency": "GBP", "price": 485.0}
+{"agreement": "Volta", "applies_to": "customer_set", "segment": null, "customer_kw": "volta", "sku": "HV3PROAAUW100T2", "currency": "GBP", "price": 520.0}
+{"agreement": "Volta", "applies_to": "customer_set", "segment": null, "customer_kw": "volta", "sku": "HV3PROAASG050T2", "currency": "GBP", "price": 465.0}
+{"agreement": "Volta", "applies_to": "customer_set", "segment": null, "customer_kw": "volta", "sku": "HV3PROAASG075T2", "currency": "GBP", "price": 485.0}
+{"agreement": "Volta", "applies_to": "customer_set", "segment": null, "customer_kw": "volta", "sku": "HV3PROAASG100T2", "currency": "GBP", "price": 520.0}
+{"agreement": "Volta", "applies_to": "customer_set", "segment": null, "customer_kw": "volta", "sku": "HV3PROAAUB050T2", "currency": "GBP", "price": 465.0}
+{"agreement": "Volta", "applies_to": "customer_set", "segment": null, "customer_kw": "volta", "sku": "HV3PROAAUB075T2", "currency": "GBP", "price": 485.0}
+{"agreement": "Volta", "applies_to": "customer_set", "segment": null, "customer_kw": "volta", "sku": "HV3PROAAUB100T2", "currency": "GBP", "price": 520.0}
+{"agreement": "Kelvelec", "applies_to": "customer_set", "segment": null, "customer_kw": "kelvelec", "sku": "HV3PROAAUW050T2", "currency": "GBP", "price": 440.0}
+{"agreement": "Kelvelec", "applies_to": "customer_set", "segment": null, "customer_kw": "kelvelec", "sku": "HV3PROAAUW075T2", "currency": "GBP", "price": 460.0}
+{"agreement": "Kelvelec", "applies_to": "customer_set", "segment": null, "customer_kw": "kelvelec", "sku": "HV3PROAAUW100T2", "currency": "GBP", "price": 495.0}
+{"agreement": "Kelvelec", "applies_to": "customer_set", "segment": null, "customer_kw": "kelvelec", "sku": "HV3PROAASG050T2", "currency": "GBP", "price": 440.0}
+{"agreement": "Kelvelec", "applies_to": "customer_set", "segment": null, "customer_kw": "kelvelec", "sku": "HV3PROAASG075T2", "currency": "GBP", "price": 460.0}
+{"agreement": "Kelvelec", "applies_to": "customer_set", "segment": null, "customer_kw": "kelvelec", "sku": "HV3PROAASG100T2", "currency": "GBP", "price": 495.0}
+{"agreement": "Kelvelec", "applies_to": "customer_set", "segment": null, "customer_kw": "kelvelec", "sku": "HV3PROAAUB050T2", "currency": "GBP", "price": 440.0}
+{"agreement": "Kelvelec", "applies_to": "customer_set", "segment": null, "customer_kw": "kelvelec", "sku": "HV3PROAAUB075T2", "currency": "GBP", "price": 460.0}
+{"agreement": "Kelvelec", "applies_to": "customer_set", "segment": null, "customer_kw": "kelvelec", "sku": "HV3PROAAUB100T2", "currency": "GBP", "price": 495.0}
+{"agreement": "Midsummer (Ireland) - Pricing in Euros", "applies_to": "customer_set", "segment": null, "customer_kw": "midsummer", "sku": "HV3PROAAUW050T2", "currency": "EUR", "price": 530.0}
+{"agreement": "Midsummer (Ireland) - Pricing in Euros", "applies_to": "customer_set", "segment": null, "customer_kw": "midsummer", "sku": "HV3PROAAUW075T2", "currency": "EUR", "price": 570.0}
+{"agreement": "Midsummer (Ireland) - Pricing in Euros", "applies_to": "customer_set", "segment": null, "customer_kw": "midsummer", "sku": "HV3PROAAUW100T2", "currency": "EUR", "price": 610.0}
+{"agreement": "Midsummer (Ireland) - Pricing in Euros", "applies_to": "customer_set", "segment": null, "customer_kw": "midsummer", "sku": "HV3PROAASG050T2", "currency": "EUR", "price": 530.0}
+{"agreement": "Midsummer (Ireland) - Pricing in Euros", "applies_to": "customer_set", "segment": null, "customer_kw": "midsummer", "sku": "HV3PROAASG075T2", "currency": "EUR", "price": 570.0}
+{"agreement": "Midsummer (Ireland) - Pricing in Euros", "applies_to": "customer_set", "segment": null, "customer_kw": "midsummer", "sku": "HV3PROAASG100T2", "currency": "EUR", "price": 610.0}
+{"agreement": "Midsummer (Ireland) - Pricing in Euros", "applies_to": "customer_set", "segment": null, "customer_kw": "midsummer", "sku": "HV3PROAAUB050T2", "currency": "EUR", "price": 530.0}
+{"agreement": "Midsummer (Ireland) - Pricing in Euros", "applies_to": "customer_set", "segment": null, "customer_kw": "midsummer", "sku": "HV3PROAAUB075T2", "currency": "EUR", "price": 570.0}
+{"agreement": "Midsummer (Ireland) - Pricing in Euros", "applies_to": "customer_set", "segment": null, "customer_kw": "midsummer", "sku": "HV3PROAAUB100T2", "currency": "EUR", "price": 610.0}
+{"agreement": "Wickes", "applies_to": "customer_set", "segment": null, "customer_kw": "wickes", "sku": "HV3PROAAUW050T2", "currency": "GBP", "price": 477.32}
+{"agreement": "Wickes", "applies_to": "customer_set", "segment": null, "customer_kw": "wickes", "sku": "HV3PROAAUW075T2", "currency": "GBP", "price": 489.89}
+{"agreement": "Wickes", "applies_to": "customer_set", "segment": null, "customer_kw": "wickes", "sku": "HV3PROAAUW100T2", "currency": "GBP", "price": 522.26}
+{"agreement": "Wickes", "applies_to": "customer_set", "segment": null, "customer_kw": "wickes", "sku": "HV3PROAASG050T2", "currency": "GBP", "price": 477.32}
+{"agreement": "Wickes", "applies_to": "customer_set", "segment": null, "customer_kw": "wickes", "sku": "HV3PROAASG075T2", "currency": "GBP", "price": 489.89}
+{"agreement": "Wickes", "applies_to": "customer_set", "segment": null, "customer_kw": "wickes", "sku": "HV3PROAASG100T2", "currency": "GBP", "price": 522.26}
+{"agreement": "Wickes", "applies_to": "customer_set", "segment": null, "customer_kw": "wickes", "sku": "HV3PROAAUB050T2", "currency": "GBP", "price": 477.32}
+{"agreement": "Wickes", "applies_to": "customer_set", "segment": null, "customer_kw": "wickes", "sku": "HV3PROAAUB075T2", "currency": "GBP", "price": 489.89}
+{"agreement": "Wickes", "applies_to": "customer_set", "segment": null, "customer_kw": "wickes", "sku": "HV3PROAAUB100T2", "currency": "GBP", "price": 522.26}
+{"agreement": "Carmmunity", "applies_to": "customer_set", "segment": null, "customer_kw": "carmmunity", "sku": "HV3PROAAUW050T2", "currency": "GBP", "price": 550.0}
+{"agreement": "Carmmunity", "applies_to": "customer_set", "segment": null, "customer_kw": "carmmunity", "sku": "HV3PROAAUW075T2", "currency": "GBP", "price": 585.0}
+{"agreement": "Carmmunity", "applies_to": "customer_set", "segment": null, "customer_kw": "carmmunity", "sku": "HV3PROAAUW100T2", "currency": "GBP", "price": 625.0}
+{"agreement": "Carmmunity", "applies_to": "customer_set", "segment": null, "customer_kw": "carmmunity", "sku": "HV3PROAASG050T2", "currency": "GBP", "price": 550.0}
+{"agreement": "Carmmunity", "applies_to": "customer_set", "segment": null, "customer_kw": "carmmunity", "sku": "HV3PROAASG075T2", "currency": "GBP", "price": 585.0}
+{"agreement": "Carmmunity", "applies_to": "customer_set", "segment": null, "customer_kw": "carmmunity", "sku": "HV3PROAASG100T2", "currency": "GBP", "price": 625.0}
+{"agreement": "Carmmunity", "applies_to": "customer_set", "segment": null, "customer_kw": "carmmunity", "sku": "HV3PROAAUB050T2", "currency": "GBP", "price": 550.0}
+{"agreement": "Carmmunity", "applies_to": "customer_set", "segment": null, "customer_kw": "carmmunity", "sku": "HV3PROAAUB075T2", "currency": "GBP", "price": 585.0}
+{"agreement": "Carmmunity", "applies_to": "customer_set", "segment": null, "customer_kw": "carmmunity", "sku": "HV3PROAAUB100T2", "currency": "GBP", "price": 625.0}
+{"agreement": "Endeavour", "applies_to": "customer_set", "segment": null, "customer_kw": "endeavour", "sku": "HV3PROAAUW050T2", "currency": "GBP", "price": 690.0}
+{"agreement": "Endeavour", "applies_to": "customer_set", "segment": null, "customer_kw": "endeavour", "sku": "HV3PROAAUW075T2", "currency": "GBP", "price": 732.0}
+{"agreement": "Endeavour", "applies_to": "customer_set", "segment": null, "customer_kw": "endeavour", "sku": "HV3PROAAUW100T2", "currency": "GBP", "price": 780.0}
+{"agreement": "Endeavour", "applies_to": "customer_set", "segment": null, "customer_kw": "endeavour", "sku": "HV3PROAASG050T2", "currency": "GBP", "price": 690.0}
+{"agreement": "Endeavour", "applies_to": "customer_set", "segment": null, "customer_kw": "endeavour", "sku": "HV3PROAASG075T2", "currency": "GBP", "price": 732.0}
+{"agreement": "Endeavour", "applies_to": "customer_set", "segment": null, "customer_kw": "endeavour", "sku": "HV3PROAASG100T2", "currency": "GBP", "price": 780.0}
+{"agreement": "Endeavour", "applies_to": "customer_set", "segment": null, "customer_kw": "endeavour", "sku": "HV3PROAAUB050T2", "currency": "GBP", "price": 690.0}
+{"agreement": "Endeavour", "applies_to": "customer_set", "segment": null, "customer_kw": "endeavour", "sku": "HV3PROAAUB075T2", "currency": "GBP", "price": 732.0}
+{"agreement": "Endeavour", "applies_to": "customer_set", "segment": null, "customer_kw": "endeavour", "sku": "HV3PROAAUB100T2", "currency": "GBP", "price": 780.0}
+{"agreement": "Iceland (The country not the grocery store\u2026.apparently\u2026)", "applies_to": "customer_set", "segment": null, "customer_kw": "iceland", "sku": "HV3PROAAUW050T2", "currency": "GBP", "price": 500.0}
+{"agreement": "Iceland (The country not the grocery store\u2026.apparently\u2026)", "applies_to": "customer_set", "segment": null, "customer_kw": "iceland", "sku": "HV3PROAAUW075T2", "currency": "GBP", "price": 535.0}
+{"agreement": "Iceland (The country not the grocery store\u2026.apparently\u2026)", "applies_to": "customer_set", "segment": null, "customer_kw": "iceland", "sku": "HV3PROAAUW100T2", "currency": "GBP", "price": 575.0}
+{"agreement": "Iceland (The country not the grocery store\u2026.apparently\u2026)", "applies_to": "customer_set", "segment": null, "customer_kw": "iceland", "sku": "HV3PROAASG050T2", "currency": "GBP", "price": 500.0}
+{"agreement": "Iceland (The country not the grocery store\u2026.apparently\u2026)", "applies_to": "customer_set", "segment": null, "customer_kw": "iceland", "sku": "HV3PROAASG075T2", "currency": "GBP", "price": 535.0}
+{"agreement": "Iceland (The country not the grocery store\u2026.apparently\u2026)", "applies_to": "customer_set", "segment": null, "customer_kw": "iceland", "sku": "HV3PROAASG100T2", "currency": "GBP", "price": 575.0}
+{"agreement": "Iceland (The country not the grocery store\u2026.apparently\u2026)", "applies_to": "customer_set", "segment": null, "customer_kw": "iceland", "sku": "HV3PROAAUB050T2", "currency": "GBP", "price": 500.0}
+{"agreement": "Iceland (The country not the grocery store\u2026.apparently\u2026)", "applies_to": "customer_set", "segment": null, "customer_kw": "iceland", "sku": "HV3PROAAUB075T2", "currency": "GBP", "price": 535.0}
+{"agreement": "Iceland (The country not the grocery store\u2026.apparently\u2026)", "applies_to": "customer_set", "segment": null, "customer_kw": "iceland", "sku": "HV3PROAAUB100T2", "currency": "GBP", "price": 575.0}
+{"agreement": "Fleet & Leasing", "applies_to": "customer_set", "segment": null, "customer_kw": "fleet", "sku": "HV3PROAAUW050T2", "currency": "GBP", "price": 575.0}
+{"agreement": "Fleet & Leasing", "applies_to": "customer_set", "segment": null, "customer_kw": "fleet", "sku": "HV3PROAAUW075T2", "currency": "GBP", "price": 610.0}
+{"agreement": "Fleet & Leasing", "applies_to": "customer_set", "segment": null, "customer_kw": "fleet", "sku": "HV3PROAAUW100T2", "currency": "GBP", "price": 650.0}
+{"agreement": "Fleet & Leasing", "applies_to": "customer_set", "segment": null, "customer_kw": "fleet", "sku": "HV3PROAASG050T2", "currency": "GBP", "price": 575.0}
+{"agreement": "Fleet & Leasing", "applies_to": "customer_set", "segment": null, "customer_kw": "fleet", "sku": "HV3PROAASG075T2", "currency": "GBP", "price": 610.0}
+{"agreement": "Fleet & Leasing", "applies_to": "customer_set", "segment": null, "customer_kw": "fleet", "sku": "HV3PROAASG100T2", "currency": "GBP", "price": 650.0}
+{"agreement": "Fleet & Leasing", "applies_to": "customer_set", "segment": null, "customer_kw": "fleet", "sku": "HV3PROAAUB050T2", "currency": "GBP", "price": 575.0}
+{"agreement": "Fleet & Leasing", "applies_to": "customer_set", "segment": null, "customer_kw": "fleet", "sku": "HV3PROAAUB075T2", "currency": "GBP", "price": 610.0}
+{"agreement": "Fleet & Leasing", "applies_to": "customer_set", "segment": null, "customer_kw": "fleet", "sku": "HV3PROAAUB100T2", "currency": "GBP", "price": 650.0}
+{"agreement": "Amazon", "applies_to": "customer_set", "segment": null, "customer_kw": "amazon", "sku": "HV3PROAAUW050T2", "currency": "GBP", "price": 575.0}
+{"agreement": "Amazon", "applies_to": "customer_set", "segment": null, "customer_kw": "amazon", "sku": "HV3PROAAUW075T2", "currency": "GBP", "price": 610.0}
+{"agreement": "Amazon", "applies_to": "customer_set", "segment": null, "customer_kw": "amazon", "sku": "HV3PROAAUW100T2", "currency": "GBP", "price": 650.0}
+{"agreement": "Amazon", "applies_to": "customer_set", "segment": null, "customer_kw": "amazon", "sku": "HV3PROAASG050T2", "currency": "GBP", "price": 575.0}
+{"agreement": "Amazon", "applies_to": "customer_set", "segment": null, "customer_kw": "amazon", "sku": "HV3PROAASG075T2", "currency": "GBP", "price": 610.0}
+{"agreement": "Amazon", "applies_to": "customer_set", "segment": null, "customer_kw": "amazon", "sku": "HV3PROAASG100T2", "currency": "GBP", "price": 650.0}
+{"agreement": "Amazon", "applies_to": "customer_set", "segment": null, "customer_kw": "amazon", "sku": "HV3PROAAUB050T2", "currency": "GBP", "price": 575.0}
+{"agreement": "Amazon", "applies_to": "customer_set", "segment": null, "customer_kw": "amazon", "sku": "HV3PROAAUB075T2", "currency": "GBP", "price": 610.0}
+{"agreement": "Amazon", "applies_to": "customer_set", "segment": null, "customer_kw": "amazon", "sku": "HV3PROAAUB100T2", "currency": "GBP", "price": 650.0}
+{"agreement": "Fleet Evolution", "applies_to": "customer_set", "segment": null, "customer_kw": "fleet", "sku": "HV3PROAAUW050T2", "currency": "GBP", "price": 500.0}
+{"agreement": "Fleet Evolution", "applies_to": "customer_set", "segment": null, "customer_kw": "fleet", "sku": "HV3PROAAUW075T2", "currency": "GBP", "price": 535.0}
+{"agreement": "Fleet Evolution", "applies_to": "customer_set", "segment": null, "customer_kw": "fleet", "sku": "HV3PROAAUW100T2", "currency": "GBP", "price": 575.0}
+{"agreement": "Fleet Evolution", "applies_to": "customer_set", "segment": null, "customer_kw": "fleet", "sku": "HV3PROAASG050T2", "currency": "GBP", "price": 500.0}
+{"agreement": "Fleet Evolution", "applies_to": "customer_set", "segment": null, "customer_kw": "fleet", "sku": "HV3PROAASG075T2", "currency": "GBP", "price": 535.0}
+{"agreement": "Fleet Evolution", "applies_to": "customer_set", "segment": null, "customer_kw": "fleet", "sku": "HV3PROAASG100T2", "currency": "GBP", "price": 575.0}
+{"agreement": "Fleet Evolution", "applies_to": "customer_set", "segment": null, "customer_kw": "fleet", "sku": "HV3PROAAUB050T2", "currency": "GBP", "price": 500.0}
+{"agreement": "Fleet Evolution", "applies_to": "customer_set", "segment": null, "customer_kw": "fleet", "sku": "HV3PROAAUB075T2", "currency": "GBP", "price": 535.0}
+{"agreement": "Fleet Evolution", "applies_to": "customer_set", "segment": null, "customer_kw": "fleet", "sku": "HV3PROAAUB100T2", "currency": "GBP", "price": 575.0}
