@@ -1,5 +1,6 @@
 package com.hypervolt.conduit.crm
 
+import cats.syntax.all._
 import doobie.Fragments
 import doobie.implicits._
 import doobie.postgres.implicits._
@@ -105,26 +106,51 @@ object CrmReadRepo {
   // The attributed deal/PO book (doc 26 §4a + the HubSpot company association): every historical customer deal
   // tied to the installer/wholesaler/retail company that placed it. Paginated; filterable by segment + won and a
   // company/pipeline search. company_name is the attribution carried on the deal.
-  private def dealFilters(segment: Option[String], won: Option[Boolean], q: Option[String]): Option[doobie.Fragment] = {
+  private def dealFilters(
+      segment: Option[String],
+      pipeline: Option[String],
+      status: Option[String],
+      q: Option[String]
+  ): Option[doobie.Fragment] = {
+    val statusFr = status.collect {
+      case "won"  => fr"is_won = true"
+      case "lost" => fr"is_closed = true AND is_won = false"
+      case "open" => fr"is_closed = false"
+    }
     val fs = List(
       segment.map(s => fr"segment = $s"),
-      won.map(w => fr"is_won = $w"),
+      pipeline.map(p => fr"pipeline = $p"),
+      statusFr,
       q.map(t => fr"(company_name ILIKE ${"%" + t + "%"} OR pipeline ILIKE ${"%" + t + "%"})")
     ).flatten
     if (fs.isEmpty) None else Some(fs.reduce(_ ++ fr"AND" ++ _))
   }
 
+  // Sort is a fixed whitelist (never interpolated) so it is injection-safe.
+  private def dealSort(sort: Option[String], dir: Option[String]): doobie.Fragment = {
+    val d = if (dir.contains("asc")) fr"ASC" else fr"DESC"
+    sort match {
+      case Some("amount")  => fr"ORDER BY amount" ++ d ++ fr"NULLS LAST"
+      case Some("company") => fr"ORDER BY company_name" ++ d ++ fr"NULLS LAST"
+      case Some("closed")  => fr"ORDER BY closed_at" ++ d ++ fr"NULLS LAST"
+      case _               => fr"ORDER BY created_at" ++ d ++ fr"NULLS LAST"
+    }
+  }
+
   def deals(
       segment: Option[String],
-      won: Option[Boolean],
+      pipeline: Option[String],
+      status: Option[String],
       q: Option[String],
+      sort: Option[String],
+      dir: Option[String],
       limit: Int,
       offset: Int
   ): doobie.ConnectionIO[List[Json]] =
     (fr"""SELECT deal_id, company_name, segment, pipeline, amount, created_at, closed_at, is_won, is_closed
           FROM deal_snapshot"""
-      ++ Fragments.whereAndOpt(dealFilters(segment, won, q))
-      ++ fr"ORDER BY created_at DESC NULLS LAST, amount DESC NULLS LAST LIMIT $limit OFFSET $offset")
+      ++ Fragments.whereAndOpt(dealFilters(segment, pipeline, status, q))
+      ++ dealSort(sort, dir) ++ fr", deal_id LIMIT $limit OFFSET $offset")
       .query[
         (String, Option[String], Option[String], Option[String], Option[BigDecimal], Option[LocalDate], Option[LocalDate], Boolean, Boolean)
       ]
@@ -145,27 +171,38 @@ object CrmReadRepo {
           )
       })
 
-  def dealsCount(segment: Option[String], won: Option[Boolean], q: Option[String]): doobie.ConnectionIO[Long] =
-    (fr"SELECT count(*) FROM deal_snapshot" ++ Fragments.whereAndOpt(dealFilters(segment, won, q)))
+  def dealsCount(
+      segment: Option[String],
+      pipeline: Option[String],
+      status: Option[String],
+      q: Option[String]
+  ): doobie.ConnectionIO[Long] =
+    (fr"SELECT count(*) FROM deal_snapshot" ++ Fragments.whereAndOpt(dealFilters(segment, pipeline, status, q)))
       .query[Long]
       .unique
 
-  def dealsSummary: doobie.ConnectionIO[Json] =
-    sql"""SELECT COALESCE(segment, 'unattributed'), count(*), count(*) FILTER (WHERE is_won),
-                 COALESCE(sum(amount) FILTER (WHERE is_won), 0), count(*) FILTER (WHERE company_id IS NOT NULL)
-          FROM deal_snapshot GROUP BY 1 ORDER BY 2 DESC"""
-      .query[(String, Long, Long, BigDecimal, Long)]
+  private def rollup(col: doobie.Fragment): doobie.ConnectionIO[List[Json]] =
+    (fr"SELECT" ++ col ++ fr""", segment, count(*), count(*) FILTER (WHERE is_won),
+          COALESCE(sum(amount) FILTER (WHERE is_won), 0), count(*) FILTER (WHERE company_id IS NOT NULL)
+          FROM deal_snapshot GROUP BY 1, 2 ORDER BY 3 DESC""")
+      .query[(Option[String], Option[String], Long, Long, BigDecimal, Long)]
       .to[List]
-      .map(rs =>
-        Json.fromValues(rs.map {
-          case (seg, n, wonN, wonValue, attributed) =>
-            Json.obj(
-              "segment"        -> seg.asJson,
-              "deals"          -> n.asJson,
-              "won"            -> wonN.asJson,
-              "won_value"      -> wonValue.toString.asJson,
-              "attributed"     -> attributed.asJson
-            )
-        })
-      )
+      .map(_.map {
+        case (key, seg, n, wonN, wonValue, attributed) =>
+          Json.obj(
+            "key"        -> key.getOrElse("unattributed").asJson,
+            "segment"    -> seg.asJson,
+            "deals"      -> n.asJson,
+            "won"        -> wonN.asJson,
+            "won_value"  -> wonValue.toString.asJson,
+            "attributed" -> attributed.asJson
+          )
+      })
+
+  def dealsSummary: doobie.ConnectionIO[Json] =
+    (rollup(fr"COALESCE(segment, 'unattributed')"), rollup(fr"COALESCE(pipeline, 'unknown')")).tupled
+      .map {
+        case (segments, pipelines) =>
+          Json.obj("segments" -> Json.fromValues(segments), "pipelines" -> Json.fromValues(pipelines))
+      }
 }

@@ -89,21 +89,24 @@ final class CrmRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
     base.get
       .in("api" / "v1" / "crm" / "deals")
       .in(query[Option[String]]("segment"))
-      .in(query[Option[String]]("won"))
+      .in(query[Option[String]]("pipeline"))
+      .in(query[Option[String]]("status"))
       .in(query[Option[String]]("q"))
+      .in(query[Option[String]]("sort"))
+      .in(query[Option[String]]("dir"))
       .in(query[Option[Int]]("limit"))
       .in(query[Option[Int]]("offset"))
       .out(jsonBody[Json])
       .serverLogic(p => {
-        case (segment, wonS, q, limitF, offsetF) =>
+        case (segment, pipeline, status, q, sort, dir, limitF, offsetF) =>
           if (!gate(p)) Async[F].pure(Left(denied))
           else {
             val lim = limitF.getOrElse(50).min(200).max(1)
             val off = offsetF.getOrElse(0).max(0)
-            val won = wonS.flatMap(s => Try(s.toBoolean).toOption)
+            val ne  = (s: Option[String]) => s.filter(_.nonEmpty)
             (
-              CrmReadRepo.deals(segment.filter(_.nonEmpty), won, q.filter(_.nonEmpty), lim, off),
-              CrmReadRepo.dealsCount(segment.filter(_.nonEmpty), won, q.filter(_.nonEmpty))
+              CrmReadRepo.deals(ne(segment), ne(pipeline), ne(status), ne(q), ne(sort), ne(dir), lim, off),
+              CrmReadRepo.dealsCount(ne(segment), ne(pipeline), ne(status), ne(q))
             ).tupled
               .transact(xa)
               .map {
@@ -120,7 +123,7 @@ final class CrmRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
       .serverLogic(p =>
         _ =>
           if (!gate(p)) Async[F].pure(Left(denied))
-          else CrmReadRepo.dealsSummary.transact(xa).map(s => Right(Json.obj("segments" -> s)))
+          else CrmReadRepo.dealsSummary.transact(xa).map(Right(_))
       )
 
   val routes: HttpRoutes[F] =

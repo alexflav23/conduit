@@ -218,36 +218,12 @@ object SnapshotLoader {
     }
   }
 
-  // ingest/hubspot/deals_lifecycle.ndjson → deal_snapshot (the order-book substrate, doc 26 §4a).
-  // deals_won.ndjson is the older won-only scrape — lifecycle supersedes it, so it is skipped here.
+  // ingest/hubspot/deals_attributed.ndjson is the canonical deal register (company-attributed, dynamic pipeline
+  // labels) → deal_snapshot. The older deals_lifecycle/deals_won scrapes are superseded and no longer loaded.
   private def hubspot(dataset: String, row: Json): ConnectionIO[Int] =
     if (dataset == "rma_tickets") hubspotRmaTicket(row)
     else if (dataset == "deals_attributed") hubspotAttributedDeal(row)
-    else if (dataset != "deals_lifecycle") 0.pure[ConnectionIO]
-    else {
-      val c = row.hcursor
-      (
-        c.get[String]("deal_id").toOption,
-        c.get[String]("created").toOption.flatMap(s => scala.util.Try(LocalDate.parse(s)).toOption),
-        c.get[String]("pipeline").toOption
-      ).tupled match {
-        case None => 0.pure[ConnectionIO]
-        case Some((dealId, created, pipeline)) =>
-          val closed   = c.get[String]("closed").toOption.flatMap(s => scala.util.Try(LocalDate.parse(s)).toOption)
-          val won      = c.get[String]("won").toOption.contains("true")
-          val isClosed = c.get[String]("is_closed").toOption.contains("true") || won
-          val amount   = c.get[String]("amount").toOption.flatMap(s => scala.util.Try(BigDecimal(s)).toOption)
-          val payment  = c.get[String]("payment").toOption
-          sql"""INSERT INTO deal_snapshot (deal_id, pipeline, created_at, closed_at, is_won, is_closed, amount, payment_method)
-                VALUES ($dealId, $pipeline, $created, $closed, $won, $isClosed,
-                        ${amount.getOrElse(BigDecimal(0))}, $payment)
-                ON CONFLICT (deal_id) DO UPDATE SET
-                  pipeline = EXCLUDED.pipeline, created_at = EXCLUDED.created_at,
-                  closed_at = EXCLUDED.closed_at, is_won = EXCLUDED.is_won,
-                  is_closed = EXCLUDED.is_closed, amount = EXCLUDED.amount,
-                  payment_method = EXCLUDED.payment_method""".update.run
-      }
-    }
+    else 0.pure[ConnectionIO]
 
   // ingest/hubspot/deals_attributed.ndjson → deal_snapshot WITH company attribution (deal → installer/wholesaler/
   // retail customer). Supersedes deals_lifecycle: same substrate plus company_id/company_name/segment, so the desk

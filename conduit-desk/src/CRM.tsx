@@ -114,7 +114,10 @@ export function CRM({ role, ctx, toast }: { role: any; ctx: any; toast: (m: stri
   const market = c.market ? marketId(c.market) : '';
 
   const [tab, setTab] = useState<'parties' | 'pipeline' | 'deals'>('parties');
-  const [dealSeg, setDealSeg] = useState('all');
+  const [dealPipeline, setDealPipeline] = useState('all');
+  const [dealStatus, setDealStatus] = useState('all');
+  const [dealSort, setDealSort] = useState('created');
+  const [dealDir, setDealDir] = useState('desc');
   const [dealQ, setDealQ] = useState('');
   const [dealPage, setDealPage] = useState(0);
   const [sector, setSector] = useState('all');
@@ -145,15 +148,16 @@ export function CRM({ role, ctx, toast }: { role: any; ctx: any; toast: (m: stri
 
   // The attributed deal/PO book — every customer deal tied to the installer/wholesaler/retail company that placed it.
   const DEAL_PAGE = 50;
-  const dealQs = new URLSearchParams({ limit: String(DEAL_PAGE), offset: String(dealPage * DEAL_PAGE) });
-  if (dealSeg !== 'all') dealQs.set('segment', dealSeg);
+  const dealQs = new URLSearchParams({ limit: String(DEAL_PAGE), offset: String(dealPage * DEAL_PAGE), sort: dealSort, dir: dealDir });
+  if (dealPipeline !== 'all') dealQs.set('pipeline', dealPipeline);
+  if (dealStatus !== 'all') dealQs.set('status', dealStatus);
   if (dealQ.trim()) dealQs.set('q', dealQ.trim());
   const dealBook = useApi<{ rows?: DealRow[]; total?: number }>(
-    ['crm', 'deals', dealSeg, dealQ, dealPage],
+    ['crm', 'deals', dealPipeline, dealStatus, dealSort, dealDir, dealQ, dealPage],
     `/api/v1/crm/deals?${dealQs}`,
     { enabled: tab === 'deals' },
   );
-  const dealSummary = useApi<{ segments?: DealSeg[] }>(
+  const dealSummary = useApi<{ segments?: DealAgg[]; pipelines?: DealAgg[] }>(
     ['crm', 'deals-summary'],
     '/api/v1/crm/deals/summary',
     { enabled: tab === 'deals' },
@@ -212,7 +216,10 @@ export function CRM({ role, ctx, toast }: { role: any; ctx: any; toast: (m: stri
         <PipelineView q={pipeline} hasCommercial={hasCommercial} />
       ) : (
         <DealBook
-          book={dealBook} summary={dealSummary} seg={dealSeg} setSeg={(s) => { setDealSeg(s); setDealPage(0); }}
+          book={dealBook} summary={dealSummary}
+          pipeline={dealPipeline} setPipeline={(s) => { setDealPipeline(s); setDealPage(0); }}
+          status={dealStatus} setStatus={(s) => { setDealStatus(s); setDealPage(0); }}
+          sort={dealSort} dir={dealDir} setSort={(s, d) => { setDealSort(s); setDealDir(d); setDealPage(0); }}
           q={dealQ} setQ={(v) => { setDealQ(v); setDealPage(0); }} page={dealPage} setPage={setDealPage} pageSize={DEAL_PAGE}
           hasCommercial={hasCommercial}
         />
@@ -614,45 +621,84 @@ interface DealRow {
   deal_id: string; company_name?: string | null; segment?: string | null; pipeline?: string | null;
   amount?: string | null; created_at?: string | null; closed_at?: string | null; won?: boolean; status?: string;
 }
-interface DealSeg { segment: string; deals: number; won: number; won_value: string; attributed: number }
+interface DealAgg { key: string; segment?: string | null; deals: number; won: number; won_value: string; attributed: number }
 
-function DealBook({ book, summary, seg, setSeg, q, setQ, page, setPage, pageSize, hasCommercial }: {
+function DealBook({ book, summary, pipeline, setPipeline, status, setStatus, sort, dir, setSort, q, setQ, page, setPage, pageSize, hasCommercial }: {
   book: ReturnType<typeof useApi<{ rows?: DealRow[]; total?: number }>>;
-  summary: ReturnType<typeof useApi<{ segments?: DealSeg[] }>>;
-  seg: string; setSeg: (s: string) => void; q: string; setQ: (v: string) => void;
+  summary: ReturnType<typeof useApi<{ segments?: DealAgg[]; pipelines?: DealAgg[] }>>;
+  pipeline: string; setPipeline: (s: string) => void;
+  status: string; setStatus: (s: string) => void;
+  sort: string; dir: string; setSort: (s: string, d: string) => void;
+  q: string; setQ: (v: string) => void;
   page: number; setPage: (n: number) => void; pageSize: number; hasCommercial: boolean;
 }) {
-  const segs = summary.data?.segments ?? [];
+  const pipes = (summary.data?.pipelines ?? []).filter((p) => p.deals > 0);
   const rows = book.data?.rows ?? [];
   const total = book.data?.total ?? 0;
   const pages = Math.max(1, Math.ceil(total / pageSize));
   const tone: Record<string, string> = { won: 'ok', lost: 'danger', open: 'warn' };
+  const active = pipes.find((p) => p.key === pipeline);
+
+  // a sortable column header: click toggles dir (or switches field, defaulting to desc)
+  const SortTh = ({ field, label, align }: { field: string; label: string; align?: 'right' }) => {
+    const on = sort === field;
+    const arrow = on ? (dir === 'asc' ? ' ▲' : ' ▼') : '';
+    return (
+      <th style={{ textAlign: align, cursor: 'pointer', userSelect: 'none' }} data-testid={`deal-sort-${field}`}
+        onClick={() => setSort(field, on && dir === 'desc' ? 'asc' : 'desc')}>{label}{arrow}</th>
+    );
+  };
+
   return (
     <div>
-      {/* per-segment summary */}
-      <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 12, marginBottom: 16 }}>
-        {summary.isLoading && <SkeletonRow cols={1} />}
-        {segs.map((s) => (
-          <Card key={s.segment} title={s.segment} style={{ padding: '12px 14px' }}>
-            <div style={{ fontFamily: 'var(--font-disp)', fontSize: 22, fontWeight: 600 }}>{num(s.deals)}</div>
-            <div className="dim" style={{ fontSize: 11.5 }}>{num(s.won)} won{hasCommercial && Number(s.won_value) > 0 ? ` · ${gbp(s.won_value, 'GBP')}` : ''}</div>
-          </Card>
+      {/* pipeline tabs */}
+      <div className="seg" style={{ marginBottom: 14, flexWrap: 'wrap', rowGap: 6 }}>
+        <button className={pipeline === 'all' ? 'on' : ''} data-testid="deal-pipe-all" onClick={() => setPipeline('all')}>
+          All<span className="dim" style={{ marginLeft: 6 }}>{num(pipes.reduce((a, p) => a + p.deals, 0))}</span>
+        </button>
+        {summary.isLoading && <span className="dim" style={{ padding: '4px 8px', fontSize: 12 }}>loading pipelines…</span>}
+        {pipes.map((p) => (
+          <button key={p.key} className={pipeline === p.key ? 'on' : ''} data-testid={`deal-pipe-${p.key}`} onClick={() => setPipeline(p.key)}>
+            {p.key}<span className="dim" style={{ marginLeft: 6 }}>{num(p.deals)}</span>
+          </button>
         ))}
       </div>
 
-      <div className="loadbar" style={{ marginBottom: 12, gap: 8 }}>
-        <select className="cellinput" value={seg} onChange={(e) => setSeg(e.target.value)} data-testid="deal-seg">
-          <option value="all">All segments</option>
-          {segs.map((s) => <option key={s.segment} value={s.segment}>{s.segment}</option>)}
+      {/* filter + sort bar */}
+      <div className="loadbar" style={{ marginBottom: 12, gap: 8, flexWrap: 'wrap' }}>
+        <select className="cellinput" value={status} onChange={(e) => setStatus(e.target.value)} data-testid="deal-status">
+          <option value="all">All statuses</option>
+          <option value="won">Won</option>
+          <option value="lost">Lost</option>
+          <option value="open">Open</option>
         </select>
-        <input className="cellinput" style={{ width: 240, textAlign: 'left' }} value={q} data-testid="deal-search"
-          onChange={(e) => setQ(e.target.value)} placeholder="Search company or pipeline…" />
-        <span className="dim" style={{ fontSize: 12, marginLeft: 'auto' }}>{num(total)} deals</span>
+        <select className="cellinput" value={`${sort}:${dir}`} data-testid="deal-sortsel"
+          onChange={(e) => { const [s, d] = e.target.value.split(':'); setSort(s, d); }}>
+          <option value="created:desc">Newest first</option>
+          <option value="created:asc">Oldest first</option>
+          <option value="amount:desc">Amount high → low</option>
+          <option value="amount:asc">Amount low → high</option>
+          <option value="company:asc">Company A → Z</option>
+          <option value="closed:desc">Recently closed</option>
+        </select>
+        <input className="cellinput" style={{ width: 220, textAlign: 'left' }} value={q} data-testid="deal-search"
+          onChange={(e) => setQ(e.target.value)} placeholder="Search company…" />
+        <span className="dim" style={{ fontSize: 12, marginLeft: 'auto' }}>
+          {num(total)} deals{active && hasCommercial && Number(active.won_value) > 0 ? ` · ${gbp(active.won_value, 'GBP')} won` : ''}
+        </span>
       </div>
 
-      <Card title="Customer deal / PO book" icon={I.list} aux={<span className="dim" style={{ fontSize: 11.5 }}>attributed to the installer / wholesaler / retail customer</span>} className="tablewrap" style={{ padding: 0 }}>
+      <Card title={pipeline === 'all' ? 'Customer deal / PO book' : pipeline} icon={I.list}
+        aux={<span className="dim" style={{ fontSize: 11.5 }}>attributed to the installer / wholesaler / retail customer</span>}
+        className="tablewrap" style={{ padding: 0 }}>
         <table className="tbl">
-          <thead><tr><th>Company</th><th>Segment</th><th>Pipeline</th><th style={{ textAlign: 'right' }}>Amount</th><th>Created</th><th>Status</th></tr></thead>
+          <thead><tr>
+            <SortTh field="company" label="Company" />
+            <th>Segment</th><th>Pipeline</th>
+            <SortTh field="amount" label="Amount" align="right" />
+            <SortTh field="created" label="Created" />
+            <th>Status</th>
+          </tr></thead>
           <tbody>
             {book.isLoading && <><SkeletonRow cols={6} /><SkeletonRow cols={6} /><SkeletonRow cols={6} /></>}
             {!book.isLoading && rows.length === 0 && <EmptyRow cols={6}>No deals match.</EmptyRow>}

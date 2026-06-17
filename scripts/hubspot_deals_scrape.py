@@ -22,29 +22,22 @@ if not TOKEN:
 
 OUT = os.path.join(os.path.dirname(__file__), "..", "ingest", "hubspot", "deals_attributed.ndjson")
 
-# pipeline id -> (label, segment). Unknown pipelines fall through to (id, 'other').
-PIPELINES = {
-    "default": ("UK Installers", "installer"),
-    "12284392": ("New Installer Sign Up", "installer"),
-    "23872899": ("New Installer Sign Up Outbound", "installer"),
-    "46423619": ("Staging - UK Installers", "installer"),
-    "124101508": ("AUSTRALIA - Installer sign up", "installer"),
-    "12283119": ("UK Distributors & Wholesalers", "wholesaler"),
-    "3088658": ("Distributors", "wholesaler"),
-    "12283103": ("UK Retail", "retail"),
-    "27384693": ("UK Retail - Direct", "retail"),
-    "1153815": ("Staging - UK Retail", "retail"),
-    "44037918": ("Staging - UK Retail - Direct", "retail"),
-    "701692972": ("UK Energy Retail", "retail"),
-    "5520760": ("UK Automotive", "automotive"),
-    "25767051": ("Commercial", "commercial"),
-    "145494818": ("Enterprise", "enterprise"),
-    "15638247": ("International", "international"),
-    "120019894": ("Australia", "international"),
-    "12214656": ("Investors", "other"),
-    "696570664": ("BD - Partnerships", "other"),
-    "88387735": ("CC", "other"),
-}
+# Pipeline labels are resolved dynamically from HubSpot (no brittle static map); segment is derived from the label.
+def segment_of(label):
+    l = (label or "").lower()
+    if "installer" in l:
+        return "installer"
+    if "wholesale" in l or "distribut" in l:
+        return "wholesaler"
+    if "retail" in l or "heatable" in l or "energy" in l:
+        return "retail"
+    if "automotive" in l:
+        return "automotive"
+    if "australia" in l or "international" in l:
+        return "international"
+    if "commercial" in l or "enterprise" in l:
+        return "commercial"
+    return "other"
 
 
 def api(method, path, body=None):
@@ -96,7 +89,14 @@ def resolve_company_names(ids):
     return names
 
 
+def fetch_pipelines():
+    d = api("GET", "/crm/v3/pipelines/deals")
+    return {p["id"]: p.get("label", p["id"]) for p in d.get("results", [])}
+
+
 def main():
+    pipe_labels = fetch_pipelines()
+    sys.stderr.write(f"resolved {len(pipe_labels)} pipeline labels\n")
     deals = []
     company_ids = set()
     n = 0
@@ -107,7 +107,8 @@ def main():
         if company_id:
             company_ids.add(company_id)
         pid = p.get("pipeline") or ""
-        label, segment = PIPELINES.get(pid, (pid, "other"))
+        label = pipe_labels.get(pid, pid or "unknown")
+        segment = segment_of(label)
         deals.append(
             {
                 "deal_id": r["id"],
