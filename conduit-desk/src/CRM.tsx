@@ -771,13 +771,17 @@ interface MasterAccount {
   mrpeasy?: number; hubspot_companies?: number; contacts?: number; branches?: number; orders?: number; order_value?: string;
 }
 interface AcctSource { system: string; source_id: string; name?: string | null; method?: string; confidence?: number }
-interface AcctContact { name?: string; email?: string | null; phone?: string | null; role?: string | null }
+interface AcctContact { name?: string; email?: string | null; phone?: string | null; role?: string | null; entity_type?: string }
 interface AcctBranch { id: string; name: string; orders?: number }
 interface AcctOrder { order_no?: string; date?: string; total?: string | number }
+interface AcctCharger {
+  id: string; serial: string; sku?: string | null; status?: string; activated_at?: string | null;
+  warranty_end?: string | null; warranty_days_left?: number; replaces?: string | null; replaced_by?: string[] | null;
+}
 interface AccountDetail {
   id: string; name: string; segment?: string | null; type?: string | null;
   parent?: { id: string; name: string } | null;
-  sources?: AcctSource[]; contacts?: AcctContact[]; branches?: AcctBranch[]; orders?: AcctOrder[];
+  sources?: AcctSource[]; contacts?: AcctContact[]; branches?: AcctBranch[]; orders?: AcctOrder[]; chargers?: AcctCharger[];
 }
 
 const SRC_LABEL: Record<string, string> = { mrpeasy: 'MRPeasy', hubspot_company: 'HubSpot', hubspot_contact: 'Contact' };
@@ -803,8 +807,8 @@ function AccountsView({ list, detail, seg, setSeg, q, setQ, page, setPage, pageS
           <select className="cellinput" value={seg} onChange={(e) => setSeg(e.target.value)} data-testid="acct-seg">
             {segs.map((s) => <option key={s} value={s}>{s === 'all' ? 'All segments' : s}</option>)}
           </select>
-          <input className="cellinput" style={{ width: 220, textAlign: 'left' }} value={q} data-testid="acct-search"
-            onChange={(e) => setQ(e.target.value)} placeholder="Search account…" />
+          <input className="cellinput" style={{ width: 280, textAlign: 'left' }} value={q} data-testid="acct-search"
+            onChange={(e) => setQ(e.target.value)} placeholder="Search by name, email, or contact…" />
           <span className="dim" style={{ fontSize: 12, marginLeft: 'auto' }}>{num(total)} Conduit accounts</span>
         </div>
         <Card title="Conduit accounts" icon={I.user} aux={<span className="dim" style={{ fontSize: 11.5 }}>one entity · MRPeasy + HubSpot + contacts as parts</span>} className="tablewrap" style={{ padding: 0 }}>
@@ -875,16 +879,57 @@ function AccountsView({ list, detail, seg, setSeg, q, setQ, page, setPage, pageS
               )}
 
               <div>
-                <div className="fldlabel" style={{ marginBottom: 6 }}>Contacts ({(d.contacts ?? []).length})</div>
+                {(() => {
+                  const cs = d.contacts ?? [];
+                  const ends = cs.filter((c) => c.entity_type === 'end_customer').length;
+                  return (
+                    <div className="fldlabel" style={{ marginBottom: 6 }}>
+                      Contacts ({cs.length}){ends > 0 && <span className="dim"> · {ends} end customer{ends > 1 ? 's' : ''}</span>}
+                    </div>
+                  );
+                })()}
                 {(d.contacts ?? []).length === 0 && <div className="dim" style={{ fontSize: 12 }}>No contacts.</div>}
                 {(d.contacts ?? []).slice(0, 25).map((c, i) => (
                   <div key={i} className="row between" style={{ fontSize: 12.5, padding: '2px 0' }}>
-                    <span>{c.name || <span className="dim">—</span>}{c.role && <span className="dim"> · {c.role}</span>}</span>
+                    <span>{c.name || <span className="dim">—</span>}
+                      {c.entity_type === 'end_customer'
+                        ? <Chip s="accent">end customer</Chip>
+                        : c.role && <span className="dim"> · {c.role}</span>}
+                    </span>
                     <span className="dim mono" style={{ fontSize: 11 }}>{c.email || ''}</span>
                   </div>
                 ))}
                 {(d.contacts ?? []).length > 25 && <div className="dim" style={{ fontSize: 11, marginTop: 4 }}>+{d.contacts!.length - 25} more</div>}
               </div>
+
+              {(d.chargers ?? []).length > 0 && (
+                <div>
+                  <div className="fldlabel" style={{ marginBottom: 6 }}>Chargers owned ({d.chargers!.length})</div>
+                  {d.chargers!.slice(0, 30).map((ch) => {
+                    const days = ch.warranty_days_left ?? 0;
+                    const warr = !ch.warranty_end ? null : days > 0
+                      ? { t: (days / 365).toFixed(1) + ' yr left', s: days < 90 ? 'warn' : 'ok' }
+                      : { t: 'warranty expired', s: 'danger' };
+                    return (
+                      <div key={ch.id} style={{ padding: '4px 0', borderBottom: '1px solid var(--border)' }}>
+                        <div className="row between" style={{ fontSize: 12.5 }}>
+                          <span className="mono" style={{ cursor: 'pointer', color: 'var(--accent-bright)' }}
+                            title="copy serial to trace in Batch & genealogy"
+                            onClick={() => { navigator.clipboard?.writeText(ch.serial); toast('Serial copied — trace it in Batch & genealogy', 'ok'); }}>
+                            {ch.serial}</span>
+                          <span>{warr && <Chip s={warr.s}>{warr.t}</Chip>} <Chip s={ch.status === 'activated' ? 'ok' : 'neutral'}>{ch.status}</Chip></span>
+                        </div>
+                        <div className="dim" style={{ fontSize: 11 }}>
+                          {[ch.sku, ch.activated_at ? 'activated ' + String(ch.activated_at).slice(0, 10) : null].filter(Boolean).join(' · ')}
+                          {ch.replaces && <span> · replaced <span className="mono">{ch.replaces}</span></span>}
+                          {(ch.replaced_by ?? []).length > 0 && <span> · → replaced by <span className="mono">{ch.replaced_by!.join(', ')}</span></span>}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {d.chargers!.length > 30 && <div className="dim" style={{ fontSize: 11, marginTop: 4 }}>+{d.chargers!.length - 30} more</div>}
+                </div>
+              )}
 
               <div>
                 <div className="fldlabel" style={{ marginBottom: 6 }}>Recent orders ({(d.orders ?? []).length})</div>

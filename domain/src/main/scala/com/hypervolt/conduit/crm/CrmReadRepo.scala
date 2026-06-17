@@ -216,7 +216,9 @@ object CrmReadRepo {
       Some(fr"p.parent_party_id IS NULL"),
       Some(fr"p.status <> 'merged'"),
       segment.map(s => fr"p.segment = $s"),
-      q.map(t => fr"p.display_name ILIKE ${"%" + t + "%"}")
+      q.map(t =>
+        fr"(p.display_name ILIKE ${"%" + t + "%"} OR p.external_refs->>'owner_email' ILIKE ${"%" + t + "%"}" ++
+          fr" OR EXISTS (SELECT 1 FROM contact c WHERE c.party_id = p.id AND c.email ILIKE ${"%" + t + "%"}))")
     ).flatten.reduce(_ ++ fr" AND " ++ _)
 
   def listAccounts(segment: Option[String], q: Option[String], limit: Int, offset: Int): doobie.ConnectionIO[List[Json]] =
@@ -247,7 +249,10 @@ object CrmReadRepo {
                           'name', a.source_name, 'method', a.match_method, 'confidence', a.confidence) ORDER BY a.source_system), '[]'::jsonb)
                         FROM account_source_link a WHERE a.party_id = p.id),
             'contacts', (SELECT COALESCE(jsonb_agg(jsonb_build_object('name', btrim(coalesce(c.first_name,'')||' '||coalesce(c.last_name,'')),
-                          'email', c.email::text, 'phone', c.phone, 'role', c.role) ORDER BY c.is_primary DESC, c.last_name), '[]'::jsonb)
+                          'email', c.email::text, 'phone', c.phone, 'role', c.role,
+                          'entity_type', CASE WHEN EXISTS (SELECT 1 FROM party op WHERE op.party_type='individual'
+                                          AND lower(op.external_refs->>'owner_email') = lower(c.email::text)) THEN 'end_customer' ELSE 'contact' END)
+                          ORDER BY c.is_primary DESC, c.last_name), '[]'::jsonb)
                          FROM contact c WHERE c.party_id = p.id),
             'branches', (SELECT COALESCE(jsonb_agg(jsonb_build_object('id', b.id::text, 'name', regexp_replace(b.display_name,'^MRP:\s*',''),
                           'orders', (SELECT count(*) FROM "order" o WHERE o.sold_to_party_id = b.id)) ORDER BY b.display_name), '[]'::jsonb)
@@ -255,6 +260,15 @@ object CrmReadRepo {
             'orders', (SELECT COALESCE(jsonb_agg(t.o ORDER BY t.d DESC), '[]'::jsonb) FROM (
                          SELECT jsonb_build_object('order_no', o.order_no, 'date', o.created_at::date::text, 'total', o.total_inc_vat) AS o,
                                 o.created_at AS d
-                         FROM "order" o WHERE o.sold_to_party_id = p.id ORDER BY o.created_at DESC LIMIT 25) t))
+                         FROM "order" o WHERE o.sold_to_party_id = p.id ORDER BY o.created_at DESC LIMIT 25) t),
+            'chargers', (SELECT COALESCE(jsonb_agg(jsonb_build_object(
+                          'id', s.id::text, 'serial', s.serial_no, 'sku', pv.sku, 'status', s.status,
+                          'activated_at', s.activated_at, 'warranty_end', s.warranty_end,
+                          'warranty_days_left', GREATEST(0, (s.warranty_end - current_date)),
+                          'replaces', (SELECT r.serial_no FROM serial_unit r WHERE r.id = s.replaces_serial_unit_id),
+                          'replaced_by', (SELECT jsonb_agg(c.serial_no) FROM serial_unit c WHERE c.replaces_serial_unit_id = s.id))
+                          ORDER BY s.activated_at DESC NULLS LAST), '[]'::jsonb)
+                         FROM serial_unit s LEFT JOIN product_variant pv ON pv.id = s.product_variant_id
+                         WHERE s.owner_party_id = p.id))
           FROM party p WHERE p.id = $id""".query[Json].option
 }

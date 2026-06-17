@@ -35,6 +35,7 @@ import com.hypervolt.conduit.metrics.ConduitMetrics
 import com.hypervolt.conduit.metrics.GlobalMetrics
 import com.hypervolt.conduit.metrics.MetricsBuilder
 import doobie.hikari.HikariTransactor
+import doobie.implicits._
 import org.http4s.HttpApp
 import org.http4s.ember.server.EmberServerBuilder
 import org.http4s.implicits._
@@ -72,20 +73,22 @@ object Main extends IOApp.Simple {
         new ConduitMetrics[IO](xa, new MetricsBuilder(otel.getMeter("conduit"), "conduit"), dispatcher).register
       )
       _ <- Resource.eval(logger.info("Metrics exporter started (:9464)"))
-      // git-snapshot ingest (doc 26 §3a): load any NDJSON snapshots committed under INGEST_DIR — deterministic +
-      // idempotent, so checkout → docker compose up → seeded, and every re-boot converges to the same state.
-      loaded <- Resource.eval(
-        new com.hypervolt.conduit.ingest.SnapshotLoader[IO](xa)
-          .loadAll(java.nio.file.Paths.get(sys.env.getOrElse("INGEST_DIR", "ingest")))
-      )
-      _ <- Resource.eval(logger.info(s"Snapshot ingest: $loaded rows loaded"))
-      // Boot ignition (idempotent): replay the ingested history through the production engines so a fresh env
-      // reconverges to the live state (lots, periods, exposure + dispatch.created events the consumer recognises).
-      // IGNITE=false disables it (e.g. when operating the books manually).
+      // git-snapshot ingest + ignition: heavy (260k+ rows + correlation + owner materialisation). It only needs to
+      // run on a FRESH database — the data persists in the volume across restarts. So gate both on an empty spine:
+      // a clean `docker compose down -v` re-derives everything; a plain code-deploy restart skips it (instant boot,
+      // no multi-minute DB saturation). RELOAD=true forces it; IGNITE=false disables ignition.
+      seeded <- Resource.eval(sql"SELECT EXISTS(SELECT 1 FROM serial_unit)".query[Boolean].unique.transact(xa))
+      reload  = sys.env.get("RELOAD").exists(_.toBoolean)
       _ <- Resource.eval(
-        if (sys.env.getOrElse("IGNITE", "true").toBoolean)
-          new com.hypervolt.conduit.ingest.IgnitionService[IO](xa).ignite.flatMap(s => logger.info(s"Ignition: $s"))
-        else logger.info("Ignition: disabled (IGNITE=false)")
+        if (seeded && !reload)
+          logger.info("Snapshot ingest + ignition: skipped (DB already populated; RELOAD=true to force)")
+        else
+          new com.hypervolt.conduit.ingest.SnapshotLoader[IO](xa)
+            .loadAll(java.nio.file.Paths.get(sys.env.getOrElse("INGEST_DIR", "ingest")))
+            .flatMap(n => logger.info(s"Snapshot ingest: $n rows loaded")) *>
+            (if (sys.env.getOrElse("IGNITE", "true").toBoolean)
+               new com.hypervolt.conduit.ingest.IgnitionService[IO](xa).ignite.flatMap(s => logger.info(s"Ignition: $s"))
+             else logger.info("Ignition: disabled (IGNITE=false)"))
       )
     } yield (cfg, xa)
 
