@@ -98,3 +98,268 @@
 {"code": "HV-PR-005-4SD - OBSOLETE", "title": "4GB MicroSDHC Card", "group": "Product Components"}
 {"code": "HV-PR-006-ALM - OBSOLETE", "title": "ALM Direct PCB V2", "group": "Product Components"}
 {"code": "HV-PR-007-AXF", "title": "Axial Fan", "group": "Product Components"}
+{"code": "GD1-del1671549166", "title": "Grey 5M", "group": null}
+{"code": "hv-2010-ub-del1639656801", "title": "Home 2.0 - 10m - UltraBlack", "group": null}
+{"code": "hv-2010-uw-t2-del1639656801", "title": "Home 2.0 - 10m - UltraWhite", "group": null}
+{"code": "hv-2075-uw-del1639656801", "title": "Home 2.0 - 7.5m - UltraWhite", "group": null}
+{"code": "hv-2275-ub-t2-B+-del1674045447", "title": "Home 2.2 - 7.5m - Ultra Black - Type 2 - Retail-B+", "group": null}
+{"code": "hv-350-uwt-t2-N-A OLD", "title": "Home 3.0 - 5m - Ultra Black - Type 1 - Installer", "group": null}
+{"code": "hv3-PR-242-RMA", "title": "RMA-3.0-San Marino", "group": null}
+{"code": "HV3PROAASG050T1", "title": "Hypervolt Home 3 Pro Space Grey 5m T1", "group": null}
+{"code": "HV3PROAASG050T2", "title": "Hypervolt Home 3 Pro Space Grey 5m T2", "group": null}
+{"code": "HV3PROAASG050T2-DEMO", "title": "Hypervolt Home 3 Pro Space Grey 5m T2-DEMO", "group": null}
+{"code": "HV3PROAASG075T1", "title": "Hypervolt Home 3 Pro Space Grey 7.5m T1", "group": null}
+{"code": "HV3PROAASG075T2", "title": "Hypervolt Home 3 Pro Space Grey 7.5m T2", "group": null}
+{"code": "HV3PROAASG100T2", "title": "Hypervolt Home 3 Pro Space Grey 10m T2", "group": null}
+{"code": "HV3PROAASG-RMA", "title": "Hypervolt Home 3 Pro Space Grey RMA", "group": null}
+{"code": "HV3PROAAUB050T1", "title": "Hypervolt Home 3 Pro Ultra Black 5m T1", "group": null}
+{"code": "HV3PROAAUB050T2", "title": "Hypervolt Home 3 Pro Ultra Black 5m T2", "group": null}
+{"code": "HV3PROAAUB050T2-DEMO", "title": "Hypervolt Home 3 Pro Ultra Black 5m T2-DEMO", "group": null}
+{"code": "HV3PROAAUB075T1", "title": "Hypervolt Home 3 Pro Ultra Black 7.5m T1", "group": null}
+{"code": "HV3PROAAUB075T2", "title": "Hypervolt Home 3 Pro Ultra Black 7.5m T2", "group": null}
+{"code": "HV3PROAAUB100T2", "title": "Hypervolt Home 3 Pro Ultra Black 10m T2", "group": null}
+{"code": "HV3PROAAUB-RMA", "title": "Hypervolt Home 3 Pro Ultra Black RMA", "group": null}
+{"code": "HV3PROAAUW050T2", "title": "Hypervolt Home 3 Pro Ultra White 5m T2", "group": null}
+{"code": "HV3PROAAUW050T2-DEMO", "title": "Hypervolt Home 3 Pro Ultra White 5m T2-DEMO", "group": null}
+{"code": "HV3PROAAUW075T1", "title": "Hypervolt Home 3 Pro Ultra White 7.5m T1", "group": null}
+{"code": "HV3PROAAUW075T2", "title": "Hypervolt Home 3 Pro Ultra White 7.5m T2", "group": null}
+{"code": "HV3PROAAUW100T2", "title": "Hypervolt Home 3 Pro Ultra White 10m T2", "group": null}
+{"code": "HV3PROAAUW-RMA", "title": "Hypervolt Home 3 Pro Ultra White RMA", "group": null}
+{"code": "HV3PRO-BRACKET-RMA", "title": "Home  3 Pro Bracket RMA", "group": null}
+{"code": "HV3PRO-FrontShell-RMA", "title": "Home 3 Pro Front Shell RMA", "group": null}
+{"code": "hv3-RMA-3.0-UNIT", "title": "Charging unit without cable and front enclosure for 3.0 RMAs.", "group": null}
+{"code": "hv3-sg-RMA", "title": "RMA-3.0-SpaceGrey Enclosure Front", "group": null}
+{"code": "hv3-ub-RMA", "title": "RMA-3.0-Ultra Black Enclosure Front", "group": null}
+{"code": "hv3-uw-RMA", "title": "RMA-3.0-Ultra White Enclosure Front", "group": null}
+{"code": "HV-PR-001-KCT 100A/40mA CT-RMA-del1760605946", "title": "RMA-CT Clamp", "group": null}
+{"code": "HV-PR-008-CGD", "title": "Cable Gland for Mains IN/OUT connections - (WISKA 10066503)", "group": null}
+{"code": "HV-PR-009-CLN", "title": "Cable Gland Locknut - (WISKA 10061783)", "group": null}
+{"code": "HV-PR-011-CBB - OBSOLETE", "title": "CR1632 Button Battery", "group": null}
+{"code": "HV-PR-011-IDC - OBSOLETE", "title": "40 Way IDC Connector+Ribbon Cable", "group": null}
+{"code": "HV-PR-012-CMO - OBSOLETE", "title": "Crimp for Molex conns", "group": null}
+{"code": "HV-PR-013-UWE", "title": "Enclosure Front UltraWhite", "group": null}
+{"code": "HV-PR-013-UWE-B+", "title": "B+ White Enclosure Front", "group": null}
+{"code": "HV-PR-013-UWE-RMA", "title": "RMA-UltraWhite Enclosure Front", "group": null}
+{"code": "HV-PR-014-ETS-1-del1647013301", "title": "EV Tower Stand base, with no plates", "group": null}
+{"code": "HV-PR-016-CBT", "title": "Cable ties", "group": null}
+{"code": "HV-PR-017-PSU", "title": "LD30-23B05R2 PSU", "group": null}
+{"code": "HV-PR-022-RCD", "title": "Magtron/WA RCD", "group": null}
+{"code": "HV-PR-025-UBE", "title": "UltraBlack Enclosure Front", "group": null}
+{"code": "HV-PR-025-UBE-B+", "title": "B+ Black Enclosure Front", "group": null}
+{"code": "HV-PR-025-UBE-RMA", "title": "RMA-UltraBlack Enclosure Front", "group": null}
+{"code": "HV-PR-027-WIF - OBSOLETE", "title": "WiFi USB adapter dongle for Raspberry PI.", "group": null}
+{"code": "HV-PR-028-SGE", "title": "SpaceGrey Enclosure Front", "group": null}
+{"code": "HV-PR-028-SGE-B+", "title": "B+ Space Grey Enclosure Front", "group": null}
+{"code": "HV-PR-028-SGE-RMA", "title": "RMA-Space Grey Enclosure Front w/Gasket", "group": null}
+{"code": "HV-PR-029-HSB", "title": "No.6 3.4mm X 6.5mm Phillips Self Tapping Screws", "group": null}
+{"code": "HV-PR-030-LSA-del1648855206", "title": "LED Strip assembly", "group": null}
+{"code": "HV-PR-031-PTL - OBSOLETE", "title": "Product Label", "group": null}
+{"code": "HV-PR-032-MNS - OBSOLETE", "title": "M3 Nylon Screws", "group": null}
+{"code": "HV-PR-033-FSW", "title": "Wire Ferrule, Single Wire, 10 AWG, 6 mm\u00b2, 12 mm, Green, E Series", "group": null}
+{"code": "HV-PR-034-RBX - OBSOLETE", "title": "Rear Box", "group": null}
+{"code": "HV-PR-035-LDB - OBSOLETE", "title": "LED Bracket", "group": null}
+{"code": "HV-PR-037-PCB - OBSOLETE", "title": "PCB-01-C-01", "group": null}
+{"code": "HV-PR-039-SCS", "title": "M4 X 10mm Socket Countersunk Screws (ISO 10642) - Stainless Steel (A4)", "group": null}
+{"code": "HV-PR-040-WGD - OBSOLETE", "title": "M16 Cable Gland/Grommet", "group": null}
+{"code": "HV-PR-041-RPI - OBSOLETE", "title": "Raspberry Pi 3 Model B+ / A+ Or Pi 4", "group": null}
+{"code": "HV-PR-041-RPI-RMA", "title": "RMA-Raspberry Pi 3 Model B+ / A+ Or Pi 4", "group": null}
+{"code": "HV-PR-042-LSP", "title": "LED Strip", "group": null}
+{"code": "HV-PR-043-STO - OBSOLETE", "title": "M2.5 Steel Standoff", "group": null}
+{"code": "HV-PR-044-NNS - OBSOLETE", "title": "M3 Nylon nuts / M2.5 Steel Nuts", "group": null}
+{"code": "HV-PR-045-VPG - OBSOLETE", "title": "Vent Plug M12", "group": null}
+{"code": "HV-PR-046-TBP", "title": "TERM BLOCK PLUG 2POS 3.81MM", "group": null}
+{"code": "HV-PR-046-TBP-RMA", "title": "TERM BLOCK PLUG 2POS 3.81MM-RMA", "group": null}
+{"code": "HV-PR-1045", "title": "Product Board (Hypervolt)", "group": null}
+{"code": "HV-PR-1067", "title": "Home 3 Pro Leaflet", "group": null}
+{"code": "HV-PR-1070", "title": "HV3PROAAUB050T2test", "group": null}
+{"code": "HV-PR-1073", "title": "Charging Post", "group": null}
+{"code": "HV-PR-1106", "title": "PCK Accessories", "group": null}
+{"code": "HV-PR-1110", "title": "Hypervolt Home 3 Pro Ultra Black 5m T2 - Volex PVT Sample", "group": null}
+{"code": "HV-PR-1111", "title": "Hypervolt Home 3 Pro Ultra White 7.5m T2 - Volex PVT Sample", "group": null}
+{"code": "HV-PR-1112", "title": "Hypervolt Home 3 Pro Space Grey 10m T2 - Volex PVT Sample", "group": null}
+{"code": "HV-PR-1116", "title": "Black charging post", "group": null}
+{"code": "HV-PR-1117", "title": "Stainless steel charging post", "group": null}
+{"code": "HV-PR-1169", "title": "CA235-002/32GB Micro SD CL-10", "group": null}
+{"code": "HV-PR-1169-RMA", "title": "CA235-002/32GB Micro SD CL-10-RMA", "group": null}
+{"code": "HV-PR-1172", "title": "Hypervolt Home 3 Pro Space Grey 5m T2", "group": null}
+{"code": "HV-PR-1173", "title": "Hypervolt Home 3 Pro Space Grey 7.5m T2", "group": null}
+{"code": "HV-PR-1174", "title": "Hypervolt Home 3 Pro Space Grey 10m T2", "group": null}
+{"code": "HV-PR-1175", "title": "Hypervolt Home 3 Pro Ultra White 5m T2", "group": null}
+{"code": "HV-PR-1176", "title": "Hypervolt Home 3 Pro Ultra White 7.5m T2", "group": null}
+{"code": "HV-PR-1177", "title": "Hypervolt Home 3 Pro Ultra White 10m T2", "group": null}
+{"code": "HV-PR-1178", "title": "Hypervolt Home 3 Pro Ultra Black 5m T2", "group": null}
+{"code": "HV-PR-1179", "title": "Hypervolt Home 3 Pro Ultra Black 7.5m T2", "group": null}
+{"code": "HV-PR-1180", "title": "Hypervolt Home 3 Pro Ultra Black 10m T2", "group": null}
+{"code": "HV-PR-1181", "title": "Mercusys AV1000 wifi extender", "group": null}
+{"code": "HV-PR-1185", "title": "Degson DG136T-10.16-03P-14-00Z(H)", "group": null}
+{"code": "HV-PR-132 Holster Straight Wallmount", "title": "Holster Straight Wallmount", "group": null}
+{"code": "HV-PR-1341", "title": "Packing screws", "group": null}
+{"code": "HV-PR-1344", "title": "ground box", "group": null}
+{"code": "HV-PR-137-del1639656801", "title": "Home 2.0 - 7.5m - UltraWhite", "group": null}
+{"code": "HV-PR-164", "title": "CT w/ Hex Screw + 2POS Term Block Head", "group": null}
+{"code": "HV-PR-177-Baf 12185", "title": "back box CDT Black UL94V0 ABS", "group": null}
+{"code": "HV-PR-188", "title": "HYPERVOLT3C4.0 - 3x 4.0mm Power Conductors + Cat5", "group": null}
+{"code": "HV-PR-189", "title": "HYPERVOLT3C4.0SWA - 3x 4.0mm Power + Cat5 + SWA", "group": null}
+{"code": "HV-PR-191 - OBSOLETE", "title": "Straight Pin Header", "group": null}
+{"code": "HV-PR-192 - OBSOLETE", "title": "M2.5 x 6mm Hex Socket Cap", "group": null}
+{"code": "HV-PR-197-SCS - (OBSOLETE)", "title": "M4 X 10mm Socket Countersunk Screws (ISO 10642) - Stainless Steel (A4) - BLACK - OBSOLETE", "group": null}
+{"code": "HV-PR-201-VHB - OBSOLETE", "title": "VHB Tape", "group": null}
+{"code": "HV-PR-202-RPCB - OBSOLETE", "title": "Magtron RCD PCB", "group": null}
+{"code": "HV-PR-208-GS", "title": "Gasket Sealing Foam Tape - 10m 10mmx5mm", "group": null}
+{"code": "HV-PR-209-IMOLA", "title": "Imola PCB", "group": null}
+{"code": "HV-PR-213-QR - OBSOLETE", "title": "QR Label", "group": null}
+{"code": "HV-PR-222", "title": "Hypervolt - 3x6.0mmSQ Power + CAT 5", "group": null}
+{"code": "HV-PR-223", "title": "Hypervolt - 3x6.0mmSQ Power + CAT 5 + SWA", "group": null}
+{"code": "HV-PR-226", "title": "Aluminium Foil Tape - (45m x 75mm)", "group": null}
+{"code": "HV-PR-228-IC", "title": "Interim Moulding - CAP", "group": null}
+{"code": "HV-PR-229-IB", "title": "Interim Moulding - BASE", "group": null}
+{"code": "HV-PR-230-ITB", "title": "Interim Moulding - TOP BASE", "group": null}
+{"code": "HV-PR-233-LCG", "title": "Large 18mm M25 Cable Gland w/Locknut", "group": null}
+{"code": "HV-PR-236-MK3-R&D", "title": "R&D Procurement", "group": null}
+{"code": "HV-PR-238-RJA - OBSOLETE", "title": "RJ45 Adapter", "group": null}
+{"code": "HV-PR-239-CWR - OBSOLETE", "title": "Crinkle Washers", "group": null}
+{"code": "HV-PR-242-SM", "title": "San Marino PCB", "group": null}
+{"code": "HV-PR-242-SM-RMA", "title": "San Marino PCB-RMA", "group": null}
+{"code": "HV-PR-245-PT-del1676381982", "title": "Hypervolt Packaging Tape", "group": null}
+{"code": "HV-PR-248-AC", "title": "AC1200 Dual Band WiFi Extender", "group": null}
+{"code": "HV-PR-251-SPB", "title": "Resealable Small Plastic Bag - 2.25\" x 3\"", "group": null}
+{"code": "HV-PR-255", "title": "M4 Flat Square Nuts - (A4 Stainless Steel)", "group": null}
+{"code": "HV-PR-256", "title": "EPDM Gasket - Rectangle A316 - Interim", "group": null}
+{"code": "HV-PR-263-del1747817757", "title": "Packaging Cardboard Box w/Inserts - Interim Moulding", "group": null}
+{"code": "HV-PR-270", "title": "Palsun 1mm UV2 - 1 Full Set - (5 Pcs) - Interim", "group": null}
+{"code": "HV-PR-278-del1676381501", "title": "Standard Kraft Tape - 50mm x 50m", "group": null}
+{"code": "HV-PR-282-DRILL-TPL", "title": "Interim Metal Drill Template", "group": null}
+{"code": "HV-PR-289", "title": "FT7401 double sided self-adhesive polyester carrier with high tack modified acrylic adhesive", "group": null}
+{"code": "HV-PR-290 - OBSOLETE", "title": "Interim LED Strip Cable - Cable A Molex to Molex", "group": null}
+{"code": "HV-PR-303", "title": "Kingston 32GB Micro SD Card", "group": null}
+{"code": "HV-PR-304 - OBSOLETE", "title": "Self Adhesive Feet - (9.5mm Dia. x 4.8mm Height) - Interim", "group": null}
+{"code": "HV-PR-320", "title": "Interim Nut Wedges", "group": null}
+{"code": "HV-PR-342", "title": "EV Tower Stand base, with no plates", "group": null}
+{"code": "HV-PR-351 - OBSOLETE", "title": "MEK Glue", "group": null}
+{"code": "HV-PR-353", "title": "Glue Stick - 11mm x 255mm - (25ml Each)", "group": null}
+{"code": "HV-PR-356", "title": "Powerline Extender", "group": null}
+{"code": "HV-PR-362 - OBSOLETE", "title": "Port Extender PCB's", "group": null}
+{"code": "HV-PR-372", "title": "Void Label - Pi4 Service Kit", "group": null}
+{"code": "HV-PR-373-del1676382049", "title": "Tamper Evidant A5 Bag/Envelope", "group": null}
+{"code": "HV-PR-376", "title": "Pi4 Service Kit - 'Little'", "group": null}
+{"code": "HV-PR-377", "title": "Allen Key", "group": null}
+{"code": "HV-PR-379", "title": "Service Kit - Instruction Sheet", "group": null}
+{"code": "HV-PR-450", "title": "SWH25X-NULC-Sxx-UU-BA connector", "group": null}
+{"code": "HV-PR-543", "title": "EV Tower", "group": null}
+{"code": "HV-PR-549", "title": "002-1004-San Marino T-Clip-v02-P", "group": null}
+{"code": "HV-PR-573", "title": "3.0 Product - 2-Pin Fan Receptable - P/N: 0010112024-ND", "group": null}
+{"code": "HV-PR-582", "title": "3.0 Product - Crimps - P/N: SWT25X-URTC-S01-UU-UU", "group": null}
+{"code": "HV-PR-623", "title": "Ink Ribbon - (For 3.0 Product Label - 1x Roll = 2100 Labels)", "group": null}
+{"code": "HV-PR-624", "title": "3.0 - Product Label - (Blank) - (41mm x 31mm PLAIN matt white PVC labels with extra perm adhesive)", "group": null}
+{"code": "HV-PR-625", "title": "3.0 - Quick Start Guide Booklet", "group": null}
+{"code": "HV-PR-626", "title": "3.0 - 3-PIN Receptacle (Molex 10112034)", "group": null}
+{"code": "HV-PR-627", "title": "3.0 - Magnets", "group": null}
+{"code": "HV-PR-628", "title": "3.0 - 28AWG Wire - 180 mm Length", "group": null}
+{"code": "HV-PR-629", "title": "3.0 - Magnet Holder - (Nylon)", "group": null}
+{"code": "HV-PR-630", "title": "3.0 - Reed Switch Holder - (Nylon)", "group": null}
+{"code": "HV-PR-631", "title": "3.0 - Reed Switch", "group": null}
+{"code": "HV-PR-632", "title": "SanMarino QR Label", "group": null}
+{"code": "HV-PR-700", "title": "Tape For Magnet Holder - (Tangent)", "group": null}
+{"code": "HV-PR-719", "title": "3.0 Crimped Cable Assembly - 180mm (Each)", "group": null}
+{"code": "HV-PR-745-MK3-BLK-del1712051837", "title": "MK3 Enclosure - FRONT COVER-VO4 003-1012 - BLACK", "group": null}
+{"code": "HV-PR-746-MK3", "title": "MK3 Enclosure - BACK ENCLOSURE FRONT COVER 003-1004", "group": null}
+{"code": "HV-PR-747-MK3", "title": "MK3 Enclosure - BACK ENCLOSURE RER MLDG 003-1003", "group": null}
+{"code": "HV-PR-748-MK3", "title": "MK3 Enclosure - LED CHASSIS V11-P 003-1011", "group": null}
+{"code": "HV-PR-749-MK3", "title": "MK3 Enclosure - COVER BACK VO5 003-1009", "group": null}
+{"code": "HV-PR-750-MK3", "title": "MK3 Enclosure - LIGHT PIPE RIM 003-1010-COVER", "group": null}
+{"code": "HV-PR-752-MK3-BLK", "title": "MK3 Enclosure - TRIM TOP 003-1013 - BLACK", "group": null}
+{"code": "HV-PR-753-MK3-BLK", "title": "MK3 Enclosure - TRIM BOTTOM 003-1014 - BLACK", "group": null}
+{"code": "HV-PR-754-MK3", "title": "MK3 Enclosure - PCB HOLDING CLIP 003-1025", "group": null}
+{"code": "HV-PR-755-MK3", "title": "MK3 Enclosure - TETHERED CABLE RESTRAINT 003-1006", "group": null}
+{"code": "HV-PR-755-MK3-RMA", "title": "MK3 Enclosure - TETHERED CABLE RESTRAINT 003-1006-RMA", "group": null}
+{"code": "HV-PR-758", "title": "002-1019 - Rev-E Molex to Interim LED Connector", "group": null}
+{"code": "HV-PR-761-MK3-WTE", "title": "MK3 Enclosure - FRONT COVER-VO4 003-1012 - WHITE", "group": null}
+{"code": "HV-PR-761-MK3-WTE--del1712051991", "title": "MK3 Enclosure - FRONT COVER-VO4 003-1012 - WHITE", "group": null}
+{"code": "HV-PR-762-MK3-GRY-RMA", "title": "MK3 Enclosure - FRONT COVER-VO4 003-1012 - GREY-RMA", "group": null}
+{"code": "HV-PR-763-MK3-WTE", "title": "MK3 Enclosure - TRIM TOP 003-1013 - WHITE", "group": null}
+{"code": "HV-PR-764-MK3-GRY", "title": "MK3 Enclosure - TRIM TOP 003-1013 - GREY", "group": null}
+{"code": "HV-PR-765-MK3-WTE", "title": "MK3 Enclosure - TRIM BOTTOM 003-1014 - WHITE", "group": null}
+{"code": "HV-PR-766-MK3-GRY", "title": "MK3 Enclosure - TRIM BOTTOM 003-1014 - GREY", "group": null}
+{"code": "HV-PR-781-IMOLA", "title": "Imola PCB - (For MK3 Enclosure)", "group": null}
+{"code": "HV-PR-833", "title": "Shipping", "group": null}
+{"code": "HV-PR-855", "title": "Wago Inline Splicing Connector", "group": null}
+{"code": "HV-PR-870", "title": "Packaging Small Box", "group": null}
+{"code": "HV-PR-884", "title": "WALL MOUNT ENCLOSURE METAL BRACKET (GALV CLINCH NUT POWDER COATED)", "group": null}
+{"code": "HV-PR-884-RMA", "title": "WALL MOUNT ENCLOSURE METAL BRACKET (GALV CLINCH NUT POWDER COATED)-RMA", "group": null}
+{"code": "HV-PR-888", "title": "4mm Cut O-Ring Sillicone Sponge Cord", "group": null}
+{"code": "HV-PR-89", "title": "5 Year Warranty", "group": null}
+{"code": "HV-PR-890", "title": "3mm EPDM Gasket", "group": null}
+{"code": "HV-PR-89-1-del1645884687", "title": "5 Year Warranty", "group": null}
+{"code": "HV-PR-892", "title": "4.2 x 25 TX20 Countersunk Self Tapping Screw A4 SS T2", "group": null}
+{"code": "HV-PR-896", "title": "M4x22 Socket Cap Screw A4 SS", "group": null}
+{"code": "HV-PR-897", "title": "2.9x13 TX10 Pan Self Tapping Screw A4 SS", "group": null}
+{"code": "HV-PR-899", "title": "M5 x 12 Socket Countersunk Screw A4 SS", "group": null}
+{"code": "HV-PR-899-RMA", "title": "M5 x 12 Socket Countersunk Screw A4 SS-RMA", "group": null}
+{"code": "HV-PR-914", "title": "M6 x 16mm Socket Flanged Button Screws A4 SS", "group": null}
+{"code": "HV-PR-914-RMA", "title": "M6 x 16mm Socket Flanged Button Screws A4 SS-RMA", "group": null}
+{"code": "HV-PR-915", "title": "Nylon P-clip 6mm Inner Diameter", "group": null}
+{"code": "HV-PR-916", "title": "6.4mm ID Adhesive Heat shrink tubing 3:1 (part of CP ferrite assembly)", "group": null}
+{"code": "HV-PR-917", "title": "4.2 x 25.5 T20 Torx Self Tapping Pan Head Screw SS A2 T1", "group": null}
+{"code": "HV-PR-918", "title": "Smooth Hexagon Socket Captive Screws M4", "group": null}
+{"code": "HV-PR-921", "title": "Packaging Small Holster Box", "group": null}
+{"code": "HV-PR-923", "title": "Home 3 Pro - Parts Box", "group": null}
+{"code": "HV-PR-926", "title": "Home 3 Pro - Outer Case", "group": null}
+{"code": "HV-PR-940", "title": "Hyper Holster", "group": null}
+{"code": "HV-PR-940-RMA", "title": "Hyper Holster-RMA", "group": null}
+{"code": "HV-PR-942-MK3", "title": "Grommet M25 Cable Retention 8 mm 17 mm TPE (Thermoplastic Elastomer) 25.5 mm 3.5 mm - BLACK", "group": null}
+{"code": "HV-PR-951", "title": "MK3 Installer Guide", "group": null}
+{"code": "HV-PR-951-RMA", "title": "MK3 Installer Guide-RMA", "group": null}
+{"code": "HV-PR-98", "title": "Cardboard Drill Template", "group": null}
+{"code": "HVPRO3-BREF-SA-RMA", "title": "Back rear enclosure SA-RMA", "group": null}
+{"code": "HVPRO3-COVER-SA-BLK", "title": "Home 3 Pro - LED Cover SA - Ultra Black", "group": null}
+{"code": "HVPRO3-COVER-SA-BLK-RMA", "title": "Home 3 Pro - LED Cover SA - UltraBlack", "group": null}
+{"code": "HVPRO3-COVER-SA-BLK-RMA-1", "title": "Home 3 Pro - LED Cover SA - Ultra Black-RMA-1", "group": null}
+{"code": "HVPRO3-COVER-SA-GRY", "title": "Home 3 Pro - LED Cover SA - Space Grey", "group": null}
+{"code": "HVPRO3-COVER-SA-GRY-RMA", "title": "Home 3 Pro LED Cover Assembly  GREY", "group": null}
+{"code": "HVPRO3-COVER-SA-GRY-RMA-1", "title": "Home 3 Pro - LED Cover SA - Space Grey-RMA-1", "group": null}
+{"code": "HVPRO3-COVER-SA-WTE", "title": "Home 3 Pro - LED Cover SA - Ultra White", "group": null}
+{"code": "HVPRO3-COVER-SA-WTE-RMA", "title": "Home 3 Pro - LED Cover SA - UltraWhite", "group": null}
+{"code": "HVPRO3-COVER-SA-WTE-RMA-1", "title": "Home 3 Pro - LED Cover SA - Ultra White-RMA-1", "group": null}
+{"code": "HVPRO3-FFS-SA-RMA", "title": "Front Rear Shell Full", "group": null}
+{"code": "HVPRO3-FRONT ENCLOSURE-SA-RMA-SG", "title": "Front cover-SA-SG-RMA", "group": null}
+{"code": "HVPRO3-FWL-SA", "title": "Home 3 Pro - CP Ferrite Wiring Loom SA", "group": null}
+{"code": "HVPRO3-PCK-SA", "title": "Home 3 Pro - Enclosure Packaging SA", "group": null}
+{"code": "HVPRO3-REC-SA", "title": "Home 3 Pro - Rear Encolsure Base SA", "group": null}
+{"code": "HVPRO3-REFC-SA", "title": "Home 3 Pro - Rear Enclosure Front Cover", "group": null}
+{"code": "HVPRO3-REF-SA-RMA", "title": "Rear Enclosure Full SA - RMA", "group": null}
+{"code": "HVPRO3-REF-SA-RMA-1", "title": "Rear Enclosure Full SA - RMA-1", "group": null}
+{"code": "HV-RMA-NEWUNIT-02", "title": "Charging unit without cable and front enclosure for RMAs.", "group": null}
+{"code": "HV-RMA-TOP BASE LED(2.0)", "title": "Semi Build Top Base Led (old Version)", "group": null}
+{"code": "HV-RMA-TOP BASE LED(2.1)", "title": "Semi build Top Base Led (new version)", "group": null}
+{"code": "HV-RMA-UNIT-01", "title": "Charging unit without cable and front enclosure for RMAs.", "group": null}
+{"code": "HV-TC-10T1-del1645817474", "title": "Tethered Charging Cable 10M T1", "group": null}
+{"code": "HV-TC-10T2", "title": "Tethered Charging Cable 10M T2", "group": null}
+{"code": "HV-TC-10T2-B+", "title": "Tethered Charging Cable 10M T2 B+", "group": null}
+{"code": "HV-TC-10T2-RMA", "title": "RMA-Tethered Charging Cable 10M T2", "group": null}
+{"code": "HV-TC-10T2-RMA-1", "title": "Tethered Charging Cable 10M T2-RMA", "group": null}
+{"code": "HV-TC-15T2", "title": "15m tethered cable Type 2", "group": null}
+{"code": "HV-TC-5T1", "title": "Tethered Charging Cable 5M T1", "group": null}
+{"code": "HV-TC-5T1-RMA", "title": "RMA-Tethered Charging Cable 5M T1", "group": null}
+{"code": "HV-TC-5T2", "title": "Tethered Charging Cable 5M T2", "group": null}
+{"code": "HV-TC-5T2-B+", "title": "Tethered Charging Cable 5M T2 B+", "group": null}
+{"code": "HV-TC-5T2-RMA", "title": "RMA-Tethered Charging Cable 5M T2", "group": null}
+{"code": "HV-TC-5T2-RMA-1", "title": "Tethered Charging Cable 5M T2-RMA", "group": null}
+{"code": "HV-TC-7.5T1", "title": "Tethered Charging Cable 7.5M T1", "group": null}
+{"code": "HV-TC-7.5T1-B+", "title": "Tethered Charging Cable 7.5M T1 B+", "group": null}
+{"code": "HV-TC-7.5T1-RMA", "title": "RMA-Tethered Charging Cable 7.5M T1", "group": null}
+{"code": "HV-TC-7.5T2", "title": "Tethered Charging Cable 7.5M T2", "group": null}
+{"code": "HV-TC-7.5T2-B+", "title": "Tethered Charging Cable 7.5M T2 B+", "group": null}
+{"code": "HV-TC-7.5T2-RMA", "title": "Tethered Charging Cable 7.5M T2-RMA", "group": null}
+{"code": "HV-TC-7.5T2-RMA-del1690270672", "title": "RMA-Tethered Charging Cable 7.5M T2", "group": null}
+{"code": "HV-TCH-T1-10M-del1645817479", "title": "Tethered Cable 10m T1 with Type 1 Wallmount Holster", "group": null}
+{"code": "HV-TCH-T1-5M", "title": "Tethered Cable 5m T1 with Type 1 Wallmount Holster", "group": null}
+{"code": "HV-TCH-T1-7.5M", "title": "Tethered Cable 7,5m T1 with Type 1 Wallmount Holster", "group": null}
+{"code": "HV-TCH-T2-10M", "title": "Tethered Cable 10m T2 with Type 2 Wallmount Holster", "group": null}
+{"code": "HV-TCH-T2-5M-del1671548431", "title": "Tethered Cable 5m T2 with Type 2 Wallmount Holster", "group": null}
+{"code": "HV-TCH-T2-7.5M", "title": "Tethered Cable 7,5m T2 with Type 2 Wallmount Holster", "group": null}
+{"code": "HYPV-HOLS-T1", "title": "Holster Wallmount Type 1", "group": null}
+{"code": "HYPV-HOLS-T2", "title": "Holster Wallmount Type 2", "group": null}
+{"code": "HYPV-PR-021-RCB - OBSOLETE", "title": "RCD Cable", "group": null}
+{"code": "HYPV-PR-22 - OBSOLETE", "title": "Packaging Cardboard Box - (Old Back Box - Just Inserts)", "group": null}
+{"code": "HYPV-PR-SHIP-GOODS", "title": "Shipping Cost Goods In", "group": null}
+{"code": "HYPV-UK-COLLECTION", "title": "Standard UK Collection", "group": null}
