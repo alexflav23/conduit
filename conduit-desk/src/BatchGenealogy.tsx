@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useApi } from './lib/query';
 import { ApiError } from './lib/client';
 import { marketId } from './api';
@@ -125,6 +125,7 @@ interface Genealogy { serial?: SerialNode; batch?: BatchNode; activation?: Activ
 
 function SerialGenealogy({ ctx, role, hasProfit }: { ctx: Ctx; role: Role; hasProfit: boolean }) {
   const viewer = { layers: role.layers || [] };
+  const navigate = useNavigate();
   const [params] = useSearchParams();
   const urlSerial = params.get('serial') || '';
   const [q, setQ] = useState(urlSerial);
@@ -272,7 +273,12 @@ function SerialGenealogy({ ctx, role, hasProfit }: { ctx: Ctx; role: Role; hasPr
                           {!native && (
                             <>
                               <span className="k">÷ FX {fx.toFixed(4)} → GBP
-                                <span className="dim" style={{ display: 'block', fontSize: 10.5, fontWeight: 400 }}>{fxNote}</span>
+                                <span role="link" tabIndex={0}
+                                  onClick={() => navigate(hedge ? '/treasury?hedge=' + encodeURIComponent(String(hedge)) : '/treasury')}
+                                  title={hedge ? 'open the hedge contract' : 'open the FX register / hedging desk'}
+                                  style={{ display: 'block', fontSize: 10.5, fontWeight: 400, color: 'var(--accent-bright)', cursor: 'pointer' }}>
+                                  {fxNote} ↗
+                                </span>
                               </span>
                               <span className="v num">{gbp(factoryGbp, 'GBP')}</span>
                             </>
