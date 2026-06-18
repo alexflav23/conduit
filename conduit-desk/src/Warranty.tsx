@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useApi } from './lib/query';
 import { ApiError } from './lib/client';
@@ -57,7 +57,12 @@ export function Warranty(_props: any) {
   );
   const rmaRows = rmas.data?.rows ?? [];
   const rmaTotal = rmas.data?.total ?? 0;
-  const openSerial = (sn?: string | null) => { if (sn) { setInput(sn); setSerial(sn); window.scrollTo({ top: 9999, behavior: 'smooth' }); } };
+  const lifeRef = useRef<HTMLDivElement>(null);
+  const openSerial = (sn?: string | null) => {
+    if (!sn) return;
+    setInput(sn); setSerial(sn);
+    setTimeout(() => lifeRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60);
+  };
 
   const sErr = stats.error as ApiError | null;
   const forbidden = !!sErr?.forbidden;
@@ -66,7 +71,7 @@ export function Warranty(_props: any) {
   const lc = life.data;
 
   return (
-    <>
+    <div className="page">
       <PageHead
         crumb="Service · warranty & RMA lifecycle (M8 / doc 08)"
         title="Warranty & RMA"
@@ -168,6 +173,7 @@ export function Warranty(_props: any) {
           })()}
 
           {/* ---- serial lifecycle lookup ---- */}
+          <div ref={lifeRef}>
           <Card title="Unit lifecycle" icon={I.clock} aux={<span className="dim" style={{ fontSize: 12 }}>family timeline · shared warranty · RMA tickets</span>}>
             <form
               onSubmit={(e) => { e.preventDefault(); setSerial(input.trim()); }}
@@ -223,8 +229,9 @@ export function Warranty(_props: any) {
               </>
             )}
           </Card>
+          </div>
         </>
       )}
-    </>
+    </div>
   );
 }
