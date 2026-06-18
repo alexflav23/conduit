@@ -1,5 +1,8 @@
 # 33 — Continuous ingest & shadow dual-run (M-Ingest)
 
+> **This is the design.** The step-by-step **execution plan + tracker** for landing it (tracks S1–S4) is
+> [`36_SHADOW_MODE_PLAN`](./36_SHADOW_MODE_PLAN.md); the status dashboard is [`STATUS.md`](./STATUS.md).
+
 **Requested 2026-06-13 (CEO):** run Conduit *silently in parallel* for weeks-to-months — continuously synced
 from every live source (Xero, HubSpot, MRPeasy, Athena, Stripe, …) — so we can polish the algorithms and
 migrate all historical data against a moving target, then cut over when the books tie. The owner can stand up

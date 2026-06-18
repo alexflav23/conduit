@@ -93,6 +93,10 @@ are the governing plan; the Phase-A/B ignition history is retained as the record
 
 ## Shadow-mode operating model (S1–S4) — the governing plan
 
+> **The detailed step-by-step execution plan + living tracker is [`36_SHADOW_MODE_PLAN`](./36_SHADOW_MODE_PLAN.md)**
+> (slice-by-slice, with per-step status boxes and acceptance). Design principles: [`33_INGEST_SYNC`](./33_INGEST_SYNC.md).
+> This section is the dashboard summary.
+
 The four tracks that take Conduit from "ignited on history" to "running live in shadow, trusted enough
 to take over." S1→S3 are a dependency chain; S4 runs in parallel.
 
