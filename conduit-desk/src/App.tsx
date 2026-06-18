@@ -38,6 +38,7 @@ import { Proof } from './Proof';
 import { Access } from './Access';
 import { Notifications } from './Notifications';
 import { Help } from './Help';
+import { CHAPTERS } from './help/content';
 import { AccountPage } from './AccountPage';
 import { CrmAccount } from './CrmAccount';
 import { OrderDetail } from './OrderDetail';
@@ -352,6 +353,10 @@ export function App() {
 
           <div className="ctx-right">
             <div className="kbtn" onClick={() => setPalOpen(true)}><Search size={13} />Jump to<kbd>⌘K</kbd></div>
+            {/* contextual help (M-Help.2): deep-link to this screen's manual chapter */}
+            <div className="ibtn" data-testid="help-here" title="Help for this screen"
+              onClick={() => navigate('/help/' + (CHAPTERS.find((c) => c.route === route)?.id ?? ''))}
+              style={{ fontWeight: 700 }}>?</div>
             <div className="ibtn" title="Theme" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>{theme === 'dark' ? '☾' : '☀'}</div>
             <div style={{ position: 'relative' }}>
               <div className="ibtn" title="Notifications" onClick={() => setMenu(menu === 'notif' ? null : 'notif')}><Bell /></div>
@@ -436,13 +441,25 @@ function Palette({ open, onClose, go }: { open: boolean; onClose: () => void; go
     label: [a.first_name, a.last_name].filter(Boolean).join(' ') || a.name,
     sub: [a.email, a.phone, a.segment].filter(Boolean).join(' · '),
   }));
-  type Hit = { kind: 'screen'; id: TabId; label: string; sub: string } | { kind: 'customer'; id: string; label: string; sub: string };
-  const hits: Hit[] = (screenHits.map((c) => ({ kind: 'screen' as const, id: c.id, label: c.label, sub: c.sect })) as Hit[]).concat(custHits);
+  // help-chapter hits (M-Help.2): ⌘K resolves the manual alongside screens + customers
+  const helpHits = q.trim().length >= 2
+    ? CHAPTERS.filter((c) => (c.title + ' ' + c.summary + ' ' + (c.concepts ?? []).map((x) => x.term).join(' ')).toLowerCase().includes(q.toLowerCase()))
+        .slice(0, 6)
+        .map((c) => ({ kind: 'help' as const, id: c.id, label: 'Manual · ' + c.title, sub: c.section }))
+    : [];
+  type Hit =
+    | { kind: 'screen'; id: TabId; label: string; sub: string }
+    | { kind: 'customer'; id: string; label: string; sub: string }
+    | { kind: 'help'; id: string; label: string; sub: string };
+  const hits: Hit[] = (screenHits.map((c) => ({ kind: 'screen' as const, id: c.id, label: c.label, sub: c.sect })) as Hit[])
+    .concat(custHits)
+    .concat(helpHits);
   useEffect(() => { if (open) { setQ(''); setHot(0); setTimeout(() => ref.current?.focus(), 30); } }, [open]);
   useEffect(() => { setHot(0); }, [q]);
   if (!open) return null;
   const pick = (h: Hit) => {
     if (h.kind === 'screen') go(h.id);
+    else if (h.kind === 'help') navigate('/help/' + h.id);
     else navigate('/crm/account/' + encodeURIComponent(h.id));
     onClose();
   };
