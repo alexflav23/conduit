@@ -40,6 +40,8 @@ final class StripeWebhookRoutes[F[_]: Async](xa: Transactor[F], verifier: Option
         }
     }
 
+  val serverEndpoints = List(endpointDef.serverLogic(t => logic(t._1, t._2)))
+
   val routes: HttpRoutes[F] =
-    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(endpointDef.serverLogic(t => logic(t._1, t._2)))
+    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(serverEndpoints)
 }

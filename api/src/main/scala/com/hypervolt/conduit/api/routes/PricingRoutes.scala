@@ -400,7 +400,9 @@ final class PricingRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) 
       requiresException = r.requiresException
     )
 
+  val serverEndpoints = List(quote, listRules, createRule, activateRule, requestAgreement, activateAgreement)
+
   val routes: HttpRoutes[F] =
     Http4sServerInterpreter[F](ApiMetrics.serverOptions[F])
-      .toRoutes(List(quote, listRules, createRule, activateRule, requestAgreement, activateAgreement))
+      .toRoutes(serverEndpoints)
 }

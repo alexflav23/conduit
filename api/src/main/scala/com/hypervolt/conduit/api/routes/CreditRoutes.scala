@@ -142,7 +142,9 @@ final class CreditRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
             }
       )
 
+  val serverEndpoints = List(getTerms, setTerms, cashWaterfall, pnl, arAging)
+
   val routes: HttpRoutes[F] =
     Http4sServerInterpreter[F](ApiMetrics.serverOptions[F])
-      .toRoutes(List(getTerms, setTerms, cashWaterfall, pnl, arAging))
+      .toRoutes(serverEndpoints)
 }

@@ -91,6 +91,8 @@ final class PrivacyRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F], 
             }
       })
 
+  val serverEndpoints = List(requestErasure, approveErasure, readPii)
+
   val routes: HttpRoutes[F] =
-    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(List(requestErasure, approveErasure, readPii))
+    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(serverEndpoints)
 }

@@ -363,7 +363,7 @@ const SUPPLY: ManualChapter[] = [
       { title: 'Read capacity', steps: ['Open Capacity', 'Read connected-MW (actuals + forecast) and the “how fast is that?” comparison'] },
     ],
     related: ['batch', 'warranty', 'shelf'], seeAlso: ['doc 07 M8'], screenshot: 'activations',
-    apiOps: ['GET /api/v1/activations/stream', 'GET /api/v1/activations/capacity', 'GET /api/v1/activations/series'],
+    apiOps: ['GET /api/v1/activations', 'GET /api/v1/activations/capacity', 'GET /api/v1/activations/series'],
   },
   {
     id: 'warranty-rma', route: 'warranty', section: 'Supply', title: 'Warranty & RMA',
@@ -414,7 +414,7 @@ const FINANCE: ManualChapter[] = [
     ],
     tasks: [{ title: 'View a statement', steps: ['Open Commission', 'Own scope = your entries; all scope = grouped by agent', '(Lights up when a real agent/scheme source is ingested — S4)'] }],
     related: ['finance', 'backlog'], seeAlso: ['doc 07 M5', 'doc 36 §S4.1'], screenshot: 'commission',
-    apiOps: ['GET /api/v1/commission/statement', 'GET /api/v1/commission/entries'],
+    apiOps: ['GET /api/v1/commission/statement/{agentId}', 'GET /api/v1/commission/entries'],
   },
   {
     id: 'documents', route: 'docs', section: 'Finance', title: 'Documents (WORM)',

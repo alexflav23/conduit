@@ -173,6 +173,7 @@ export function Help(props: { token: string; role: any; ctx: any; toast: (m: str
         sub="The interactive helpbook — one chapter per screen, searchable. The training curriculum for the whole desk."
         right={
           <div className="row g6">
+            <a className="btn ghost sm" href="/api/v1/docs" target="_blank" rel="noreferrer" title="OpenAPI reference (Scalar) — generated from the live Tapir endpoints">API reference ↗</a>
             <button className="btn ghost sm" onClick={() => printChapters('Complete manual', CHAPTERS)}>Print whole book</button>
             <Chip s="accent">{CHAPTERS.length} chapters</Chip>
           </div>

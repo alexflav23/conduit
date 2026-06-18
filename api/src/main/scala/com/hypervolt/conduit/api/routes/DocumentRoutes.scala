@@ -105,6 +105,8 @@ final class DocumentRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F],
             }
       )
 
+  val serverEndpoints = List(list, byId, pdf)
+
   val routes: HttpRoutes[F] =
-    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(List(list, byId, pdf))
+    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(serverEndpoints)
 }

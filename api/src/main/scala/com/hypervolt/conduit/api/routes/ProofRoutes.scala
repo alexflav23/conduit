@@ -179,8 +179,8 @@ final class ProofRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F], ta
           else tamper.restore.map(Right(_))
       )
 
+  val serverEndpoints = List(laws, runControl, trialBalance, journal, asc606, tamperKind, tamperRestore)
+
   val routes: HttpRoutes[F] =
-    Http4sServerInterpreter[F]().toRoutes(
-      List(laws, runControl, trialBalance, journal, asc606, tamperKind, tamperRestore)
-    )
+    Http4sServerInterpreter[F]().toRoutes(serverEndpoints)
 }

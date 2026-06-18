@@ -314,12 +314,14 @@ final class CommerceRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F])
                   .transact(xa)
                   .map {
                     case (rows, total) =>
-                      Right(Json.obj(
-                        "rows"   -> Json.fromValues(rows.map(r => Projection.projectFor(principal, "order", r))),
-                        "total"  -> total.asJson,
-                        "limit"  -> cap.asJson,
-                        "offset" -> off.asJson
-                      ))
+                      Right(
+                        Json.obj(
+                          "rows"   -> Json.fromValues(rows.map(r => Projection.projectFor(principal, "order", r))),
+                          "total"  -> total.asJson,
+                          "limit"  -> cap.asJson,
+                          "offset" -> off.asJson
+                        )
+                      )
                   }
             }
       })
@@ -335,8 +337,9 @@ final class CommerceRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F])
       "totalIncVat"   -> o.totalIncVat.toString.asJson
     )
 
+  val serverEndpoints =
+    List(createParty, billingProfile, creditProfile, placeOrder, amendOrder, listOrders, getOrder, getOrderLineage)
+
   val routes: HttpRoutes[F] =
-    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(
-      List(createParty, billingProfile, creditProfile, placeOrder, amendOrder, listOrders, getOrder, getOrderLineage)
-    )
+    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(serverEndpoints)
 }

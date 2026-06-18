@@ -188,7 +188,9 @@ final class AttachmentRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F
           }
       }
 
+  val serverEndpoints = List(upload, list, download, reconcile, provenance)
+
   val routes: HttpRoutes[F] =
     Http4sServerInterpreter[F](ApiMetrics.serverOptions[F])
-      .toRoutes(List(upload, list, download, reconcile, provenance))
+      .toRoutes(serverEndpoints)
 }

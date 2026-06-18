@@ -241,8 +241,8 @@ final class ReturnRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
           }
       )
 
+  val serverEndpoints = List(raise, assess, approve, receive, disposition, refund, list, detail)
+
   val routes: HttpRoutes[F] =
-    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(
-      List(raise, assess, approve, receive, disposition, refund, list, detail)
-    )
+    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(serverEndpoints)
 }

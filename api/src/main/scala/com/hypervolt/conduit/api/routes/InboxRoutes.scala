@@ -67,6 +67,8 @@ final class InboxRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
           else repo.requeue(source, dataset, sourceId).map(n => Right(Json.obj("requeued" -> Json.fromInt(n))))
       })
 
+  val serverEndpoints = List(health, quarantine, requeue)
+
   val routes: HttpRoutes[F] =
-    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(List(health, quarantine, requeue))
+    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(serverEndpoints)
 }

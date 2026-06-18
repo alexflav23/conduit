@@ -372,27 +372,27 @@ final class TaxRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
             }
       )
 
+  val serverEndpoints = List(
+    quote,
+    quotesList,
+    quoteOne,
+    regimesList,
+    categories,
+    routingList,
+    ratesList,
+    registrationsList,
+    nexusList,
+    vatExposure,
+    remittanceRequest,
+    rateCreate,
+    rateActivate,
+    registrationCreate,
+    nexusCreate,
+    sellingList,
+    sellingCreate,
+    sellingActivate
+  )
+
   val routes: HttpRoutes[F] =
-    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(
-      List(
-        quote,
-        quotesList,
-        quoteOne,
-        regimesList,
-        categories,
-        routingList,
-        ratesList,
-        registrationsList,
-        nexusList,
-        vatExposure,
-        remittanceRequest,
-        rateCreate,
-        rateActivate,
-        registrationCreate,
-        nexusCreate,
-        sellingList,
-        sellingCreate,
-        sellingActivate
-      )
-    )
+    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(serverEndpoints)
 }

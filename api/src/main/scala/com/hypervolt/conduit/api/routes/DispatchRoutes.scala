@@ -136,6 +136,8 @@ final class DispatchRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F])
           }
       })
 
+  val serverEndpoints = List(createDispatch, deliver, availability)
+
   val routes: HttpRoutes[F] =
-    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(List(createDispatch, deliver, availability))
+    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(serverEndpoints)
 }

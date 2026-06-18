@@ -62,5 +62,7 @@ final class OrderLifecycleRoutes[F[_]: Async](xa: Transactor[F], auth: AuthServi
             }
       )
 
-  val routes: HttpRoutes[F] = Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(lifecycle)
+  val serverEndpoints = List(lifecycle)
+
+  val routes: HttpRoutes[F] = Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(serverEndpoints)
 }

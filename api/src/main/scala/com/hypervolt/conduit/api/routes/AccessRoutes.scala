@@ -148,6 +148,8 @@ final class AccessRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
           }
       })
 
+  val serverEndpoints = List(whoami, listRoles, createRole, assign)
+
   val routes: HttpRoutes[F] =
-    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(List(whoami, listRoles, createRole, assign))
+    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(serverEndpoints)
 }

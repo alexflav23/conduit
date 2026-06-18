@@ -163,6 +163,7 @@ object Main extends IOApp.Simple {
         val inventoryRoutes   = new com.hypervolt.conduit.api.routes.InventoryRoutes[IO](xa, auth).routes
         val warrantyRoutes    = new com.hypervolt.conduit.api.routes.WarrantyRoutes[IO](xa, auth).routes
         val inboxRoutes       = new com.hypervolt.conduit.api.routes.InboxRoutes[IO](xa, auth).routes
+        val openApiRoutes     = new com.hypervolt.conduit.api.routes.OpenApiRoutes[IO](xa, auth).routes
         // the Tamper Sandbox shares the dev-token gate: it exists only outside prod (doc 31 §2.5)
         val proofRoutes =
           new com.hypervolt.conduit.api.routes.ProofRoutes[IO](xa, auth, tamperEnabled = cfg.env != "prod").routes
@@ -183,7 +184,7 @@ object Main extends IOApp.Simple {
             "/" -> (HealthRoutes
               .routes[
                 IO
-              ] <+> accessRoutes <+> pricingRoutes <+> commerceRoutes <+> crmRoutes <+> activationRoutes <+> shelfDetailRoutes <+> dealDeskRoutes <+> h6qRoutes <+> forecastRunRoutes <+> icRoutes <+> creditRoutes <+> auditRoutes <+> stripeRoutes <+> documentRoutes <+> attachmentRoutes <+> voidRoutes <+> lifecycleRoutes <+> taxRoutes <+> procurementRoutes <+> structureRoutes <+> returnRoutes <+> treasuryRoutes <+> activationStream <+> dispatchRoutes <+> purchasingRoutes <+> commissionRoutes <+> commitmentRoutes <+> shadowRoutes <+> freeShipRoutes <+> lifecycleRoutes2 <+> inventoryRoutes <+> warrantyRoutes <+> inboxRoutes <+> privacyRoutes <+> proofRoutes)
+              ] <+> accessRoutes <+> pricingRoutes <+> commerceRoutes <+> crmRoutes <+> activationRoutes <+> shelfDetailRoutes <+> dealDeskRoutes <+> h6qRoutes <+> forecastRunRoutes <+> icRoutes <+> creditRoutes <+> auditRoutes <+> stripeRoutes <+> documentRoutes <+> attachmentRoutes <+> voidRoutes <+> lifecycleRoutes <+> taxRoutes <+> procurementRoutes <+> structureRoutes <+> returnRoutes <+> treasuryRoutes <+> activationStream <+> dispatchRoutes <+> purchasingRoutes <+> commissionRoutes <+> commitmentRoutes <+> shadowRoutes <+> freeShipRoutes <+> lifecycleRoutes2 <+> inventoryRoutes <+> warrantyRoutes <+> inboxRoutes <+> openApiRoutes <+> privacyRoutes <+> proofRoutes)
           ).orNotFound
         val host      = Ipv4Address.fromString(cfg.http.host).getOrElse(ipv4"0.0.0.0")
         val apiPort   = Port.fromInt(cfg.http.port).getOrElse(port"8080")

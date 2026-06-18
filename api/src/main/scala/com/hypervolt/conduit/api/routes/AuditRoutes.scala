@@ -362,26 +362,26 @@ final class AuditRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
           else syncRepo.all.map(rows => Right(Json.fromValues(rows)))
       )
 
+  val serverEndpoints = List(
+    periods,
+    reconciliations,
+    closePeriod,
+    lockPeriod,
+    controls,
+    runControl,
+    invoiceLineage,
+    runReconciliations,
+    signOffRecon,
+    trialBalance,
+    glAsOf,
+    runConsolidation,
+    consolidationLineage,
+    evidencePack,
+    investigatePeriod,
+    closeGroupPeriod,
+    syncState
+  )
+
   val routes: HttpRoutes[F] =
-    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(
-      List(
-        periods,
-        reconciliations,
-        closePeriod,
-        lockPeriod,
-        controls,
-        runControl,
-        invoiceLineage,
-        runReconciliations,
-        signOffRecon,
-        trialBalance,
-        glAsOf,
-        runConsolidation,
-        consolidationLineage,
-        evidencePack,
-        investigatePeriod,
-        closeGroupPeriod,
-        syncState
-      )
-    )
+    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(serverEndpoints)
 }

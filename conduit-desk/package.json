@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:browser": "playwright test",
-    "shots": "playwright test manual-shots --reporter=list"
+    "shots": "playwright test manual-shots --reporter=list",
+    "gen:api": "openapi-typescript ../api/openapi.json -o src/api/schema.d.ts"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.101.0",
@@ -36,6 +37,7 @@
     "@types/react-dom": "^19.0.4",
     "@vitejs/plugin-react": "^4.3.4",
     "jsdom": "^29.1.1",
+    "openapi-typescript": "^7.13.0",
     "typescript": "^5.8.3",
     "vite": "^5.4.10",
     "vitest": "3.2.4"

@@ -264,19 +264,19 @@ final class IntercompanyRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService
   private val eliminations = consRoute("eliminations", p => IcQueryRepo.eliminations(p).map(Json.fromValues(_)))
   private val translate    = consRoute("translate", IcQueryRepo.translate)
 
+  val serverEndpoints = List(
+    policiesList,
+    policyCreate,
+    policyApprove,
+    preview,
+    movementsList,
+    movementOne,
+    topology,
+    icBalances,
+    eliminations,
+    translate
+  )
+
   val routes: HttpRoutes[F] =
-    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(
-      List(
-        policiesList,
-        policyCreate,
-        policyApprove,
-        preview,
-        movementsList,
-        movementOne,
-        topology,
-        icBalances,
-        eliminations,
-        translate
-      )
-    )
+    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(serverEndpoints)
 }

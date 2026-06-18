@@ -133,6 +133,8 @@ final class ActivationRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F
             }
       )
 
+  val serverEndpoints = List(feed, capacity, series, kpis, byDate)
+
   val routes: HttpRoutes[F] =
-    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(List(feed, capacity, series, kpis, byDate))
+    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(serverEndpoints)
 }

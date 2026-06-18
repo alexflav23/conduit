@@ -85,6 +85,8 @@ final class TreasuryRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F])
               .map(Right(_))
       )
 
+  val serverEndpoints = List(program, effectiveness)
+
   val routes: HttpRoutes[F] =
-    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(List(program, effectiveness))
+    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(serverEndpoints)
 }

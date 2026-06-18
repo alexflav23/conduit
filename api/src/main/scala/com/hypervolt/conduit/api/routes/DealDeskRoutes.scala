@@ -152,6 +152,8 @@ final class DealDeskRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F])
           }
       })
 
+  val serverEndpoints = List(list, get, submit, decision)
+
   val routes: HttpRoutes[F] =
-    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(List(list, get, submit, decision))
+    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(serverEndpoints)
 }

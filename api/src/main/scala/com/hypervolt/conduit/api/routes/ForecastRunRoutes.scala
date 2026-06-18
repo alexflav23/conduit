@@ -207,6 +207,8 @@ final class ForecastRunRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[
             }
       })
 
+  val serverEndpoints = List(runs, report, diff, accounts, account)
+
   val routes: HttpRoutes[F] =
-    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(List(runs, report, diff, accounts, account))
+    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(serverEndpoints)
 }

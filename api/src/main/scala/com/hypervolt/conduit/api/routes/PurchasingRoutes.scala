@@ -207,14 +207,18 @@ final class PurchasingRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F
           forbid(p, Action.View, "purchase_order") match {
             case Some(e) => Async[F].pure(Left(e))
             case None =>
-              (PurchasingReadRepo.stockOps(optUuidS(entityF), 200, 0), PurchasingReadRepo.stockOpsCount(optUuidS(entityF)))
-                .tupled
+              (
+                PurchasingReadRepo.stockOps(optUuidS(entityF), 200, 0),
+                PurchasingReadRepo.stockOpsCount(optUuidS(entityF))
+              ).tupled
                 .transact(xa)
                 .map { case (rows, total) => Right(Json.obj("rows" -> Json.fromValues(rows), "total" -> total.asJson)) }
           }
       })
 
+  val serverEndpoints = List(listPos, poDetail, stockOps, createPo, addLine, receive)
+
   val routes: HttpRoutes[F] =
     Http4sServerInterpreter[F](ApiMetrics.serverOptions[F])
-      .toRoutes(List(listPos, poDetail, stockOps, createPo, addLine, receive))
+      .toRoutes(serverEndpoints)
 }

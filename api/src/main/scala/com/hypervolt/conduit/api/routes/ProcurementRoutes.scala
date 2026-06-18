@@ -151,6 +151,8 @@ final class ProcurementRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[
               .map(rows => Right(project(principal, "ic_match", rows.flatMap(io.circe.parser.parse(_).toOption))))
       )
 
+  val serverEndpoints = List(listLists, propose, activate, matches)
+
   val routes: HttpRoutes[F] =
-    Http4sServerInterpreter[F]().toRoutes(List(listLists, propose, activate, matches))
+    Http4sServerInterpreter[F]().toRoutes(serverEndpoints)
 }

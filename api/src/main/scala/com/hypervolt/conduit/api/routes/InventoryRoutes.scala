@@ -61,8 +61,10 @@ final class InventoryRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]
             case Some(e) => Async[F].pure(Left(e))
             case None =>
               val (lim, off, ent) = (clampLimit(limitF), clampOffset(offsetF), optUuid(entityF))
-              (InventoryReadRepo.serialsPage(ent, statusF, qF, lim, off), InventoryReadRepo.serialsCount(ent, statusF, qF))
-                .tupled
+              (
+                InventoryReadRepo.serialsPage(ent, statusF, qF, lim, off),
+                InventoryReadRepo.serialsCount(ent, statusF, qF)
+              ).tupled
                 .transact(xa)
                 .map { case (rows, total) => Right(page(p, rows, total, lim, off)) }
           }
@@ -81,8 +83,7 @@ final class InventoryRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]
             case Some(e) => Async[F].pure(Left(e))
             case None =>
               val (lim, off, ent) = (clampLimit(limitF), clampOffset(offsetF), optUuid(entityF))
-              (InventoryReadRepo.batchesPage(ent, lim, off), InventoryReadRepo.batchesCount(ent))
-                .tupled
+              (InventoryReadRepo.batchesPage(ent, lim, off), InventoryReadRepo.batchesCount(ent)).tupled
                 .transact(xa)
                 .map { case (rows, total) => Right(page(p, rows, total, lim, off)) }
           }
@@ -101,8 +102,7 @@ final class InventoryRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]
             case Some(e) => Async[F].pure(Left(e))
             case None =>
               val (lim, off, ent) = (clampLimit(limitF), clampOffset(offsetF), optUuid(entityF))
-              (InventoryReadRepo.atp(ent, lim, off), InventoryReadRepo.atpCount(ent))
-                .tupled
+              (InventoryReadRepo.atp(ent, lim, off), InventoryReadRepo.atpCount(ent)).tupled
                 .transact(xa)
                 .map { case (rows, total) => Right(page(p, rows, total, lim, off)) }
           }
@@ -151,6 +151,8 @@ final class InventoryRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]
           }
       )
 
+  val serverEndpoints = List(serials, batches, roster, atp, genealogy)
+
   val routes: HttpRoutes[F] =
-    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(List(serials, batches, roster, atp, genealogy))
+    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(serverEndpoints)
 }

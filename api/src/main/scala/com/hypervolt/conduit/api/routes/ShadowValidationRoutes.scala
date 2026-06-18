@@ -106,6 +106,8 @@ final class ShadowValidationRoutes[F[_]: Async](xa: Transactor[F], auth: AuthSer
           }
       })
 
+  val serverEndpoints = List(run, summary, findings, triage)
+
   val routes: HttpRoutes[F] =
-    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(List(run, summary, findings, triage))
+    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(serverEndpoints)
 }

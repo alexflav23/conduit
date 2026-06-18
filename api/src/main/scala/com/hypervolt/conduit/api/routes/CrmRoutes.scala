@@ -112,7 +112,14 @@ final class CrmRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
               .transact(xa)
               .map {
                 case (rows, total) =>
-                  Right(Json.obj("rows" -> Json.fromValues(rows), "total" -> total.asJson, "limit" -> lim.asJson, "offset" -> off.asJson))
+                  Right(
+                    Json.obj(
+                      "rows"   -> Json.fromValues(rows),
+                      "total"  -> total.asJson,
+                      "limit"  -> lim.asJson,
+                      "offset" -> off.asJson
+                    )
+                  )
               }
           }
       })
@@ -143,11 +150,21 @@ final class CrmRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
             val lim = limitF.getOrElse(50).min(200).max(1)
             val off = offsetF.getOrElse(0).max(0)
             val ne  = (s: Option[String]) => s.filter(_.nonEmpty)
-            (CrmReadRepo.listAccounts(ne(segment), ne(q), lim, off), CrmReadRepo.countAccounts(ne(segment), ne(q))).tupled
+            (
+              CrmReadRepo.listAccounts(ne(segment), ne(q), lim, off),
+              CrmReadRepo.countAccounts(ne(segment), ne(q))
+            ).tupled
               .transact(xa)
               .map {
                 case (rows, total) =>
-                  Right(Json.obj("rows" -> Json.fromValues(rows), "total" -> total.asJson, "limit" -> lim.asJson, "offset" -> off.asJson))
+                  Right(
+                    Json.obj(
+                      "rows"   -> Json.fromValues(rows),
+                      "total"  -> total.asJson,
+                      "limit"  -> lim.asJson,
+                      "offset" -> off.asJson
+                    )
+                  )
               }
           }
       })
@@ -161,8 +178,8 @@ final class CrmRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
           if (!gate(p)) Async[F].pure(Left(denied))
           else
             optUuid(Some(idS)) match {
-              case Left(e)         => Async[F].pure(Left(e))
-              case Right(None)     => Async[F].pure(Left(err(StatusCode.BadRequest, "bad_request", "invalid id")))
+              case Left(e)     => Async[F].pure(Left(e))
+              case Right(None) => Async[F].pure(Left(err(StatusCode.BadRequest, "bad_request", "invalid id")))
               case Right(Some(id)) =>
                 CrmReadRepo.accountDetail(id).transact(xa).map {
                   case Some(j) => Right(j)
@@ -190,7 +207,14 @@ final class CrmRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
                   .transact(xa)
                   .map {
                     case (rows, total) =>
-                      Right(Json.obj("rows" -> Json.fromValues(rows), "total" -> total.asJson, "limit" -> lim.asJson, "offset" -> off.asJson))
+                      Right(
+                        Json.obj(
+                          "rows"   -> Json.fromValues(rows),
+                          "total"  -> total.asJson,
+                          "limit"  -> lim.asJson,
+                          "offset" -> off.asJson
+                        )
+                      )
                   }
               case _ => Async[F].pure(Left(err(StatusCode.BadRequest, "bad_request", "invalid id")))
             }
@@ -198,7 +222,7 @@ final class CrmRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
 
   // ---- Master-account review: the fuzzy candidates the model didn't auto-merge, with its verdict + reasoning ----
   private def canEdit(p: Principal): Boolean = PolicyEngine.hasPermission(p, Action.Edit, "credit_profile")
-  private val editDenied = err(StatusCode.Forbidden, "forbidden", "requires edit:credit_profile")
+  private val editDenied                     = err(StatusCode.Forbidden, "forbidden", "requires edit:credit_profile")
 
   private val reviewQueue =
     base.get
@@ -213,9 +237,22 @@ final class CrmRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
           else {
             val lim = limitF.getOrElse(50).min(200).max(1)
             val off = offsetF.getOrElse(0).max(0)
-            (MasterAccountRepo.reviewQueue(q.filter(_.nonEmpty), lim, off), MasterAccountRepo.reviewCount(q.filter(_.nonEmpty))).tupled
+            (
+              MasterAccountRepo.reviewQueue(q.filter(_.nonEmpty), lim, off),
+              MasterAccountRepo.reviewCount(q.filter(_.nonEmpty))
+            ).tupled
               .transact(xa)
-              .map { case (rows, total) => Right(Json.obj("rows" -> Json.fromValues(rows), "total" -> total.asJson, "limit" -> lim.asJson, "offset" -> off.asJson)) }
+              .map {
+                case (rows, total) =>
+                  Right(
+                    Json.obj(
+                      "rows"   -> Json.fromValues(rows),
+                      "total"  -> total.asJson,
+                      "limit"  -> lim.asJson,
+                      "offset" -> off.asJson
+                    )
+                  )
+              }
           }
       })
 
@@ -230,11 +267,17 @@ final class CrmRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
         body =>
           if (!canEdit(p)) Async[F].pure(Left(editDenied))
           else
-            (field(body, "hs_company_id"), field(body, "winner_party_id").flatMap(s => Try(UUID.fromString(s)).toOption)) match {
+            (
+              field(body, "hs_company_id"),
+              field(body, "winner_party_id").flatMap(s => Try(UUID.fromString(s)).toOption)
+            ) match {
               case (Some(hs), Some(winner)) =>
-                MasterAccountRepo.merge(winner, hs, p.userId.toString, "manual review accept").transact(xa)
+                MasterAccountRepo
+                  .merge(winner, hs, p.userId.toString, "manual review accept")
+                  .transact(xa)
                   .map(n => Right(Json.obj("merged" -> (n > 0).asJson)))
-              case _ => Async[F].pure(Left(err(StatusCode.BadRequest, "bad_request", "need hs_company_id + winner_party_id")))
+              case _ =>
+                Async[F].pure(Left(err(StatusCode.BadRequest, "bad_request", "need hs_company_id + winner_party_id")))
             }
       )
 
@@ -248,8 +291,12 @@ final class CrmRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
           if (!canEdit(p)) Async[F].pure(Left(editDenied))
           else
             field(body, "hs_company_id") match {
-              case Some(hs) => MasterAccountRepo.reject(hs, p.userId.toString).transact(xa).map(n => Right(Json.obj("rejected" -> n.asJson)))
-              case None     => Async[F].pure(Left(err(StatusCode.BadRequest, "bad_request", "need hs_company_id")))
+              case Some(hs) =>
+                MasterAccountRepo
+                  .reject(hs, p.userId.toString)
+                  .transact(xa)
+                  .map(n => Right(Json.obj("rejected" -> n.asJson)))
+              case None => Async[F].pure(Left(err(StatusCode.BadRequest, "bad_request", "need hs_company_id")))
             }
       )
 
@@ -270,7 +317,21 @@ final class CrmRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
             }
       })
 
+  val serverEndpoints = List(
+    accounts,
+    accountDetail,
+    accountCustomers,
+    reviewQueue,
+    mergeAccounts,
+    rejectCandidate,
+    setParent,
+    parties,
+    pipeline,
+    dealsSummary,
+    deals
+  )
+
   val routes: HttpRoutes[F] =
     Http4sServerInterpreter[F](ApiMetrics.serverOptions[F])
-      .toRoutes(List(accounts, accountDetail, accountCustomers, reviewQueue, mergeAccounts, rejectCandidate, setParent, parties, pipeline, dealsSummary, deals))
+      .toRoutes(serverEndpoints)
 }

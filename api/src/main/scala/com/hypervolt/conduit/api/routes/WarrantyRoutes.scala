@@ -113,6 +113,8 @@ final class WarrantyRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F])
           }
       })
 
+  val serverEndpoints = List(provisions, rmas)
+
   val routes: HttpRoutes[F] =
-    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(List(provisions, rmas))
+    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(serverEndpoints)
 }

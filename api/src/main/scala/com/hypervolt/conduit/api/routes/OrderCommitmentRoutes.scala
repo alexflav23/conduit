@@ -65,6 +65,8 @@ final class OrderCommitmentRoutes[F[_]: Async](xa: Transactor[F], auth: AuthServ
           }
       )
 
+  val serverEndpoints = List(ofOrder, backlog)
+
   val routes: HttpRoutes[F] =
-    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(List(ofOrder, backlog))
+    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(serverEndpoints)
 }

@@ -50,6 +50,8 @@ final class UnitLifecycleRoutes[F[_]: Async](xa: Transactor[F], auth: AuthServic
           else svc.rmaStats.map(Right(_))
       )
 
+  val serverEndpoints = List(lifecycle, rmaStats)
+
   val routes: HttpRoutes[F] =
-    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(List(lifecycle, rmaStats))
+    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(serverEndpoints)
 }

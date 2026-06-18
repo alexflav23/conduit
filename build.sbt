@@ -169,6 +169,8 @@ lazy val domain = (project in file("domain"))
       "com.softwaremill.sttp.tapir" %% "tapir-swagger-ui-bundle"     % Versions.tapir,
       "com.softwaremill.sttp.tapir" %% "tapir-opentelemetry-metrics" % Versions.tapir,
       "com.softwaremill.sttp.tapir" %% "tapir-cats"                  % Versions.tapir,
+      "com.softwaremill.sttp.tapir" %% "tapir-openapi-docs"          % Versions.tapir,
+      "com.softwaremill.sttp.apispec" %% "openapi-circe-yaml"        % "0.8.0",
       "com.auth0"                    % "jwks-rsa"                     % Versions.auth0JwksRsa exclude ("com.fasterxml.jackson.core", "jackson-databind"),
       "com.auth0"                    % "java-jwt"                     % Versions.auth0JavaJwt exclude ("com.fasterxml.jackson.core", "jackson-databind"),
       "io.circe"                    %% "circe-generic"                % Versions.circe,

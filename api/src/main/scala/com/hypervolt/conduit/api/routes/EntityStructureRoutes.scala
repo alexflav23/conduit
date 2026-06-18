@@ -69,5 +69,7 @@ final class EntityStructureRoutes[F[_]: Async](xa: Transactor[F], auth: AuthServ
           }
       )
 
-  val routes: HttpRoutes[F] = Http4sServerInterpreter[F]().toRoutes(List(structure))
+  val serverEndpoints = List(structure)
+
+  val routes: HttpRoutes[F] = Http4sServerInterpreter[F]().toRoutes(serverEndpoints)
 }

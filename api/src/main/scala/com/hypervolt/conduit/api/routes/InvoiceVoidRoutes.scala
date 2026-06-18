@@ -94,5 +94,7 @@ final class InvoiceVoidRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[
       s"user:$actor" // origin: the finance user who requested the void
     )
 
-  val routes: HttpRoutes[F] = Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(voidInvoice)
+  val serverEndpoints = List(voidInvoice)
+
+  val routes: HttpRoutes[F] = Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(serverEndpoints)
 }

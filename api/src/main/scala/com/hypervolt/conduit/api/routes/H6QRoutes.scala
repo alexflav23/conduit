@@ -606,34 +606,34 @@ final class H6QRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
 
   private def normaliseMonth(s: String): String = if (s.length == 7) s + "-01" else s
 
+  val serverEndpoints = List(
+    scenarios,
+    variants,
+    cycles,
+    myForecasts,
+    submit,
+    submitMix,
+    skip,
+    outstanding,
+    accuracy,
+    notifications,
+    coverage,
+    coverageBySku,
+    coverageMatrix,
+    demandBoard,
+    waterfall,
+    autoPoPropose,
+    suppliers,
+    supplyCommitmentsR,
+    supplyProposalsR,
+    supplyWarningsR,
+    supplyApprove,
+    shelf,
+    ledger,
+    reconcile,
+    exportCsv
+  )
+
   val routes: HttpRoutes[F] =
-    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(
-      List(
-        scenarios,
-        variants,
-        cycles,
-        myForecasts,
-        submit,
-        submitMix,
-        skip,
-        outstanding,
-        accuracy,
-        notifications,
-        coverage,
-        coverageBySku,
-        coverageMatrix,
-        demandBoard,
-        waterfall,
-        autoPoPropose,
-        suppliers,
-        supplyCommitmentsR,
-        supplyProposalsR,
-        supplyWarningsR,
-        supplyApprove,
-        shelf,
-        ledger,
-        reconcile,
-        exportCsv
-      )
-    )
+    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(serverEndpoints)
 }

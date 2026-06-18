@@ -103,7 +103,9 @@ final class FreeShipmentRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService
           }
       })
 
+  val serverEndpoints = List(summary, trend, replacement, rebuild, reclassify)
+
   val routes: HttpRoutes[F] =
     Http4sServerInterpreter[F](ApiMetrics.serverOptions[F])
-      .toRoutes(List(summary, trend, replacement, rebuild, reclassify))
+      .toRoutes(serverEndpoints)
 }

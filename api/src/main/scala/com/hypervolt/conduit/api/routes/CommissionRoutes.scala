@@ -109,31 +109,44 @@ final class CommissionRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F
           forbid(p) match {
             case Some(e) => Async[F].pure(Left(e))
             case None =>
-              (sql"""SELECT e.id, e.order_id, e.basis_amount, e.rate_applied, e.amount, e.status, e.kind, e.agent_id
+              (
+                sql"""SELECT e.id, e.order_id, e.basis_amount, e.rate_applied, e.amount, e.status, e.kind, e.agent_id
                      FROM commission_entry e ORDER BY e.created_at DESC LIMIT 500"""
-                 .query[(UUID, Option[UUID], BigDecimal, BigDecimal, BigDecimal, String, String, UUID)]
-                 .to[List],
-               sql"""SELECT
+                  .query[(UUID, Option[UUID], BigDecimal, BigDecimal, BigDecimal, String, String, UUID)]
+                  .to[List],
+                sql"""SELECT
                        COALESCE(sum(amount) FILTER (WHERE kind <> 'clawback'), 0),
                        COALESCE(sum(amount) FILTER (WHERE status = 'posted'), 0),
                        COALESCE(sum(amount) FILTER (WHERE kind = 'clawback'), 0)
                      FROM commission_entry""".query[(BigDecimal, BigDecimal, BigDecimal)].unique
               ).tupled.transact(xa).map {
                 case (rows, (accrued, posted, clawed)) =>
-                  Right(Json.obj(
-                    "scope"  -> "all".asJson,
-                    "totals" -> Json.obj("accrued" -> accrued.asJson, "posted" -> posted.asJson, "clawed" -> clawed.asJson),
-                    "rows" -> Json.fromValues(rows.map {
-                      case (id, ord, basis, rate, amt, st, kind, ag) =>
-                        Json.obj("id" -> id.toString.asJson, "order" -> ord.map(_.toString).asJson,
-                          "basis" -> basis.asJson, "rate" -> rate.asJson, "amount" -> amt.asJson,
-                          "status" -> st.asJson, "scheme" -> kind.asJson, "agent" -> ag.toString.asJson)
-                    })
-                  ))
+                  Right(
+                    Json.obj(
+                      "scope" -> "all".asJson,
+                      "totals" -> Json
+                        .obj("accrued" -> accrued.asJson, "posted" -> posted.asJson, "clawed" -> clawed.asJson),
+                      "rows" -> Json.fromValues(rows.map {
+                        case (id, ord, basis, rate, amt, st, kind, ag) =>
+                          Json.obj(
+                            "id"     -> id.toString.asJson,
+                            "order"  -> ord.map(_.toString).asJson,
+                            "basis"  -> basis.asJson,
+                            "rate"   -> rate.asJson,
+                            "amount" -> amt.asJson,
+                            "status" -> st.asJson,
+                            "scheme" -> kind.asJson,
+                            "agent"  -> ag.toString.asJson
+                          )
+                      })
+                    )
+                  )
               }
           }
       )
 
+  val serverEndpoints = List(statement, entries, book)
+
   val routes: HttpRoutes[F] =
-    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(List(statement, entries, book))
+    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(serverEndpoints)
 }

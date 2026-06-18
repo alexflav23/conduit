@@ -68,6 +68,8 @@ final class ShelfDetailRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[
               .map(Right(_))
       )
 
+  val serverEndpoints = List(detail, summary)
+
   val routes: HttpRoutes[F] =
-    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(List(detail, summary))
+    Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(serverEndpoints)
 }
