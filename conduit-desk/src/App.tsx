@@ -37,6 +37,7 @@ import { Sync } from './Sync';
 import { Proof } from './Proof';
 import { Access } from './Access';
 import { Notifications } from './Notifications';
+import { Help } from './Help';
 import { AccountPage } from './AccountPage';
 import { CrmAccount } from './CrmAccount';
 import { OrderDetail } from './OrderDetail';
@@ -60,7 +61,8 @@ type TabId =
   | 'inventory' | 'purchasing' | 'batch' | 'activation' | 'warranty'
   | 'finance' | 'commission' | 'docs' | 'lifecycle' | 'tax' | 'backlog'
   | 'intercompany' | 'procurement' | 'treasury'
-  | 'audit' | 'period' | 'sync' | 'shadow' | 'proof' | 'access' | 'notifications';
+  | 'audit' | 'period' | 'sync' | 'shadow' | 'proof' | 'access' | 'notifications'
+  | 'help';
 
 interface NavItem { id: TabId; label: string; icon: keyof typeof I }
 
@@ -110,6 +112,9 @@ const GROUPS: { sec: string; items: NavItem[] }[] = [
     { id: 'access', label: 'Access', icon: 'settings' },
     { id: 'notifications', label: 'Notifications', icon: 'bell' },
   ]},
+  { sec: 'Learn', items: [
+    { id: 'help', label: 'User manual', icon: 'list' },
+  ]},
 ];
 const ALL: NavItem[] = GROUPS.flatMap((g) => g.items);
 
@@ -122,6 +127,7 @@ const PAGES: Record<TabId, React.ComponentType<any>> = {
   finance: Finance, commission: Commission, docs: Documents, lifecycle: Lifecycle, warranty: Warranty, tax: Tax, shadow: Shadow, backlog: Backlog,
   intercompany: Intercompany, procurement: Procurement, treasury: Treasury,
   audit: Auditability, period: Period, sync: Sync, proof: Proof, access: Access, notifications: Notifications,
+  help: Help,
 };
 
 // Renders the feature page for the /:tab route; an unknown tab falls back to the Order Desk.
