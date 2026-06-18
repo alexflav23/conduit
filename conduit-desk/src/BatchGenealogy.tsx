@@ -118,7 +118,7 @@ function ChainNode({ label, title, sub, money, tone, last }: {
 
 // ============================================================ SERIAL → GENEALOGY
 interface SerialNode { sn?: string; serial?: string; sku_label?: string; skuLabel?: string; location?: string; status?: string; order?: string; customer?: string; dispatched_at?: string; dispatchedAt?: string; owner?: string; owner_email?: string }
-interface BatchNode { id?: string; received?: string; cm?: string; po?: string; location_name?: string; locationName?: string; landed_unit_cost?: number | string; unit_cost?: number | string; fx_rate?: number | string; fx_basis?: string; freight_per_unit?: number | string; duty_per_unit?: number | string; currency?: string }
+interface BatchNode { id?: string; received?: string; cm?: string; po?: string; location_name?: string; locationName?: string; landed_unit_cost?: number | string; unit_cost?: number | string; fx_rate?: number | string; fx_basis?: string; hedge_ref?: string | null; fx_source?: string | null; fx_as_of?: string | null; freight_per_unit?: number | string; duty_per_unit?: number | string; currency?: string }
 interface Activation { activated_at?: string; installer?: string }
 interface TimelineEvent { at?: string; event?: string; origin?: string }
 interface Genealogy { serial?: SerialNode; batch?: BatchNode; activation?: Activation | null; timeline?: TimelineEvent[] }
@@ -259,10 +259,24 @@ function SerialGenealogy({ ctx, role, hasProfit }: { ctx: Ctx; role: Role; hasPr
                       const native = (d.batch!.fx_basis ?? '').toString().includes('native') || fx === 1;
                       const factoryCcy = native ? (d.batch!.currency || 'GBP') : 'USD';
                       const factoryGbp = native ? Number(d.batch!.unit_cost ?? 0) : Number(d.batch!.unit_cost ?? 0) / (fx || 1);
+                      const hedge = d.batch!.hedge_ref;
+                      const src = d.batch!.fx_source;
+                      const fxNote = hedge
+                        ? `hedged · ${hedge}`
+                        : src
+                          ? `${d.batch!.fx_basis} rate · ${String(src).toUpperCase()}${d.batch!.fx_as_of ? ' ' + d.batch!.fx_as_of : ''}`
+                          : `${d.batch!.fx_basis ?? ''} rate`;
                       return (
                         <div className="kv" style={{ fontSize: 12 }}>
                           <span className="k">Factory unit{native ? '' : ' (USD)'}</span><span className="v num">{gbp(d.batch!.unit_cost, factoryCcy)}</span>
-                          {!native && <><span className="k">÷ FX {fx.toFixed(4)} → GBP</span><span className="v num">{gbp(factoryGbp, 'GBP')}</span></>}
+                          {!native && (
+                            <>
+                              <span className="k">÷ FX {fx.toFixed(4)} → GBP
+                                <span className="dim" style={{ display: 'block', fontSize: 10.5, fontWeight: 400 }}>{fxNote}</span>
+                              </span>
+                              <span className="v num">{gbp(factoryGbp, 'GBP')}</span>
+                            </>
+                          )}
                           <span className="k">+ Freight / unit</span><span className="v num">{gbp(d.batch!.freight_per_unit, 'GBP')}</span>
                           <span className="k">+ Duty / unit</span><span className="v num">{gbp(d.batch!.duty_per_unit, 'GBP')}</span>
                           <span className="k" style={{ fontWeight: 600, color: 'var(--text)' }}>= Landed</span>

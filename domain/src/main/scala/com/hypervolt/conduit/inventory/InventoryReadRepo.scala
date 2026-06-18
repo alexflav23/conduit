@@ -96,7 +96,11 @@ object InventoryReadRepo {
             'batch', CASE WHEN b.id IS NULL THEN NULL ELSE jsonb_build_object(
               'id', b.batch_no, 'received', b.received_date, 'cm', sup.name, 'po', NULL,
               'location_name', loc.name, 'landed_unit_cost', b.landed_unit_cost, 'unit_cost', b.unit_cost_usd,
-              'fx_rate', b.fx_rate, 'fx_basis', b.fx_basis,
+              'fx_rate', b.fx_rate, 'fx_basis', b.fx_basis, 'hedge_ref', b.hedge_ref,
+              'fx_source', (SELECT er.source FROM exchange_rate er WHERE er.base = 'GBP' AND er.quote = 'USD'
+                            AND er.rate_type = b.fx_basis AND er.rate = b.fx_rate ORDER BY er.as_of DESC LIMIT 1),
+              'fx_as_of', (SELECT er.as_of::text FROM exchange_rate er WHERE er.base = 'GBP' AND er.quote = 'USD'
+                            AND er.rate_type = b.fx_basis AND er.rate = b.fx_rate ORDER BY er.as_of DESC LIMIT 1),
               'freight_per_unit', b.shipping_alloc, 'duty_per_unit', b.duty_alloc, 'currency', b.currency) END,
             'activation', CASE WHEN s.activated_at IS NULL THEN NULL ELSE jsonb_build_object(
               'activated_at', s.activated_at, 'installer', s.installer_user_id) END,
