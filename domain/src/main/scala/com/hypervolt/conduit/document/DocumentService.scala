@@ -152,7 +152,8 @@ final class DocumentService[F[_]: Async](
     }
 
   private def head(invId: UUID): ConnectionIO[Option[InvHead]] =
-    sql"""SELECT o.id, o.entity_id, e.jurisdiction, o.bill_to_party_id, COALESCE(p.legal_name, p.display_name),
+    sql"""SELECT o.id, o.entity_id, e.jurisdiction, o.bill_to_party_id,
+                 COALESCE(p.legal_name, regexp_replace(p.display_name, '^MRP:\s*', '')),
                  e.name, o.txn_currency, i.total_ex_vat, i.vat_total, i.total_inc_vat,
                  COALESCE(bp.invoice_locale, 'en'), i.dispatch_id
           FROM order_invoice i
@@ -170,19 +171,17 @@ final class DocumentService[F[_]: Async](
   private def lines(orderId: UUID, dispatchId: Option[UUID]): ConnectionIO[List[InvLine]] =
     dispatchId match {
       case Some(d) =>
-        sql"""SELECT COALESCE(f.name, v.sku), v.sku, dl.qty, ol.unit_price_ex_vat, ol.discount_pct,
+        sql"""SELECT COALESCE(NULLIF(v.name, ''), v.sku), v.sku, dl.qty, ol.unit_price_ex_vat, ol.discount_pct,
                      CASE WHEN ol.qty > 0 THEN round(ol.vat_amount * dl.qty / ol.qty, 2) ELSE ol.vat_amount END
               FROM dispatch_line dl
                 JOIN order_line ol ON ol.id = dl.order_line_id
                 JOIN product_variant v ON v.id = ol.product_variant_id
-                LEFT JOIN product_family f ON f.id = v.family_id
               WHERE dl.dispatch_id = $d ORDER BY ol.id"""
           .query[InvLine]
           .to[List]
       case None =>
-        sql"""SELECT COALESCE(f.name, v.sku), v.sku, ol.qty, ol.unit_price_ex_vat, ol.discount_pct, ol.vat_amount
+        sql"""SELECT COALESCE(NULLIF(v.name, ''), v.sku), v.sku, ol.qty, ol.unit_price_ex_vat, ol.discount_pct, ol.vat_amount
               FROM order_line ol JOIN product_variant v ON v.id = ol.product_variant_id
-                LEFT JOIN product_family f ON f.id = v.family_id
               WHERE ol.order_id = $orderId ORDER BY ol.id"""
           .query[InvLine]
           .to[List]

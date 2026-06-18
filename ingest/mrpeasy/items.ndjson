@@ -1,0 +1,100 @@
+{"code": "125", "title": "HYPV-2.0-Installation", "group": null}
+{"code": "Back rear enclosure SA-RMA-1", "title": "Back rear enclosure SA-RMA", "group": "Sub-assembly"}
+{"code": "DONOTUSE_hv-205-ub", "title": "Home 2.0 - 5m - UltraBlack", "group": "HYPV-2.0-Old SKUs"}
+{"code": "DONOTUSE_hv-205-uw", "title": "Home 2.0 - 5m - UltraWhite", "group": "HYPV-2.0-Old SKUs"}
+{"code": "DONOTUSE_hv-2075-ub", "title": "Home 2.0 - 7.5m - UltraBlack", "group": "HYPV-2.0-Old SKUs"}
+{"code": "DONOTUSE_HYPV-HOME-2.0", "title": "Hypervolt Home 2.0", "group": "HYPV-2.0-Old SKUs"}
+{"code": "hv-2.0-uwt-t1", "title": "DO_NOT_USE_Home 2.0 - 10m - UltraWhite - Type 1 (Trade)", "group": "HYPV-2.0-OldSKUs"}
+{"code": "hv-2.0-uwt-t2", "title": "DO_NOT_USE_Home 2.0 - 10m - UltraWhite - Type 2 (Trade)", "group": "HYPV-2.0-OldSKUs"}
+{"code": "hv-2010-sgt-t1", "title": "DO_NOT_USE_Home 2.0 - 10m - Space Grey - Type 1 (Trade)", "group": "HYPV-2.0-OldSKUs"}
+{"code": "hv-2010-sgt-t2", "title": "DO_NOT_USE_Home 2.0 - 10m - Space Grey - Type 2 (Trade)", "group": "HYPV-2.0-OldSKUs"}
+{"code": "hv-2010-ubt-t1", "title": "DO_NOT_USE_Home 2.0 - 10m - UltraBlack - Type 1 (Trade)", "group": "HYPV-2.0-OldSKUs"}
+{"code": "hv-2010-ubt-t2", "title": "DO_NOT_USE_Home 2.0 - 10m - UltraBlack - Type 2 (Trade)", "group": "HYPV-2.0-OldSKUs"}
+{"code": "hv-205-sgt-t1", "title": "DO_NOT_USE_Home 2.0 - 5m - Space Grey - Type 1 (Trade)", "group": "HYPV-2.0-OldSKUs"}
+{"code": "hv-205-sgt-t2", "title": "DO_NOT_USE_Home 2.0 - 5m - Space Grey - Type 2 (Trade)", "group": "HYPV-2.0-OldSKUs"}
+{"code": "hv-205-ubt-t1", "title": "DO_NOT_USE_Home 2.0 - 5m - UltraBlack - Type 1 (Trade)", "group": "HYPV-2.0-OldSKUs"}
+{"code": "hv-205-ubt-t2", "title": "DO_NOT_USE_Home 2.0 - 5m - UltraBlack - Type 2 (Trade)", "group": "HYPV-2.0-OldSKUs"}
+{"code": "hv-205-uwt-t1", "title": "DO_NOT_USE_Home 2.0 - 5m - UltraWhite  - Type 1 (Trade)", "group": "HYPV-2.0-OldSKUs"}
+{"code": "hv-205-uwt-t2", "title": "DO_NOT_USE_Home 2.0 - 5m - UltraWhite  - Type 2 (Trade)", "group": "HYPV-2.0-OldSKUs"}
+{"code": "hv-2075-sgt-t1", "title": "DO_NOT_USE_Home 2.0 - 7.5m - Space Grey - Type 1 (Trade)", "group": "HYPV-2.0-OldSKUs"}
+{"code": "hv-2075-sgt-t2", "title": "DO_NOT_USE_Home 2.0 - 7.5m - Space Grey - Type 2 (Trade)", "group": "HYPV-2.0-OldSKUs"}
+{"code": "hv-2075-ubt-t1", "title": "DO_NOT_USE_Home 2.0 - 7.5m - UltraBlack - Type 1 (Trade)", "group": "HYPV-2.0-OldSKUs"}
+{"code": "hv-2075-ubt-t2", "title": "DO_NOT_USE_Home 2.0 - 7.5m - UltraBlack - Type 2 (Trade)", "group": "HYPV-2.0-OldSKUs"}
+{"code": "hv-2075-uwt-t1", "title": "DO_NOT_USE_Home 2.0 - 7.5m - UltraWhite - Type 1 (Trade)", "group": "HYPV-2.0-OldSKUs"}
+{"code": "hv-2075-uwt-t2", "title": "DO_NOT_USE_Home 2.0 - 7.5m - UltraWhite - Type 2 (Trade)", "group": "HYPV-2.0-OldSKUs"}
+{"code": "HV-2110-SGT-T2", "title": "DO_NOT_USE_Home 2.1 - 10m - Space Grey - Type 2", "group": "HYPV-2.1-OldSKUs"}
+{"code": "HV-2110-UBT-T2", "title": "DO_NOT_USE_Home 2.1 - 10m - Ultra Black - Type 2", "group": "HYPV-2.1-OldSKUs"}
+{"code": "HV-2110-UWT-T2", "title": "DO_NOT_USE_Home 2.1 - 10m - Ultra White - Type 2", "group": "HYPV-2.1-OldSKUs"}
+{"code": "HV-215-SGT-T1", "title": "DO_NOT_USE_Home 2.1 - 5m - Space Grey - Type 1", "group": "HYPV-2.1-OldSKUs"}
+{"code": "HV-215-SGT-T2", "title": "DO_NOT_USE_Home 2.1 - 5m - Space Grey - Type 2", "group": "HYPV-2.1-OldSKUs"}
+{"code": "HV-215-UBT-T1", "title": "DO_NOT_USE_Home 2.1 - 5m - Ultra Black - Type 1", "group": "HYPV-2.1-OldSKUs"}
+{"code": "HV-215-UBT-T2", "title": "DO_NOT_USE_Home 2.1 - 5m - Ultra Black - Type 2", "group": "HYPV-2.1-OldSKUs"}
+{"code": "HV-215-UWT-T1", "title": "DO_NOT_USE_Home 2.1 - 5m - Ultra White - Type 1", "group": "HYPV-2.1-OldSKUs"}
+{"code": "HV-215-UWT-T2", "title": "DO_NOT_USE_Home 2.1 - 5m - Ultra White - Type 2", "group": "HYPV-2.1-OldSKUs"}
+{"code": "HV-2175-SGT-T1", "title": "DO_NOT_USE_Home 2.1 - 7.5m - Space Grey - Type 1", "group": "HYPV-2.1-OldSKUs"}
+{"code": "HV-2175-SGT-T2", "title": "DO_NOT_USE_Home 2.1 - 7.5m - Space Grey - Type 2", "group": "HYPV-2.1-OldSKUs"}
+{"code": "HV-2175-UBT-T1", "title": "DO_NOT_USE_Home 2.1 - 7.5m - Ultra Black - Type 1", "group": "HYPV-2.1-OldSKUs"}
+{"code": "HV-2175-UBT-T2", "title": "DO_NOT_USE_Home 2.1 - 7.5m - Ultra Black - Type 2", "group": "HYPV-2.1-OldSKUs"}
+{"code": "HV-2175-UWT-T1", "title": "DO_NOT_USE_Home 2.1 - 7.5m - Ultra White - Type 1", "group": "HYPV-2.1-OldSKUs"}
+{"code": "HV-2175-UWT-T2", "title": "DO_NOT_USE_Home 2.1 - 7.5m - Ultra White - Type 2", "group": "HYPV-2.1-OldSKUs"}
+{"code": "hv-2210-sg-t2", "title": "Home 2.2 - 10m - Space Grey - Type 2 - Retail", "group": "HYPV-2.2-RETAIL-CurrentSKUs"}
+{"code": "hv-2210-sgt-t2", "title": "Home 2.2 - 10m - Space Grey - Type 2 - Installer", "group": "HYPV-2.2-INSTALLER-CurrentSKUs"}
+{"code": "hv-2210-ub-t2", "title": "Home 2.2 - 10m - Ultra Black - Type 2 - Retail", "group": "HYPV-2.2-RETAIL-CurrentSKUs"}
+{"code": "hv-2210-ubt-t2", "title": "Home 2.2 - 10m - Ultra Black - Type 2 - Installer", "group": "HYPV-2.2-INSTALLER-CurrentSKUs"}
+{"code": "hv-2210-uw-t2", "title": "Home 2.2 - 10m - Ultra White - Type 2 - Retail", "group": "HYPV-2.2-RETAIL-CurrentSKUs"}
+{"code": "hv-2210-uwt-t2", "title": "Home 2.2 - 10m - Ultra White - Type 2 - Installer", "group": "HYPV-2.2-INSTALLER-CurrentSKUs"}
+{"code": "hv-225-sg-t1", "title": "Home 2.2 - 5m - Space Grey - Type 1 - Retail", "group": "HYPV-2.2-RETAIL-CurrentSKUs"}
+{"code": "hv-225-sg-t2", "title": "Home 2.2 - 5m - Space Grey - Type 2 - Retail", "group": "HYPV-2.2-RETAIL-CurrentSKUs"}
+{"code": "hv-225-sgt-t1", "title": "Home 2.2 - 5m - Space Grey - Type 1 - Installer", "group": "HYPV-2.2-INSTALLER-CurrentSKUs"}
+{"code": "hv-225-sgt-t2", "title": "Home 2.2 - 5m - Space Grey - Type 2 - Installer", "group": "HYPV-2.2-INSTALLER-CurrentSKUs"}
+{"code": "hv-225-ub-t1", "title": "Home 2.2 - 5m - Ultra Black - Type 1 - Retail", "group": "HYPV-2.2-RETAIL-CurrentSKUs"}
+{"code": "hv-225-ub-t2", "title": "Home 2.2 - 5m - Ultra Black - Type 2 - Retail", "group": "HYPV-2.2-RETAIL-CurrentSKUs"}
+{"code": "hv-225-ubt-t1", "title": "Home 2.2 - 5m - Ultra Black - Type 1 - Installer", "group": "HYPV-2.2-INSTALLER-CurrentSKUs"}
+{"code": "hv-225-ubt-t2", "title": "Home 2.2 - 5m - Ultra Black - Type 2 - Installer", "group": "HYPV-2.2-INSTALLER-CurrentSKUs"}
+{"code": "hv-225-uw-t1", "title": "Home 2.2 - 5m - Ultra White - Type 1 - Retail", "group": "HYPV-2.2-RETAIL-CurrentSKUs"}
+{"code": "hv-225-uw-t2", "title": "Home 2.2 - 5m - Ultra White - Type 2 - Retail", "group": "HYPV-2.2-RETAIL-CurrentSKUs"}
+{"code": "hv-225-uwt-t1", "title": "Home 2.2 - 5m - Ultra White - Type 1 - Installer", "group": "HYPV-2.2-INSTALLER-CurrentSKUs"}
+{"code": "hv-225-uwt-t2", "title": "Home 2.2 - 5m - Ultra White - Type 2 - Installer", "group": "HYPV-2.2-INSTALLER-CurrentSKUs"}
+{"code": "hv-2275-sg-t1", "title": "Home 2.2- 7.5m - Space Grey - Type 1 - Retail", "group": "HYPV-2.2-RETAIL-CurrentSKUs"}
+{"code": "hv-2275-sg-t2", "title": "Home 2.2- 7.5m - Space Grey - Type 2 - Retail", "group": "HYPV-2.2-RETAIL-CurrentSKUs"}
+{"code": "hv-2275-sgt-t1", "title": "Home 2.2 - 7.5m - Space Grey - Type 1 - Installer", "group": "HYPV-2.2-INSTALLER-CurrentSKUs"}
+{"code": "hv-2275-sgt-t2", "title": "Home 2.2 - 7.5m - Space Grey - Type 2 - Installer", "group": "HYPV-2.2-INSTALLER-CurrentSKUs"}
+{"code": "hv-2275-ub-t1", "title": "Home 2.2 - 7.5m - Ultra Black - Type 1 - Retail", "group": "HYPV-2.2-RETAIL-CurrentSKUs"}
+{"code": "hv-2275-ub-t2", "title": "Home 2.2 - 7.5m - Ultra Black - Type 2 - Retail", "group": "HYPV-2.2-RETAIL-CurrentSKUs"}
+{"code": "hv-2275-ubt-t1", "title": "Home 2.2 - 7.5m - Ultra Black - Type 1 - Installer", "group": "HYPV-2.2-INSTALLER-CurrentSKUs"}
+{"code": "hv-2275-ubt-t2", "title": "Home 2.2 - 7.5m - Ultra Black - Type 2 - Installer", "group": "HYPV-2.2-INSTALLER-CurrentSKUs"}
+{"code": "hv-2275-uw-t1", "title": "Home 2.2 - 7.5m - UltraWhite - Type 1 - Retail", "group": "HYPV-2.2-RETAIL-CurrentSKUs"}
+{"code": "hv-2275-uw-t2", "title": "Home 2.2 - 7.5m - Ultra White - Type 2 - Retail", "group": "HYPV-2.2-RETAIL-CurrentSKUs"}
+{"code": "hv-2275-uwt-t1", "title": "Home 2.2 - 7.5m - Ultra White - Type 1 - Installer", "group": "HYPV-2.2-INSTALLER-CurrentSKUs"}
+{"code": "hv-2275-uwt-t2", "title": "Home 2.2 - 7.5m - Ultra White - Type 2 - Installer", "group": "HYPV-2.2-INSTALLER-CurrentSKUs"}
+{"code": "hv-310-sg-t2-N-A", "title": "Home 3.0 - 10m - Space Grey - Type 2", "group": "HYPV - 3.0"}
+{"code": "hv-310-ub-t2-N-A", "title": "Home 3.0 - 10m - Ultra Black - Type 2", "group": "HYPV - 3.0"}
+{"code": "hv-310-uw-t2-N-A", "title": "Home 3.0 - 10m - Ultra White - Type 2", "group": "HYPV - 3.0"}
+{"code": "hv-350-sg-t1-N-A", "title": "Home 3.0 - 5m - Space Grey - Type 1", "group": "HYPV - 3.0"}
+{"code": "hv-350-sg-t2-N-A", "title": "Home 3.0 - 5m - Space Grey - Type 2", "group": "HYPV - 3.0"}
+{"code": "hv-350-ub-t1-N-A", "title": "Home 3.0 - 5m - Ultra Black - Type 1", "group": "HYPV - 3.0"}
+{"code": "hv-350-ub-t2-N-A", "title": "Home 3.0 - 5m - Ultra Black - Type 2", "group": "HYPV - 3.0"}
+{"code": "hv-350-uw-t1-N-A", "title": "Home 3.0 - 5m - Ultra White - Type 1", "group": "HYPV - 3.0"}
+{"code": "hv-350-uw-t2-N-A", "title": "Home 3.0 - 5m - Ultra White - Type 2", "group": "HYPV - 3.0"}
+{"code": "hv-375-sg-t1-N-A", "title": "Home 3.0 - 7.5m - Space Grey - Type 1", "group": "HYPV - 3.0"}
+{"code": "hv-375-sg-t2-N-A", "title": "Home 3.0 - 7.5m - Space Grey - Type 2", "group": "HYPV - 3.0"}
+{"code": "hv-375-ub-t1-N-A", "title": "Home 3.0 - 7.5m - Ultra Black - Type 1", "group": "HYPV - 3.0"}
+{"code": "hv-375-ub-t2-N-A", "title": "Home 3.0 - 7.5m - Ultra Black - Type 2", "group": "HYPV - 3.0"}
+{"code": "hv-375-uw-t1-N-A", "title": "Home 3.0 - 7.5m - Ultra White - Type 1", "group": "HYPV - 3.0"}
+{"code": "hv-375-uw-t2-N-A", "title": "Home 3.0 - 7.5m - Ultra White - Type 2", "group": "HYPV - 3.0"}
+{"code": "HV-DRILL-TPL", "title": "Drilling Template", "group": "Accessories"}
+{"code": "HV-DUMMY-01", "title": "White - Home 2.0 - Dummy Charger", "group": "HYPV-SKU-DUMMIES"}
+{"code": "HV-DUMMY-02", "title": "Black - Home 2.0 - Dummy Charger", "group": "HYPV-SKU-DUMMIES"}
+{"code": "HV-DUMMY-03", "title": "Space Grey - Home 2.0 - Dummy Charger", "group": "HYPV-SKU-DUMMIES"}
+{"code": "HV-DUMMY-04-NO ELECTRICS - SG-5M", "title": "HVPRO3 - SA-DUMMIES SG", "group": "HYPV-SKU-DUMMIES"}
+{"code": "HV-DUMMY-04-NO ELECTRICS - UB-5M", "title": "HVPRO3 - SA-DUMMIES UB", "group": "HYPV-SKU-DUMMIES"}
+{"code": "HV-DUMMY-04-NO ELECTRICS-UW-5M", "title": "HVPRO3 - SA-DUMMIES UW", "group": "HYPV-SKU-DUMMIES"}
+{"code": "HV-PACK-101", "title": "Biodegradable Bag/Sleeve", "group": "Packaging"}
+{"code": "HV-PR-001-KCT", "title": "100A/40mA CT", "group": "Product Components"}
+{"code": "HV-PR-001-KCT-RMA", "title": "100A/40mA CT-RMA", "group": "HYPV-INV-01 Product Components-RMA"}
+{"code": "HV-PR-002-PIN - OBSOLETE", "title": "2 Pin Receptacle", "group": "Product Components"}
+{"code": "HV-PR-003-WRC - OBSOLETE", "title": "Ribbon Cable - (Bare) - 40 Way", "group": "Product Components"}
+{"code": "HV-PR-004-IDC", "title": "40-Way IDC Connector", "group": "Product Components"}
+{"code": "HV-PR-005-4SD - OBSOLETE", "title": "4GB MicroSDHC Card", "group": "Product Components"}
+{"code": "HV-PR-006-ALM - OBSOLETE", "title": "ALM Direct PCB V2", "group": "Product Components"}
+{"code": "HV-PR-007-AXF", "title": "Axial Fan", "group": "Product Components"}

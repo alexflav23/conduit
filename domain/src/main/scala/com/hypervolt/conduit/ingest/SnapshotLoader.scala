@@ -450,8 +450,23 @@ object SnapshotLoader {
     dataset match {
       case "customer_orders" => mrpOrder(row)
       case "shipments"       => mrpShipment(row)
+      case "items"           => mrpItem(row)
       case _                 => 0.pure[ConnectionIO]
     }
+
+  // ingest/mrpeasy/items.ndjson — the MRPeasy article catalogue (code → real title). Staged here; ignition's
+  // backfillProductNames maps product_variant.sku → this code to set a human product name (so line items read
+  // "Home 3.0 - 5m - Ultra Black" instead of the synthetic "MRPeasy import" family). Idempotent on code.
+  private def mrpItem(row: Json): ConnectionIO[Int] = {
+    val c = row.hcursor
+    (str(c, "code"), c.get[String]("title").toOption).tupled match {
+      case None => 0.pure[ConnectionIO]
+      case Some((code, title)) =>
+        val grp = c.get[String]("group").toOption
+        sql"""INSERT INTO mrpeasy_item_raw (code, title, grp) VALUES ($code, $title, $grp)
+              ON CONFLICT (code) DO UPDATE SET title = EXCLUDED.title, grp = EXCLUDED.grp""".update.run
+    }
+  }
 
   private def str(c: io.circe.ACursor, k: String): Option[String] =
     c.downField(k).focus.flatMap(j => j.asString.orElse(j.asNumber.map(_.toString))).filter(_.nonEmpty)

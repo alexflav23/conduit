@@ -54,7 +54,8 @@ final class IgnitionService[F[_]: Async](xa: Transactor[F]) {
             mlVat   <- backfillMultiLineVat
             dispVat <- backfillDispatchVat
             tranches <- modelDeliveryTranches
-          } yield s"stamped=$stamped lots=$lots legacy_lots=$legacyLots serials_linked=$linked periods=$periods stock_items=$stock exposure_rows=$exp price_lost_lines_fixed=$repriced order_placed_events=$placed recognition_events=$emitted opening_inv_event=$invOpen warranty_windows=$warr replacements_linked=$repl $mdm $merged branches_linked=$branches $owners customer_installer_phone_links=$soldVia forecastable_accounts=$fcOwn document_series=$docSer line_vat_backfilled=$lineVat multiline_vat=$mlVat dispatch_vat=$dispVat delivery_tranches=$tranches"
+            prodNames <- backfillProductNames
+          } yield s"stamped=$stamped lots=$lots legacy_lots=$legacyLots serials_linked=$linked periods=$periods stock_items=$stock exposure_rows=$exp price_lost_lines_fixed=$repriced order_placed_events=$placed recognition_events=$emitted opening_inv_event=$invOpen warranty_windows=$warr replacements_linked=$repl $mdm $merged branches_linked=$branches $owners customer_installer_phone_links=$soldVia forecastable_accounts=$fcOwn document_series=$docSer line_vat_backfilled=$lineVat multiline_vat=$mlVat dispatch_vat=$dispVat delivery_tranches=$tranches product_names=$prodNames"
       }
       .transact(xa)
 
@@ -609,6 +610,26 @@ final class IgnitionService[F[_]: Async](xa: Transactor[F]) {
             RETURNING id, order_line_id, dispatch_id)
           UPDATE dispatch_line dl SET tranche_id = ins.id
           FROM ins WHERE dl.order_line_id = ins.order_line_id AND dl.dispatch_id = ins.dispatch_id AND dl.tranche_id IS NULL""".update.run
+
+  // Real product names (C5 / preview): variants were created from order/serial SKUs with no human name, so line
+  // items rendered the synthetic family "MRPeasy import". Map each variant's SKU to the MRPeasy catalogue title
+  // (mrpeasy_item_raw), tolerating the renamed-code forms the historical orders use: exact, DONOTUSE_-prefixed,
+  // and the -del<epoch> rename suffix. Unmatched variants keep their SKU as the label (the document falls back to
+  // sku, never "MRPeasy import"). Idempotent (only fills a null/blank name).
+  private def backfillProductNames: ConnectionIO[Int] =
+    sql"""UPDATE product_variant v SET name = m.title
+          FROM mrpeasy_item_raw m
+          WHERE (v.name IS NULL OR v.name = '')
+            AND lower(m.code) IN (
+              lower(v.sku),
+              'donotuse_' || lower(v.sku),
+              lower(regexp_replace(v.sku, '-del[0-9]+$$', '')),
+              'donotuse_' || lower(regexp_replace(v.sku, '-del[0-9]+$$', '')),
+              -- Home-3 historical SKUs are colour-tethered ("ubt-t2") + carry a -del rename; the catalogue uses the
+              -- plain colour ("ub-t2"). Collapse "<cc>t-t" -> "<cc>-t" after stripping -del. Additive (the exact
+              -- arms still match the families whose catalogue codes keep the 't'), so it never mis-matches.
+              regexp_replace(regexp_replace(lower(v.sku), '-del[0-9]+$$', ''), '([a-z]{2})t-t', '\1-t')
+            )""".update.run
 
   // Gapless document numbering (doc 17 §3 / C5): the FOP renderer needs an active number series per
   // (entity, document_type, jurisdiction) to allocate from. Seed the UK invoice + credit-note series for the
