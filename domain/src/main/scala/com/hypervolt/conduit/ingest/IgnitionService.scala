@@ -51,7 +51,8 @@ final class IgnitionService[F[_]: Async](xa: Transactor[F]) {
             fcOwn   <- seedForecastOwnership
             docSer  <- ensureDocumentSeries
             lineVat <- backfillLineVat
-          } yield s"stamped=$stamped lots=$lots legacy_lots=$legacyLots serials_linked=$linked periods=$periods stock_items=$stock exposure_rows=$exp price_lost_lines_fixed=$repriced order_placed_events=$placed recognition_events=$emitted opening_inv_event=$invOpen warranty_windows=$warr replacements_linked=$repl $mdm $merged branches_linked=$branches $owners customer_installer_phone_links=$soldVia forecastable_accounts=$fcOwn document_series=$docSer line_vat_backfilled=$lineVat"
+            mlVat   <- backfillMultiLineVat
+          } yield s"stamped=$stamped lots=$lots legacy_lots=$legacyLots serials_linked=$linked periods=$periods stock_items=$stock exposure_rows=$exp price_lost_lines_fixed=$repriced order_placed_events=$placed recognition_events=$emitted opening_inv_event=$invOpen warranty_windows=$warr replacements_linked=$repl $mdm $merged branches_linked=$branches $owners customer_installer_phone_links=$soldVia forecastable_accounts=$fcOwn document_series=$docSer line_vat_backfilled=$lineVat multiline_vat=$mlVat"
       }
       .transact(xa)
 
@@ -530,6 +531,33 @@ final class IgnitionService[F[_]: Async](xa: Transactor[F]) {
             WHERE oi.ninv = 1 AND (SELECT count(*) FROM order_line ol WHERE ol.order_id = oi.order_id) = 1)
           UPDATE order_line ol SET vat_amount = single.vat_total
           FROM single WHERE ol.order_id = single.order_id AND COALESCE(ol.vat_amount, 0) = 0""".update.run
+
+  // Multi-line VAT (C5 tail): allocate the invoice's vat_total across the lines by net weight using
+  // largest-remainder (the house conserving allocate, doc 14) so Σ line VAT == vat_total to the penny. Only the
+  // feasible set — one non-void invoice, multiple lines, Σ(line net) already == invoice ex-VAT — so conservation
+  // holds. Orders whose line nets don't sum to the invoice ex-VAT (partial-dispatch / subset invoices) are left;
+  // those need the document line-scoping fix, not a VAT backfill. Idempotent (only fills zero-VAT lines).
+  private def backfillMultiLineVat: ConnectionIO[Int] =
+    sql"""WITH mo AS (
+            SELECT o.id order_id, max(i.total_ex_vat) ex, max(i.vat_total) vat
+            FROM order_invoice i JOIN "order" o ON o.id = i.order_id WHERE i.status <> 'void' GROUP BY o.id
+            HAVING count(i.*) = 1 AND (SELECT count(*) FROM order_line ol WHERE ol.order_id = o.id) > 1),
+          ln AS (
+            SELECT ol.id line_id, ol.order_id,
+                   round((ol.unit_price_ex_vat * ol.qty * (1 - ol.discount_pct / 100))::numeric, 2) net
+            FROM order_line ol JOIN mo ON mo.order_id = ol.order_id WHERE COALESCE(ol.vat_amount, 0) = 0),
+          feasible AS (
+            SELECT ln.order_id FROM ln JOIN mo ON mo.order_id = ln.order_id
+            GROUP BY ln.order_id, mo.ex HAVING round(sum(ln.net), 2) = mo.ex AND mo.ex > 0),
+          base AS (
+            SELECT ln.line_id, ln.order_id, ln.net, round(mo.vat * 100)::bigint vat_minor,
+                   sum(ln.net) OVER (PARTITION BY ln.order_id) net_sum
+            FROM ln JOIN mo ON mo.order_id = ln.order_id JOIN feasible f ON f.order_id = ln.order_id),
+          shares AS (SELECT *, (vat_minor * net / net_sum) ideal, floor(vat_minor * net / net_sum)::bigint fl FROM base),
+          rema AS (SELECT *, vat_minor - sum(fl) OVER (PARTITION BY order_id) remainder,
+                          row_number() OVER (PARTITION BY order_id ORDER BY (ideal - floor(ideal)) DESC, line_id) rnk FROM shares),
+          final AS (SELECT line_id, (fl + CASE WHEN rnk <= remainder THEN 1 ELSE 0 END)::numeric / 100 vat_amt FROM rema)
+          UPDATE order_line ol SET vat_amount = final.vat_amt FROM final WHERE ol.id = final.line_id""".update.run
 
   // Gapless document numbering (doc 17 §3 / C5): the FOP renderer needs an active number series per
   // (entity, document_type, jurisdiction) to allocate from. Seed the UK invoice + credit-note series for the
