@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useApi } from './lib/query';
 import { ApiError } from './lib/client';
 import { PageHead, Card, Chip, LayerNote, EmptyRow, SkeletonRow, num } from './kit/kit';
@@ -34,14 +35,29 @@ function Stat({ label, value, sub }: { label: string; value: React.ReactNode; su
 }
 
 interface TrendRow { month: string; category: string; shipments: number; cogs: number }
+interface RmaRow { ticket_ref: string; type?: string | null; reason?: string | null; status?: string | null; opened_at?: string | null;
+  original_serial?: string | null; original_product?: string | null; replacement_serial?: string | null; replacement_product?: string | null;
+  warranty_end?: string | null; owner?: string | null; owner_id?: string | null }
+const RMA_PAGE = 50;
 
 export function Warranty(_props: any) {
+  const navigate = useNavigate();
   const stats = useApi<RmaStats>(['rma-stats'], '/api/v1/warranty/rma-stats');
   const free = useApi<FreeCat[]>(['free-ship-summary'], '/api/v1/free-shipments/summary');
   const trend = useApi<TrendRow[]>(['free-ship-trend'], '/api/v1/free-shipments/trend');
   const [input, setInput] = useState('');
   const [serial, setSerial] = useState('');
   const life = useApi<Lifecycle>(['serial-life', serial], `/api/v1/serials/${encodeURIComponent(serial)}/lifecycle`, { enabled: !!serial });
+  // Browse the RMA pipeline — every faulty → replacement, paginated + searchable; click one to trace its family below.
+  const [rmaQ, setRmaQ] = useState('');
+  const [rmaPage, setRmaPage] = useState(0);
+  const rmas = useApi<{ rows?: RmaRow[]; total?: number }>(
+    ['warranty-rmas', rmaQ, rmaPage],
+    `/api/v1/warranty/rmas?limit=${RMA_PAGE}&offset=${rmaPage * RMA_PAGE}${rmaQ.trim() ? `&q=${encodeURIComponent(rmaQ.trim())}` : ''}`,
+  );
+  const rmaRows = rmas.data?.rows ?? [];
+  const rmaTotal = rmas.data?.total ?? 0;
+  const openSerial = (sn?: string | null) => { if (sn) { setInput(sn); setSerial(sn); window.scrollTo({ top: 9999, behavior: 'smooth' }); } };
 
   const sErr = stats.error as ApiError | null;
   const forbidden = !!sErr?.forbidden;
@@ -72,6 +88,42 @@ export function Warranty(_props: any) {
               <Stat label="Faulty by gen" value={`${num(s.faulty_v2)} / ${num(s.faulty_v3)}`} sub="V2 / V3" />
             </>}
           </div>
+
+          {/* ---- RMA / unit-replacement browser (the hero) ---- */}
+          <Card title={`Unit replacements${rmaTotal ? ` (${num(rmaTotal)})` : ''}`} icon={I.shield}
+            aux={<span className="dim" style={{ fontSize: 11.5 }}>every RMA: faulty unit → replacement · click to trace the family</span>}
+            className="tablewrap" style={{ padding: 0, marginBottom: 16 }}>
+            <div className="loadbar" style={{ padding: '12px 15px 0', marginBottom: 0 }}>
+              <input className="cellinput" style={{ width: 300, textAlign: 'left' }} value={rmaQ} data-testid="rma-search"
+                onChange={(e) => { setRmaQ(e.target.value); setRmaPage(0); }} placeholder="Search ticket, serial or customer…" />
+            </div>
+            <table className="tbl">
+              <thead><tr><th>Ticket</th><th>Opened</th><th>Faulty unit</th><th>→ Replacement</th><th>Product</th><th>Customer</th><th>Reason</th></tr></thead>
+              <tbody>
+                {rmas.isLoading && <SkeletonRow cols={7} />}
+                {!rmas.isLoading && rmaRows.length === 0 && <EmptyRow cols={7}>No RMAs match.</EmptyRow>}
+                {rmaRows.map((r) => (
+                  <tr key={r.ticket_ref} data-testid="rma-row" style={{ cursor: r.replacement_serial ? 'pointer' : 'default' }}
+                    onClick={() => openSerial(r.replacement_serial || r.original_serial)}>
+                    <td className="mono" style={{ fontSize: 11.5 }}>{r.ticket_ref}</td>
+                    <td className="dim">{r.opened_at ? r.opened_at.slice(0, 10) : '—'}</td>
+                    <td className="mono" style={{ fontSize: 11 }}>{r.original_serial || <span className="dim">—</span>}</td>
+                    <td className="mono" style={{ fontSize: 11 }}>{r.replacement_serial ? <b>{r.replacement_serial} ↗</b> : <span className="dim">—</span>}</td>
+                    <td className="dim" style={{ fontSize: 11.5 }}>{r.replacement_product || r.original_product || '—'}</td>
+                    <td>{r.owner_id ? <span style={{ cursor: 'pointer', color: 'var(--accent-bright)' }} onClick={(e) => { e.stopPropagation(); navigate('/crm/account/' + r.owner_id); }}>{r.owner} ↗</span> : (r.owner || '—')}</td>
+                    <td className="dim" style={{ fontSize: 11.5, maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.reason || '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {rmaTotal > RMA_PAGE && (
+              <div className="row between" style={{ padding: '10px 15px' }}>
+                <button className="btn ghost sm" disabled={rmaPage === 0} onClick={() => setRmaPage((p) => Math.max(0, p - 1))}>← Prev</button>
+                <span className="dim" style={{ fontSize: 12 }}>{rmaPage * RMA_PAGE + 1}–{Math.min((rmaPage + 1) * RMA_PAGE, rmaTotal)} of {num(rmaTotal)}</span>
+                <button className="btn ghost sm" disabled={(rmaPage + 1) * RMA_PAGE >= rmaTotal} onClick={() => setRmaPage((p) => p + 1)}>Next →</button>
+              </div>
+            )}
+          </Card>
 
           {/* ---- free-shipment mix ---- */}
           <Card title="Free-shipment mix" icon={I.layers} aux={<span className="dim" style={{ fontSize: 12 }}>COGS-without-revenue, classified</span>}>
