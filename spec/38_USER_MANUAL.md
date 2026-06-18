@@ -137,25 +137,31 @@ So the chain is **code → (OpenAPI · screenshots · typed schema) → manual**
 
 ## 6. Build slices (test-first; tracked)
 
-- [ ] **M-Help.1 — shell + model + reference chapters.** `Help` screen + `ManualChapter` model + the index/search +
+> **STATUS 2026-06-18: the entire M-Help band is DONE.** All slices below shipped — shell + model + the
+> route↔chapter parity gate, all 39 chapters (6 primer + 33 screens), screenshots for every screen via
+> `yarn shots`, contextual `?` + `⌘K`, guided tours, role learning paths + completion + PDF export, and
+> the full OpenAPI loop (Tapir → committed `api/openapi.json` → Scalar `/api/v1/docs` → openapi-typescript
+> `schema.d.ts` → chapter↔API parity). Three drift gates green; tsc clean; api compiles.
+
+- [x] **M-Help.1 — shell + model + reference chapters.** `Help` screen + `ManualChapter` model + the index/search +
   the renderer + the **route↔chapter parity test**; author the 6 concept chapters + a first vertical (Commerce: order-desk,
   crm, pricing) to prove the pattern. **Accept:** every nav tab resolves (parity test green); search finds a chapter by
   concept; a chapter renders with its status badge.
-- [ ] **M-Help.2 — contextual help + palette.** A `?` on each screen → `/help/<chapter>`; `⌘K` resolves chapters.
+- [x] **M-Help.2 — contextual help + palette.** A `?` on each screen → `/help/<chapter>`; `⌘K` resolves chapters.
   **Accept:** the `?` on Order Desk opens the order-desk chapter; `⌘K "place order"` lands on the task.
-- [ ] **M-Help.3 — guided tours.** A tour runner highlighting real elements; 3 flagship tours (place an order; close a
+- [x] **M-Help.3 — guided tours.** A tour runner highlighting real elements; 3 flagship tours (place an order; close a
   period; triage a quarantined inbound row). **Accept:** a tour steps through the real UI; write-demoing tours touch only dev/shadow.
-- [ ] **M-Help.4 — curriculum + export.** Role learning paths + completion tracker + PDF export. **Accept:** a role path
+- [x] **M-Help.4 — curriculum + export.** Role learning paths + completion tracker + PDF export. **Accept:** a role path
   renders in order, tracks completion, and exports to PDF.
-- [ ] **M-Help.content — fill all ~30 screen chapters** (the bulk; one per screen, reviewed against the live UI).
+- [x] **M-Help.content — fill all ~30 screen chapters** (the bulk; one per screen, reviewed against the live UI).
 
 **Documentation toolchain (docs-as-code, §5b):**
-- [ ] **M-Help.shots — screenshot sync loop.** `screenshot` field + `e2e/manual-shots.spec.ts` capture into
+- [x] **M-Help.shots — screenshot sync loop.** `screenshot` field + `e2e/manual-shots.spec.ts` capture into
   `public/help-shots/` + `yarn shots` + render in the manual + the visual-diff freshness gate. *(M-Help.1+ this session.)*
-- [ ] **M-Help.api — OpenAPI emit + Scalar + drift gate.** Expose the route modules' `ServerEndpoint`s, emit
+- [x] **M-Help.api — OpenAPI emit + Scalar + drift gate.** Expose the route modules' `ServerEndpoint`s, emit
   committed `api/openapi.yaml`, serve `/docs` (Scalar), CI `git diff` gate. *(The bigger slice — a mechanical
   cross-module endpoint-exposure pass; do it as its own focused, compile-verified change.)*
-- [ ] **M-Help.client — generated TS types.** `openapi-typescript` → `src/api/schema.d.ts`, wired into `useApi`. (after M-Help.api)
-- [ ] **M-Help.apiparity — chapter↔API parity test** (`apiOps` ⊂ OpenAPI operationIds). (after M-Help.api)
+- [x] **M-Help.client — generated TS types.** `openapi-typescript` → `src/api/schema.d.ts`, wired into `useApi`. (after M-Help.api)
+- [x] **M-Help.apiparity — chapter↔API parity test** (`apiOps` ⊂ OpenAPI operationIds). (after M-Help.api)
 
 **Status:** M-Help.1 scaffolding in progress (this session). The rest tracked here + in [`36_SHADOW_MODE_PLAN`](./36_SHADOW_MODE_PLAN.md) is feature work, not shadow-track, so it runs in parallel.
