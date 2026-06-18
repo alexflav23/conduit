@@ -145,6 +145,11 @@ body {
 .card .ct .t { font-size: var(--fs-body); font-weight: 600; display: flex; align-items: center; gap: 9px; color: var(--text); letter-spacing: -0.01em; }
 .card .ct .t svg { width: 15px; height: 15px; color: var(--accent); opacity: 0.95; }
 .card .ct .aux { font-size: 11.5px; color: var(--faint); display: flex; align-items: center; gap: 8px; }
+/* Full-bleed table cards (className="tablewrap" + padding:0) let the table run edge-to-edge, but that also
+   stripped the header's padding — jamming the title into the top-left corner and clipping the aux on the right.
+   Re-pad the header (aligned to the table's 15px column inset) so it reads as a proper panel heading. */
+.card.tablewrap > .ct { padding: 16px 15px 0; margin-bottom: 12px; }
+.card.tablewrap > .ct .aux { padding-left: 12px; text-align: right; }
 
 .grid { display: grid; gap: 14px; }
 .divider { height: 1px; background: var(--border); margin: 18px 0; }
