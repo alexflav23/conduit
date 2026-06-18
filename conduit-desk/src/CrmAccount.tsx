@@ -17,7 +17,7 @@ const SRC_LABEL: Record<string, string> = {
 
 interface AcctSource { system: string; source_id?: string; name?: string; method?: string }
 interface AcctBranch { id: string; name: string; orders?: number }
-interface AcctOrder { order_no?: string; date?: string; total?: number | string }
+interface AcctOrder { id?: string; conduit_ref?: string; order_no?: string; date?: string; total?: number | string }
 interface AcctCharger { id: string; serial: string; sku?: string; status?: string; warranty_days_left?: number; replaces?: string | null; replaced_by?: string[] | null }
 interface AcctDetail {
   id: string; name: string; segment?: string | null; type?: string | null;
@@ -152,12 +152,19 @@ export function CrmAccount(_props: { token: string; role: any; ctx: any; toast: 
           )}
 
           {(d.orders ?? []).length > 0 && (
-            <Card title="Recent orders" icon={I.charger} className="tablewrap" style={{ padding: 0 }}>
+            <Card title="Recent orders" icon={I.charger} aux={<span className="dim" style={{ fontSize: 11.5 }}>click an order for its full topology</span>} className="tablewrap" style={{ padding: 0 }}>
               <table className="tbl">
-                <thead><tr><th>Order</th><th>Date</th><th className="num">Total inc VAT</th></tr></thead>
+                <thead><tr><th>Conduit order</th><th>MRP / source ref</th><th>Date</th><th className="num">Total inc VAT</th><th /></tr></thead>
                 <tbody>
                   {d.orders!.map((o, i) => (
-                    <tr key={(o.order_no ?? '') + i}><td className="mono">{o.order_no}</td><td className="dim">{o.date}</td><td className="num">{num(o.total as number)}</td></tr>
+                    <tr key={(o.id ?? o.order_no ?? '') + i} style={{ cursor: o.id ? 'pointer' : 'default' }}
+                      onClick={o.id ? () => navigate('/orders/' + o.id) : undefined} data-testid="order-row">
+                      <td><b>{o.conduit_ref ?? '—'}</b></td>
+                      <td className="mono" style={{ fontSize: 11.5 }}>{o.order_no}</td>
+                      <td className="dim">{o.date}</td>
+                      <td className="num">{num(o.total as number)}</td>
+                      <td className="dim" style={{ fontSize: 11, textAlign: 'right' }}>{o.id ? 'open ↗' : ''}</td>
+                    </tr>
                   ))}
                 </tbody>
               </table>

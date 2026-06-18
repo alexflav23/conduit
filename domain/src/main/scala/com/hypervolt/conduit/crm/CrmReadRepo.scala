@@ -283,7 +283,8 @@ object CrmReadRepo {
                           'orders', (SELECT count(*) FROM "order" o WHERE o.sold_to_party_id = b.id)) ORDER BY b.display_name), '[]'::jsonb)
                          FROM party b WHERE b.parent_party_id = p.id),
             'orders', (SELECT COALESCE(jsonb_agg(t.o ORDER BY t.d DESC), '[]'::jsonb) FROM (
-                         SELECT jsonb_build_object('order_no', o.order_no, 'date', o.created_at::date::text, 'total', o.total_inc_vat) AS o,
+                         SELECT jsonb_build_object('id', o.id::text, 'conduit_ref', o.conduit_ref, 'order_no', o.order_no,
+                                'date', o.created_at::date::text, 'total', o.total_inc_vat) AS o,
                                 o.created_at AS d
                          FROM "order" o WHERE o.sold_to_party_id = p.id ORDER BY o.created_at DESC LIMIT 25) t),
             'chargers', (SELECT COALESCE(jsonb_agg(jsonb_build_object(

@@ -39,6 +39,7 @@ import { Access } from './Access';
 import { Notifications } from './Notifications';
 import { AccountPage } from './AccountPage';
 import { CrmAccount } from './CrmAccount';
+import { OrderDetail } from './OrderDetail';
 import { useAuth } from 'react-oidc-context';
 import { SignIn, sessionEmail } from './SignIn';
 import { setOidcToken, devToken, setDevToken } from './lib/auth';
@@ -392,6 +393,7 @@ export function App() {
             <Route path="/" element={<Navigate to="/order" replace />} />
             <Route path="/account/:id" element={<AccountPage key={'account|' + token} token={token} role={role} ctx={ctx} toast={toast} />} />
             <Route path="/crm/account/:id" element={<CrmAccount key={'crm-account|' + token} token={token} role={role} ctx={ctx} toast={toast} />} />
+            <Route path="/orders/:id" element={<OrderDetail key={'order|' + token} token={token} role={role} ctx={ctx} toast={toast} />} />
             <Route path="/:tab" element={<TabView token={token} role={role} ctx={ctx} toast={toast} />} />
             <Route path="/:tab/:sub" element={<TabView token={token} role={role} ctx={ctx} toast={toast} />} />
           </Routes>
