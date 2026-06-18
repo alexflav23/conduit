@@ -105,12 +105,17 @@ object InventoryReadRepo {
             'activation', CASE WHEN s.activated_at IS NULL THEN NULL ELSE jsonb_build_object(
               'activated_at', s.activated_at, 'installer', s.installer_user_id) END,
             'timeline', (
-              SELECT jsonb_agg(e ORDER BY (e->>'at')) FROM (
-                SELECT jsonb_build_object('at', b.received_date::text, 'event', 'received', 'origin', sup.name) AS e WHERE b.received_date IS NOT NULL
+              -- Order by the logical lifecycle rank (received → dispatched → activated), not the raw date. The
+              -- opening-lot received_date is a synthetic migration date that can postdate a historical dispatch;
+              -- clamp it to the earliest real event so "received" is never shown after the unit shipped/activated.
+              SELECT jsonb_agg(e ORDER BY rnk) FROM (
+                SELECT jsonb_build_object('at',
+                         LEAST(b.received_date::timestamptz, COALESCE(d.delivered_at, d.date::timestamptz), s.activated_at)::date::text,
+                         'event', 'received', 'origin', sup.name) AS e, 0 AS rnk WHERE b.received_date IS NOT NULL
                 UNION ALL
-                SELECT jsonb_build_object('at', COALESCE(d.delivered_at, d.date::timestamptz)::text, 'event', 'dispatched', 'origin', party.display_name) WHERE d.id IS NOT NULL
+                SELECT jsonb_build_object('at', COALESCE(d.delivered_at, d.date::timestamptz)::text, 'event', 'dispatched', 'origin', party.display_name), 1 WHERE d.id IS NOT NULL
                 UNION ALL
-                SELECT jsonb_build_object('at', s.activated_at::text, 'event', 'activated', 'origin', 'field') WHERE s.activated_at IS NOT NULL
+                SELECT jsonb_build_object('at', s.activated_at::text, 'event', 'activated', 'origin', 'field'), 2 WHERE s.activated_at IS NOT NULL
               ) evs))
           FROM serial_unit s
           LEFT JOIN product_variant pv ON pv.id = s.product_variant_id
