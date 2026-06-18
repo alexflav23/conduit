@@ -87,14 +87,14 @@ export function Treasury(_props: { role?: { layers?: string[] } }) {
         </Card>
         {/* coverage */}
         <Card title="Exposure & coverage" icon={I.scale} aux="forecast USD payables vs hedged notional">
-          <div className="row g16" style={{ flexWrap: 'wrap' }}>
-            <div>
-              <div style={{ fontFamily: 'var(--font-disp)', fontSize: 22, fontWeight: 600 }}>${num(Math.round((cov?.exposure_usd ?? 0) / 1000))}k</div>
-              <div className="dim" style={{ fontSize: 'var(--fs-xs)' }}>forecast USD exposure</div>
+          <div className="row" style={{ gap: 36, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+            <div style={{ minWidth: 150 }}>
+              <div style={{ fontFamily: 'var(--font-disp)', fontSize: 24, fontWeight: 600, lineHeight: 1.1 }}>${num(Math.round((cov?.exposure_usd ?? 0) / 1000))}k</div>
+              <div className="dim" style={{ fontSize: 'var(--fs-xs)', marginTop: 5 }}>forecast USD exposure</div>
             </div>
-            <div>
-              <div style={{ fontFamily: 'var(--font-disp)', fontSize: 22, fontWeight: 600, color: V2G }}>{gbp0(cov?.hedged_notional_gbp)}</div>
-              <div className="dim" style={{ fontSize: 'var(--fs-xs)' }}>open hedged notional</div>
+            <div style={{ minWidth: 150 }}>
+              <div style={{ fontFamily: 'var(--font-disp)', fontSize: 24, fontWeight: 600, lineHeight: 1.1, color: V2G }}>{gbp0(cov?.hedged_notional_gbp)}</div>
+              <div className="dim" style={{ fontSize: 'var(--fs-xs)', marginTop: 5 }}>open hedged notional</div>
             </div>
           </div>
         </Card>
@@ -103,7 +103,7 @@ export function Treasury(_props: { role?: { layers?: string[] } }) {
       {/* contracts */}
       <Card title="Hedge contracts" icon={I.list} aux="forward contracts on the facility" style={{ padding: 0, marginBottom: 14 }} className="tablewrap">
         <table className="tbl">
-          <thead><tr><th>Contract</th><th>Supplier</th><th>Status</th><th className="num">Rate</th><th className="num">Notional</th><th className="num">Ratio</th><th>Window</th></tr></thead>
+          <thead><tr><th>Contract</th><th>Supplier</th><th>Status</th><th className="num">Rate</th><th className="num">Notional</th><th className="num">Ratio</th><th>Window from</th><th>Window to</th></tr></thead>
           <tbody>
             {contracts.map((c) => (
               <tr key={c.contractNo}>
@@ -113,7 +113,8 @@ export function Treasury(_props: { role?: { layers?: string[] } }) {
                 <td className="num mono">{c.contractedRate}</td>
                 <td className="num">{gbp0(c.notional)}</td>
                 <td className="num">{Math.round((c.hedgeRatio ?? 0) * 100)}%</td>
-                <td className="dim" style={{ fontSize: 'var(--fs-small)' }}>{c.validFrom} → {c.validTo}</td>
+                <td className="dim mono" style={{ fontSize: 'var(--fs-small)' }}>{c.validFrom}</td>
+                <td className="dim mono" style={{ fontSize: 'var(--fs-small)' }}>{c.validTo}</td>
               </tr>
             ))}
             {contracts.length === 0 && <tr><td colSpan={7}><span className="dim">No contracts.</span></td></tr>}

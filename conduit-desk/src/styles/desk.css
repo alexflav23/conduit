@@ -490,7 +490,7 @@ select.fld { -webkit-appearance: none; appearance: none; padding-right: 30px;
 .mono { font-family: var(--font-mono); }
 .row { display: flex; align-items: center; }
 .between { justify-content: space-between; }
-.g6 { gap: 6px; } .g8 { gap: 8px; } .g10 { gap: 10px; } .g12 { gap: 12px; }
+.g6 { gap: 6px; } .g8 { gap: 8px; } .g10 { gap: 10px; } .g12 { gap: 12px; } .g14 { gap: 14px; } .g16 { gap: 16px; } .g20 { gap: 20px; } .g24 { gap: 24px; }
 .wrap { flex-wrap: wrap; }
 :focus-visible { outline: none; }
 
