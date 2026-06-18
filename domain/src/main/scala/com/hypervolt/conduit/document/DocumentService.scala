@@ -36,7 +36,8 @@ private final case class InvHead(
     totalEx: BigDecimal,
     vat: BigDecimal,
     total: BigDecimal,
-    locale: String
+    locale: String,
+    dispatchId: Option[UUID]
 )
 private final case class InvLine(
     description: String,
@@ -130,7 +131,7 @@ final class DocumentService[F[_]: Async](
     (head(orderInvoiceId), Option.empty[Prepared].pure[ConnectionIO]).tupled.flatMap {
       case (None, _) => "unknown invoice".asLeft[Prepared].pure[ConnectionIO]
       case (Some(h), _) =>
-        (lines(h.orderId), template(h.jurisdiction, h.locale)).tupled.map {
+        (lines(h.orderId, h.dispatchId), template(h.jurisdiction, h.locale)).tupled.map {
           case (_, None) => "no active invoice template".asLeft[Prepared]
           case (ls, Some(t)) =>
             val conserved = ls
@@ -153,7 +154,7 @@ final class DocumentService[F[_]: Async](
   private def head(invId: UUID): ConnectionIO[Option[InvHead]] =
     sql"""SELECT o.id, o.entity_id, e.jurisdiction, o.bill_to_party_id, COALESCE(p.legal_name, p.display_name),
                  e.name, o.txn_currency, i.total_ex_vat, i.vat_total, i.total_inc_vat,
-                 COALESCE(bp.invoice_locale, 'en')
+                 COALESCE(bp.invoice_locale, 'en'), i.dispatch_id
           FROM order_invoice i
             JOIN "order" o ON o.id = i.order_id
             JOIN entity e ON e.id = o.entity_id
@@ -163,13 +164,29 @@ final class DocumentService[F[_]: Async](
       .query[InvHead]
       .option
 
-  private def lines(orderId: UUID): ConnectionIO[List[InvLine]] =
-    sql"""SELECT COALESCE(f.name, v.sku), v.sku, ol.qty, ol.unit_price_ex_vat, ol.discount_pct, ol.vat_amount
-          FROM order_line ol JOIN product_variant v ON v.id = ol.product_variant_id
-            LEFT JOIN product_family f ON f.id = v.family_id
-          WHERE ol.order_id = $orderId ORDER BY ol.id"""
-      .query[InvLine]
-      .to[List]
+  // An invoice bills what it shipped: when it is tied to a dispatch (a tranche/call-off of the order), the
+  // document lists only that dispatch's lines at the dispatched quantity, with VAT prorated to that quantity —
+  // not every line on the order (doc 17 §2 / M4 tranches). A whole-order invoice (no dispatch) lists all lines.
+  private def lines(orderId: UUID, dispatchId: Option[UUID]): ConnectionIO[List[InvLine]] =
+    dispatchId match {
+      case Some(d) =>
+        sql"""SELECT COALESCE(f.name, v.sku), v.sku, dl.qty, ol.unit_price_ex_vat, ol.discount_pct,
+                     CASE WHEN ol.qty > 0 THEN round(ol.vat_amount * dl.qty / ol.qty, 2) ELSE ol.vat_amount END
+              FROM dispatch_line dl
+                JOIN order_line ol ON ol.id = dl.order_line_id
+                JOIN product_variant v ON v.id = ol.product_variant_id
+                LEFT JOIN product_family f ON f.id = v.family_id
+              WHERE dl.dispatch_id = $d ORDER BY ol.id"""
+          .query[InvLine]
+          .to[List]
+      case None =>
+        sql"""SELECT COALESCE(f.name, v.sku), v.sku, ol.qty, ol.unit_price_ex_vat, ol.discount_pct, ol.vat_amount
+              FROM order_line ol JOIN product_variant v ON v.id = ol.product_variant_id
+                LEFT JOIN product_family f ON f.id = v.family_id
+              WHERE ol.order_id = $orderId ORDER BY ol.id"""
+          .query[InvLine]
+          .to[List]
+    }
 
   // Fallback resolution (doc 17 §2.3): exact (jurisdiction, locale) first, then jurisdiction-only, locale-only, global.
   private def template(jurisdiction: String, locale: String): ConnectionIO[Option[TemplateRow]] =
@@ -460,7 +477,7 @@ final class DocumentService[F[_]: Async](
     existing(id).transact(xa).flatMap {
       case Some(r) => r.asRight[String].pure[F]
       case None =>
-        (orderHead(orderId), lines(orderId), Option.empty[Unit].pure[ConnectionIO]).tupled.transact(xa).flatMap {
+        (orderHead(orderId), lines(orderId, None), Option.empty[Unit].pure[ConnectionIO]).tupled.transact(xa).flatMap {
           case (None, _, _) => "unknown order".asLeft[DocumentResult].pure[F]
           case (Some(h), ls, _) =>
             templateFor("proforma", h.jurisdiction, h.locale).transact(xa).flatMap {

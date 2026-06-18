@@ -52,7 +52,9 @@ final class IgnitionService[F[_]: Async](xa: Transactor[F]) {
             docSer  <- ensureDocumentSeries
             lineVat <- backfillLineVat
             mlVat   <- backfillMultiLineVat
-          } yield s"stamped=$stamped lots=$lots legacy_lots=$legacyLots serials_linked=$linked periods=$periods stock_items=$stock exposure_rows=$exp price_lost_lines_fixed=$repriced order_placed_events=$placed recognition_events=$emitted opening_inv_event=$invOpen warranty_windows=$warr replacements_linked=$repl $mdm $merged branches_linked=$branches $owners customer_installer_phone_links=$soldVia forecastable_accounts=$fcOwn document_series=$docSer line_vat_backfilled=$lineVat multiline_vat=$mlVat"
+            dispVat <- backfillDispatchVat
+            tranches <- modelDeliveryTranches
+          } yield s"stamped=$stamped lots=$lots legacy_lots=$legacyLots serials_linked=$linked periods=$periods stock_items=$stock exposure_rows=$exp price_lost_lines_fixed=$repriced order_placed_events=$placed recognition_events=$emitted opening_inv_event=$invOpen warranty_windows=$warr replacements_linked=$repl $mdm $merged branches_linked=$branches $owners customer_installer_phone_links=$soldVia forecastable_accounts=$fcOwn document_series=$docSer line_vat_backfilled=$lineVat multiline_vat=$mlVat dispatch_vat=$dispVat delivery_tranches=$tranches"
       }
       .transact(xa)
 
@@ -558,6 +560,57 @@ final class IgnitionService[F[_]: Async](xa: Transactor[F]) {
                           row_number() OVER (PARTITION BY order_id ORDER BY (ideal - floor(ideal)) DESC, line_id) rnk FROM shares),
           final AS (SELECT line_id, (fl + CASE WHEN rnk <= remainder THEN 1 ELSE 0 END)::numeric / 100 vat_amt FROM rema)
           UPDATE order_line ol SET vat_amount = final.vat_amt FROM final WHERE ol.id = final.line_id""".update.run
+
+  // Partial-fulfilment invoices (C5 tail / M4 tranches): some orders shipped in parts — each invoice carries a
+  // dispatch_id and bills only that dispatch's lines, so Σ(all order lines) != the invoice. Allocate the invoice's
+  // vat_total across its DISPATCHED lines (largest-remainder by dispatched net), grossed up to the full line
+  // (× ol.qty/dl.qty) so the document's per-dispatch proration recovers it; whole-line dispatches (the vast
+  // majority) are exact. Only the partial set (single dispatch invoice, Σ all lines != ex). Idempotent.
+  private def backfillDispatchVat: ConnectionIO[Int] =
+    sql"""WITH inv AS (
+            SELECT i.id inv_id, i.order_id, i.dispatch_id, i.vat_total vat
+            FROM order_invoice i
+            WHERE i.status <> 'void' AND i.dispatch_id IS NOT NULL
+              AND (SELECT count(*) FROM order_invoice i2 WHERE i2.order_id = i.order_id AND i2.status <> 'void') = 1
+              AND (SELECT round(sum(round((ol.unit_price_ex_vat * ol.qty * (1 - ol.discount_pct / 100))::numeric, 2)), 2)
+                   FROM order_line ol WHERE ol.order_id = i.order_id) <> i.total_ex_vat),
+          dl AS (
+            SELECT inv.inv_id, inv.vat, dl.order_line_id, dl.id dlid, dl.qty dqty, ol.qty oqty,
+                   round((ol.unit_price_ex_vat * dl.qty * (1 - ol.discount_pct / 100))::numeric, 2) dnet
+            FROM inv JOIN dispatch_line dl ON dl.dispatch_id = inv.dispatch_id
+                     JOIN order_line ol ON ol.id = dl.order_line_id WHERE COALESCE(ol.vat_amount, 0) = 0),
+          base AS (SELECT *, round(vat * 100)::bigint vat_minor, sum(dnet) OVER (PARTITION BY inv_id) net_sum FROM dl),
+          shares AS (SELECT *, CASE WHEN net_sum > 0 THEN (vat_minor * dnet / net_sum) ELSE 0 END ideal,
+                            CASE WHEN net_sum > 0 THEN floor(vat_minor * dnet / net_sum)::bigint ELSE 0 END fl FROM base),
+          rema AS (SELECT *, vat_minor - sum(fl) OVER (PARTITION BY inv_id) rem,
+                          row_number() OVER (PARTITION BY inv_id ORDER BY (ideal - floor(ideal)) DESC, dlid) rnk FROM shares),
+          final AS (SELECT order_line_id, oqty, dqty, (fl + CASE WHEN rnk <= rem THEN 1 ELSE 0 END)::numeric / 100 alloc FROM rema)
+          UPDATE order_line ol SET vat_amount = CASE WHEN final.dqty > 0 THEN round(final.alloc * final.oqty / final.dqty, 2) ELSE final.alloc END
+          FROM final WHERE ol.id = final.order_line_id""".update.run
+
+  // Model the tranches (M4 / doc 11): an order shipped across >1 dispatch, or a single dispatch covering only some
+  // lines, is a call-off — record a delivery_tranche per (order line, dispatch) and stamp dispatch_line.tranche_id,
+  // so the partial-fulfilment structure the import flattened is explicit. Scoped to genuinely-tranched orders
+  // (a dispatched line whose order has >1 dispatch, or whose dispatch omits some of the order's lines). Idempotent
+  // (only creates a tranche for a dispatch_line that has none).
+  private def modelDeliveryTranches: ConnectionIO[Int] =
+    sql"""WITH tranched_orders AS (
+            SELECT DISTINCT d.order_id FROM dispatch d
+            WHERE (SELECT count(*) FROM dispatch d2 WHERE d2.order_id = d.order_id) > 1
+               OR (SELECT count(*) FROM dispatch_line dl JOIN dispatch dd ON dd.id = dl.dispatch_id WHERE dd.order_id = d.order_id)
+                  < (SELECT count(*) FROM order_line ol WHERE ol.order_id = d.order_id)),
+          dls AS (
+            SELECT dl.id dlid, dl.order_line_id, dl.dispatch_id, dl.qty, d.date::date req_date,
+                   row_number() OVER (PARTITION BY dl.order_line_id ORDER BY d.date, dl.id) seq
+            FROM dispatch_line dl JOIN dispatch d ON d.id = dl.dispatch_id
+            JOIN tranched_orders t ON t.order_id = d.order_id
+            WHERE dl.tranche_id IS NULL),
+          ins AS (
+            INSERT INTO delivery_tranche (order_line_id, seq, qty, qty_allocated, qty_dispatched, status, dispatch_id, requested_date)
+            SELECT order_line_id, seq, qty, qty, qty, 'dispatched', dispatch_id, req_date FROM dls
+            RETURNING id, order_line_id, dispatch_id)
+          UPDATE dispatch_line dl SET tranche_id = ins.id
+          FROM ins WHERE dl.order_line_id = ins.order_line_id AND dl.dispatch_id = ins.dispatch_id AND dl.tranche_id IS NULL""".update.run
 
   // Gapless document numbering (doc 17 §3 / C5): the FOP renderer needs an active number series per
   // (entity, document_type, jurisdiction) to allocate from. Seed the UK invoice + credit-note series for the
