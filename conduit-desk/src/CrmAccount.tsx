@@ -5,17 +5,17 @@ import { ApiError } from './lib/client';
 import { PageHead, Card, Chip, num } from './kit/kit';
 import { I } from './kit/icons';
 
-// The bespoke per-account page (/crm/account/:id) — the master customer record as a full route, not a side panel.
-// For an installer/wholesaler the hero is its CUSTOMERS (the end-customers it sold to: phone-bridged charger
-// owners + end-customer contacts); for any account it also shows source lineage, branches, chargers and orders.
-// Backed by GET /crm/accounts/{id} (detail) + GET /crm/accounts/{id}/customers (paginated).
+// The master customer record as a full route (/crm/account/:id) — one unified view, no side panels.
+// • An ORG (installer/wholesaler) shows its CUSTOMERS (each a real individual → links to their own page),
+//   its source lineage, branches and order book.
+// • An INDIVIDUAL is the singular customer view: who they are (HubSpot + MRPeasy + placement identities unified),
+//   the installer that sold to them, and their charger(s) + warranty/lifecycle.
 
 const SRC_LABEL: Record<string, string> = {
-  mrpeasy: 'MRPeasy', hubspot_company: 'HubSpot', hubspot_contact: 'HubSpot contact', placement_owner: 'Owner',
+  mrpeasy: 'MRPeasy', hubspot_company: 'HubSpot', hubspot_contact: 'HubSpot', placement_owner: 'Charger registry',
 };
 
-interface AcctSource { system: string; source_id?: string; name?: string; method?: string; confidence?: number }
-interface AcctContact { name?: string; email?: string; phone?: string; role?: string; entity_type?: string }
+interface AcctSource { system: string; source_id?: string; name?: string; method?: string }
 interface AcctBranch { id: string; name: string; orders?: number }
 interface AcctOrder { order_no?: string; date?: string; total?: number | string }
 interface AcctCharger { id: string; serial: string; sku?: string; status?: string; warranty_days_left?: number; replaces?: string | null; replaced_by?: string[] | null }
@@ -23,9 +23,9 @@ interface AcctDetail {
   id: string; name: string; segment?: string | null; type?: string | null;
   parent?: { id: string; name: string } | null;
   sold_via?: { id: string; name: string; match: string } | null;
-  sources?: AcctSource[]; contacts?: AcctContact[]; branches?: AcctBranch[]; orders?: AcctOrder[]; chargers?: AcctCharger[];
+  sources?: AcctSource[]; branches?: AcctBranch[]; orders?: AcctOrder[]; chargers?: AcctCharger[];
 }
-interface Customer { kind: 'owner' | 'contact'; id?: string | null; first_name?: string | null; last_name?: string | null; email?: string | null; phone?: string | null; chargers?: number }
+interface Customer { id: string; first_name?: string | null; last_name?: string | null; email?: string | null; phone?: string | null; chargers?: number }
 
 const PAGE = 50;
 
@@ -35,91 +35,91 @@ export function CrmAccount(_props: { token: string; role: any; ctx: any; toast: 
   const [page, setPage] = useState(0);
 
   const detail = useApi<AcctDetail>(['crm-account', id ?? ''], `/api/v1/crm/accounts/${encodeURIComponent(id ?? '')}`, { enabled: !!id });
+  const d = detail.data;
+  const err = detail.error as ApiError | null;
+  const isOrg = !!d?.type && d.type !== 'individual';
+
   const customers = useApi<{ rows?: Customer[]; total?: number }>(
     ['crm-account-customers', id ?? '', page],
     `/api/v1/crm/accounts/${encodeURIComponent(id ?? '')}/customers?limit=${PAGE}&offset=${page * PAGE}`,
-    { enabled: !!id },
+    { enabled: !!id && isOrg },
   );
-  const d = detail.data;
-  const err = detail.error as ApiError | null;
   const custRows = customers.data?.rows ?? [];
   const custTotal = customers.data?.total ?? 0;
-  const isOrg = d?.type && d.type !== 'individual';
-
   const fullName = (c: Customer) => [c.first_name, c.last_name].filter(Boolean).join(' ') || c.email || '—';
+
+  const open = (pid: string) => navigate('/crm/account/' + pid);
 
   return (
     <>
       <PageHead
         crumb={<span style={{ cursor: 'pointer' }} onClick={() => navigate('/crm')}>← CRM · Accounts</span>}
         title={d?.name ?? (id ?? '').slice(0, 8)}
-        sub="The master customer record — its end-customers, source lineage, branches, chargers and order book."
-        right={d && <div className="row g6">{d.segment && <Chip s="neutral">{d.segment}</Chip>}{d.type && <Chip s="neutral">{d.type}</Chip>}</div>}
+        sub={isOrg ? 'Master account — its customers, source lineage, branches and order book.' : 'Customer — unified identity, installer, and charger lifecycle.'}
+        right={d && (
+          <div className="row g6">
+            {d.segment && <Chip s="neutral">{d.segment}</Chip>}
+            <Chip s={isOrg ? 'neutral' : 'accent'}>{isOrg ? d.type : 'customer'}</Chip>
+          </div>
+        )}
       />
 
-      {detail.isLoading && <Card title="Loading…" icon={I.user}><div className="dim" style={{ padding: 16 }}>Loading account…</div></Card>}
+      {detail.isLoading && <Card title="Loading…" icon={I.user}><div className="dim" style={{ padding: 16 }}>Loading…</div></Card>}
       {err && <Card title="Account" icon={I.user}><div className="banner danger" style={{ margin: 8 }}>Couldn't load this account (HTTP {err.status}).</div></Card>}
 
       {d && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           {(d.parent || d.sold_via) && (
             <div className="row g8" style={{ flexWrap: 'wrap' }}>
-              {d.parent && <Chip s="warn">branch of {d.parent.name}</Chip>}
-              {d.sold_via && (
-                <span title={`Associated by ${d.sold_via.match} match`} style={{ cursor: 'pointer' }} onClick={() => navigate('/crm/account/' + d.sold_via!.id)}>
-                  <Chip s="accent">installer: {d.sold_via.name}</Chip>
-                </span>
-              )}
+              {d.parent && <span style={{ cursor: 'pointer' }} onClick={() => open(d.parent!.id)}><Chip s="warn">branch of {d.parent.name} ↗</Chip></span>}
+              {d.sold_via && <span title={`Linked by ${d.sold_via.match} match`} style={{ cursor: 'pointer' }} onClick={() => open(d.sold_via!.id)}><Chip s="accent">installer: {d.sold_via.name} ↗</Chip></span>}
             </div>
           )}
 
-          {/* HERO: the installer's customers */}
-          <Card title={`Customers${custTotal ? ` (${num(custTotal)})` : ''}`} icon={I.user}
-            aux={<span className="dim" style={{ fontSize: 11.5 }}>end-customers this account sold to — phone-matched owners + end-customer contacts</span>}
-            className="tablewrap" style={{ padding: 0 }}>
-            {customers.isLoading && <div className="dim" style={{ padding: 14, fontSize: 12 }}>Loading customers…</div>}
-            {!customers.isLoading && custRows.length === 0 && (
-              <div className="dim" style={{ padding: 14, fontSize: 12.5 }}>No end-customers associated with this account yet.</div>
-            )}
-            {custRows.length > 0 && (
-              <table className="tbl">
-                <thead><tr><th>First name</th><th>Last name</th><th>Email</th><th>Phone</th><th className="num">Chargers</th><th>Link</th></tr></thead>
-                <tbody>
-                  {custRows.map((c, i) => (
-                    <tr key={(c.id ?? '') + i}
-                      style={{ cursor: c.kind === 'owner' && c.id ? 'pointer' : 'default' }}
-                      onClick={c.kind === 'owner' && c.id ? () => navigate('/crm/account/' + c.id) : undefined}>
-                      <td>{c.first_name || (c.last_name ? '' : fullName(c))}{c.kind === 'owner' && <Chip s="accent">owner</Chip>}</td>
-                      <td>{c.last_name || ''}</td>
-                      <td className="mono" style={{ fontSize: 11.5 }}>{c.email || ''}</td>
-                      <td className="mono" style={{ fontSize: 11.5 }}>{c.phone || ''}</td>
-                      <td className="num">{c.kind === 'owner' ? num(c.chargers ?? 0) : ''}</td>
-                      <td>{c.kind === 'owner' && c.id && <span className="dim" style={{ fontSize: 11 }}>open ↗</span>}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-            {custTotal > PAGE && (
-              <div className="row between" style={{ padding: '8px 12px' }}>
-                <button className="btn ghost sm" disabled={page === 0} onClick={() => setPage((p) => Math.max(0, p - 1))}>← Prev</button>
-                <span className="dim" style={{ fontSize: 12 }}>{page * PAGE + 1}–{Math.min((page + 1) * PAGE, custTotal)} of {num(custTotal)}</span>
-                <button className="btn ghost sm" disabled={(page + 1) * PAGE >= custTotal} onClick={() => setPage((p) => p + 1)}>Next →</button>
-              </div>
-            )}
-          </Card>
+          {/* ORG: the hero is its customers (each → their own individual page) */}
+          {isOrg && (
+            <Card title={`Customers${custTotal ? ` (${num(custTotal)})` : ''}`} icon={I.user}
+              aux={<span className="dim" style={{ fontSize: 11.5 }}>end-customers who got a charger through this account — click any to open them</span>}
+              className="tablewrap" style={{ padding: 0 }}>
+              {customers.isLoading && <div className="dim" style={{ padding: 14, fontSize: 12 }}>Loading customers…</div>}
+              {!customers.isLoading && custRows.length === 0 && <div className="dim" style={{ padding: 14, fontSize: 12.5 }}>No end-customers linked to this account yet.</div>}
+              {custRows.length > 0 && (
+                <table className="tbl">
+                  <thead><tr><th>Customer</th><th>Email</th><th>Phone</th><th className="num">Chargers</th><th /></tr></thead>
+                  <tbody>
+                    {custRows.map((c) => (
+                      <tr key={c.id} style={{ cursor: 'pointer' }} onClick={() => open(c.id)} data-testid="customer-row">
+                        <td><b>{fullName(c)}</b></td>
+                        <td className="mono" style={{ fontSize: 11.5 }}>{c.email || ''}</td>
+                        <td className="mono" style={{ fontSize: 11.5 }}>{c.phone || ''}</td>
+                        <td className="num">{(c.chargers ?? 0) > 0 ? <Chip s="accent">{num(c.chargers ?? 0)}</Chip> : <span className="dim">—</span>}</td>
+                        <td className="dim" style={{ fontSize: 11, textAlign: 'right' }}>open ↗</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+              {custTotal > PAGE && (
+                <div className="row between" style={{ padding: '8px 12px' }}>
+                  <button className="btn ghost sm" disabled={page === 0} onClick={() => setPage((p) => Math.max(0, p - 1))}>← Prev</button>
+                  <span className="dim" style={{ fontSize: 12 }}>{page * PAGE + 1}–{Math.min((page + 1) * PAGE, custTotal)} of {num(custTotal)}</span>
+                  <button className="btn ghost sm" disabled={(page + 1) * PAGE >= custTotal} onClick={() => setPage((p) => p + 1)}>Next →</button>
+                </div>
+              )}
+            </Card>
+          )}
 
-          {/* Owner chargers (for an individual account) */}
+          {/* Chargers + lifecycle (the heart of the individual customer view; also shown for orgs that own units) */}
           {(d.chargers ?? []).length > 0 && (
-            <Card title={`Chargers (${d.chargers!.length})`} icon={I.charger} className="tablewrap" style={{ padding: 0 }}>
+            <Card title={`Charger${d.chargers!.length > 1 ? 's' : ''} (${d.chargers!.length})`} icon={I.charger} className="tablewrap" style={{ padding: 0 }}>
               <table className="tbl">
-                <thead><tr><th>Serial</th><th>SKU</th><th>Status</th><th className="num">Warranty left</th><th>Replaces / replaced by</th></tr></thead>
+                <thead><tr><th>Serial</th><th>Product</th><th>Status</th><th className="num">Warranty left</th><th>Replacement</th></tr></thead>
                 <tbody>
                   {d.chargers!.map((ch) => (
-                    <tr key={ch.id} style={{ cursor: 'pointer' }} onClick={() => navigate('/batch?serial=' + encodeURIComponent(ch.serial))}>
-                      <td className="mono">{ch.serial}</td><td className="mono" style={{ fontSize: 11.5 }}>{ch.sku}</td>
+                    <tr key={ch.id} style={{ cursor: 'pointer' }} onClick={() => navigate('/batch?serial=' + encodeURIComponent(ch.serial))} title="open in Batch & genealogy">
+                      <td className="mono">{ch.serial} ↗</td><td className="mono" style={{ fontSize: 11.5 }}>{ch.sku}</td>
                       <td>{ch.status}</td><td className="num">{ch.warranty_days_left != null ? num(ch.warranty_days_left) + 'd' : '—'}</td>
-                      <td className="dim" style={{ fontSize: 11.5 }}>{ch.replaces ? `↩ ${ch.replaces}` : ''}{ch.replaced_by?.length ? ` → ${ch.replaced_by.join(', ')}` : ''}</td>
+                      <td className="dim" style={{ fontSize: 11.5 }}>{ch.replaces ? `↩ replaced ${ch.replaces}` : ''}{ch.replaced_by?.length ? `→ ${ch.replaced_by.join(', ')}` : ''}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -127,32 +127,25 @@ export function CrmAccount(_props: { token: string; role: any; ctx: any; toast: 
             </Card>
           )}
 
-          <div className="grid" style={{ gridTemplateColumns: isOrg ? '1fr 1fr' : '1fr', gap: 16 }}>
-            <Card title="Source systems (lineage)" icon={I.list}>
-              {(d.sources ?? []).length === 0 && <div className="dim" style={{ fontSize: 12 }}>No source links.</div>}
+          {/* Source lineage — the unified identities behind this one record (NOT separate panels) */}
+          <Card title="Identity & lineage" icon={I.list}
+            aux={<span className="dim" style={{ fontSize: 11.5 }}>every system this record was assembled from</span>}>
+            {(d.sources ?? []).length === 0 && <div className="dim" style={{ fontSize: 12 }}>No source links.</div>}
+            <div className="row g8" style={{ flexWrap: 'wrap' }}>
               {(d.sources ?? []).map((s, i) => (
-                <div key={i} className="row between" style={{ fontSize: 12.5, padding: '3px 0' }}>
-                  <span><Chip s={s.system === 'mrpeasy' ? 'approved' : 'accent'}>{SRC_LABEL[s.system] || s.system}</Chip> <span className="mono">{s.name || s.source_id}</span></span>
-                  <span className="dim">{s.method}</span>
-                </div>
+                <span key={i} className="row g6" style={{ fontSize: 12, padding: '3px 8px', background: 'var(--bg-2)', borderRadius: 8 }}>
+                  <Chip s={s.system === 'mrpeasy' ? 'approved' : 'accent'}>{SRC_LABEL[s.system] || s.system}</Chip>
+                  <span className="mono" style={{ fontSize: 11 }}>{s.name || s.source_id}</span>
+                </span>
               ))}
-            </Card>
-            <Card title={`Contacts (${(d.contacts ?? []).length})`} icon={I.user}>
-              {(d.contacts ?? []).length === 0 && <div className="dim" style={{ fontSize: 12 }}>No contacts.</div>}
-              {(d.contacts ?? []).slice(0, 40).map((c, i) => (
-                <div key={i} className="row between" style={{ fontSize: 12.5, padding: '2px 0' }}>
-                  <span>{c.name || <span className="dim">—</span>}{c.entity_type === 'end_customer' ? <Chip s="accent">end customer</Chip> : c.role && <span className="dim"> · {c.role}</span>}</span>
-                  <span className="dim mono" style={{ fontSize: 11 }}>{c.email || ''}</span>
-                </div>
-              ))}
-            </Card>
-          </div>
+            </div>
+          </Card>
 
-          {(d.branches ?? []).length > 0 && (
+          {isOrg && (d.branches ?? []).length > 0 && (
             <Card title={`Branches (${d.branches!.length})`} icon={I.list}>
               {d.branches!.map((b) => (
-                <div key={b.id} className="row between" style={{ fontSize: 12.5, padding: '2px 0', cursor: 'pointer' }} onClick={() => navigate('/crm/account/' + b.id)}>
-                  <span>{b.name}</span><span className="dim">{num(b.orders ?? 0)} orders</span>
+                <div key={b.id} className="row between" style={{ fontSize: 12.5, padding: '3px 0', cursor: 'pointer' }} onClick={() => open(b.id)}>
+                  <span>{b.name} <span className="dim">↗</span></span><span className="dim">{num(b.orders ?? 0)} orders</span>
                 </div>
               ))}
             </Card>

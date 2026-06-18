@@ -286,33 +286,30 @@ object CrmReadRepo {
                          WHERE s.owner_party_id = p.id))
           FROM party p WHERE p.id = $id""".query[Json].option
 
-  // The end-customers of an installer/wholesaler account (the bespoke installer→customers view). Two real
-  // populations, unioned: (1) materialised charger owners phone-bridged to this account (external_refs.sold_via),
-  // each with their serial count and own /account page; (2) end-customer CONTACTS held under the account (a
-  // HubSpot contact whose email is a known owner). Ordered owners-first, then by charger count / name. Paginated.
-  private def customersWhere(id: UUID): doobie.Fragment =
-    fr"""FROM (
-           SELECT 'owner' AS kind, p.id::text AS id,
-                  (SELECT c.first_name FROM contact c WHERE c.party_id = p.id ORDER BY c.is_primary DESC LIMIT 1) AS first_name,
-                  (SELECT c.last_name FROM contact c WHERE c.party_id = p.id ORDER BY c.is_primary DESC LIMIT 1) AS last_name,
-                  COALESCE(p.external_refs->>'owner_email', (SELECT c.email::text FROM contact c WHERE c.party_id = p.id AND c.email IS NOT NULL LIMIT 1)) AS email,
-                  (SELECT c.phone FROM contact c WHERE c.party_id = p.id AND c.phone IS NOT NULL LIMIT 1) AS phone,
-                  (SELECT count(*) FROM serial_unit s WHERE s.owner_party_id = p.id) AS chargers
-           FROM party p WHERE p.external_refs->>'sold_via_party_id' = ${id.toString} AND p.status <> 'merged'
-           UNION ALL
-           SELECT 'contact' AS kind, NULL, c.first_name, c.last_name, c.email::text, c.phone, 0
-           FROM contact c
-           WHERE c.party_id = $id
-             AND EXISTS (SELECT 1 FROM party op WHERE op.party_type = 'individual'
-                         AND lower(op.external_refs->>'owner_email') = lower(c.email::text))
-         ) cust"""
+  // The end-customers of an installer/wholesaler account — every one a real INDIVIDUAL party (a contact entity
+  // with chargers), so every row links to that individual's own customer page. The individuals are gathered two
+  // ways and de-duplicated to one party: (1) charger owners phone-bridged to this account (external_refs.sold_via);
+  // (2) the owner party behind an end-customer contact held under this account (matched by email). One person,
+  // one row, one link — never a contact without a page. Paginated.
+  private def customerIds(id: UUID): doobie.Fragment =
+    fr"""FROM party cp WHERE cp.id IN (
+           SELECT p.id FROM party p WHERE p.external_refs->>'sold_via_party_id' = ${id.toString} AND p.status <> 'merged'
+           UNION
+           SELECT op.id FROM contact c
+             JOIN party op ON op.party_type = 'individual' AND op.status <> 'merged'
+               AND lower(op.external_refs->>'owner_email') = lower(c.email::text)
+           WHERE c.party_id = $id)"""
 
   def accountCustomers(id: UUID, limit: Int, offset: Int): doobie.ConnectionIO[List[Json]] =
-    (fr"""SELECT jsonb_build_object('kind', kind, 'id', id, 'first_name', first_name, 'last_name', last_name,
-            'email', email, 'phone', phone, 'chargers', chargers) """ ++ customersWhere(id) ++
-      fr" ORDER BY (kind = 'owner') DESC, chargers DESC, last_name NULLS LAST LIMIT $limit OFFSET $offset")
+    (fr"""SELECT jsonb_build_object('id', cp.id::text,
+            'first_name', (SELECT c.first_name FROM contact c WHERE c.party_id = cp.id AND c.first_name IS NOT NULL ORDER BY c.is_primary DESC LIMIT 1),
+            'last_name', (SELECT c.last_name FROM contact c WHERE c.party_id = cp.id AND c.last_name IS NOT NULL ORDER BY c.is_primary DESC LIMIT 1),
+            'email', COALESCE(cp.external_refs->>'owner_email', (SELECT c.email::text FROM contact c WHERE c.party_id = cp.id AND c.email IS NOT NULL LIMIT 1)),
+            'phone', (SELECT c.phone FROM contact c WHERE c.party_id = cp.id AND c.phone IS NOT NULL LIMIT 1),
+            'chargers', (SELECT count(*) FROM serial_unit s WHERE s.owner_party_id = cp.id)) """ ++ customerIds(id) ++
+      fr""" ORDER BY (SELECT count(*) FROM serial_unit s WHERE s.owner_party_id = cp.id) DESC, cp.display_name LIMIT $limit OFFSET $offset""")
       .query[Json].to[List]
 
   def countAccountCustomers(id: UUID): doobie.ConnectionIO[Long] =
-    (fr"SELECT count(*) " ++ customersWhere(id)).query[Long].unique
+    (fr"SELECT count(*) " ++ customerIds(id)).query[Long].unique
 }
