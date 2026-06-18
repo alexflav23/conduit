@@ -17,8 +17,14 @@ import com.hypervolt.conduit.document.S3DocumentStorage
 import com.hypervolt.conduit.event.OutboxRelay
 import com.hypervolt.conduit.event.PulsarEventPublisher
 import com.hypervolt.conduit.event.PulsarInboundPublisher
+import com.hypervolt.conduit.ingest.HttpHubSpotApi
+import com.hypervolt.conduit.ingest.HubSpotConnector
 import com.hypervolt.conduit.ingest.InboundRelay
+import com.hypervolt.conduit.ingest.IngestRunner
+import com.hypervolt.conduit.ingest.IngestScheduler
+import com.hypervolt.conduit.ingest.IngestSink
 import com.hypervolt.conduit.ingest.SnapshotLoader
+import com.hypervolt.conduit.ingest.SyncStateRepo
 import com.hypervolt.conduit.ledger.TigerBeetleClient
 import com.hypervolt.conduit.ledger.TigerBeetleLedger
 import com.hypervolt.conduit.logging.OtelAppender
@@ -182,9 +188,30 @@ object Main extends IOApp.Simple {
               val inboundRelayLoop: IO[Unit]                      = (inboundRelay.runOnce() *> IO.sleep(1.second)).foreverM
               val inboundConsumer                                 = new InboundMappingConsumer[IO](pulsar, xa, new SnapshotLoader[IO](xa))
               implicit val log: org.typelevel.log4cats.Logger[IO] = logger
+              // S2 live connectors: drive the (already-built) connectors into the durable inbox on a cadence.
+              // HubSpot lights up only when a token is configured (else dormant — the house seam pattern).
+              val ingestScheduler =
+                new IngestScheduler[IO](new IngestRunner[IO](new SyncStateRepo[IO](xa)), new IngestSink[IO](xa))
+              val hubspotIngest: List[IO[Unit]] =
+                if (cfg.hubspot.enabled)
+                  List(
+                    Supervised(
+                      "ingest-hubspot",
+                      ingestScheduler.loop(
+                        new HubSpotConnector[IO](new HttpHubSpotApi[IO](http, cfg.hubspot.token, cfg.hubspot.baseUrl)),
+                        List("companies", "contacts"),
+                        15.minutes
+                      )
+                    )
+                  )
+                else Nil
               logger.info(
-                "Consumer running: outbox relay + inbound inbox (relay+mapping) + Xero invoice + revenue recognition + Stripe settlement + document generation + VAT remittance + PII tombstone"
+                if (cfg.hubspot.enabled) "S2: HubSpot live ingest ON (companies, contacts → inbox every 15m)"
+                else "S2: HubSpot live ingest DORMANT (no HUBSPOT_TOKEN — set it to light up)"
               ) *>
+                logger.info(
+                  "Consumer running: outbox relay + inbound inbox (relay+mapping) + Xero invoice + revenue recognition + Stripe settlement + document generation + VAT remittance + PII tombstone"
+                ) *>
                 List(
                   Supervised("outbox-relay", relayLoop),
                   Supervised("inbound-relay", inboundRelayLoop),
@@ -206,7 +233,7 @@ object Main extends IOApp.Simple {
                   Supervised("notification-delivery", notifyLoop),
                   Supervised("forecast-cycle", forecastLoop),
                   Supervised("h6q-cycle", h6qCycleLoop)
-                ).parSequence_
+                ).++(hubspotIngest).parSequence_
           }
         }
     }

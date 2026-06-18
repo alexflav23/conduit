@@ -34,6 +34,13 @@ final case class StripeConfig(webhookSecret: String) {
   def verifies: Boolean = webhookSecret.nonEmpty
 }
 
+// HubSpot CRM live ingest (S2, spec 36/37). An empty/placeholder token ⇒ the connector is DORMANT (the seam is
+// wired and tested, but no live pull happens) — the house "seam + fixture, lights up when the credential arrives"
+// pattern. The token is a HubSpot private-app token (estate: AWS SSM /prod/athena/hubspot).
+final case class HubSpotConfig(token: String, baseUrl: String) {
+  def enabled: Boolean = token.nonEmpty && !token.startsWith("your-") && token != "changeme"
+}
+
 // WORM document store (doc 17 §6). `endpoint` empty → the default AWS S3 client (instance role); set → a custom
 // endpoint (LocalStack) with static creds. The consumer renders + stores invoice PDFs here.
 final case class DocumentsConfig(bucket: String, endpoint: String, accessKey: String, secretKey: String) {
@@ -63,6 +70,7 @@ final case class AppConfig(
     tigerbeetle: TigerBeetleConfig,
     xero: XeroConfig,
     stripe: StripeConfig,
+    hubspot: HubSpotConfig,
     documents: DocumentsConfig,
     googleAuth: GoogleAuthConfig,
     keycloak: KeycloakConfig
@@ -107,6 +115,10 @@ object EnvironmentConfig {
         scope = xero.getString("scope")
       ),
       stripe = StripeConfig(webhookSecret = stripe.getString("webhook_secret")),
+      hubspot = HubSpotConfig(
+        token = if (hv.hasPath("hubspot.token")) hv.getString("hubspot.token") else "",
+        baseUrl = if (hv.hasPath("hubspot.base_url")) hv.getString("hubspot.base_url") else "https://api.hubapi.com"
+      ),
       documents = DocumentsConfig(
         bucket = docs.getString("bucket"),
         endpoint = docs.getString("endpoint"),
