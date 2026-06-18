@@ -122,6 +122,9 @@ interface BatchNode { id?: string; received?: string; cm?: string; po?: string; 
 interface Activation { activated_at?: string; installer?: string }
 interface TimelineEvent { at?: string; event?: string; origin?: string }
 interface Genealogy { serial?: SerialNode; batch?: BatchNode; activation?: Activation | null; timeline?: TimelineEvent[] }
+interface FamUnit { serial: string; status: string; activated_at: string | null; warranty_end: string | null; is_replacement: boolean }
+interface FamTicket { ticket_ref: string; reason: string | null; opened_at: string | null; status: string | null }
+interface UnitLife { serial?: string; warranty_end?: string | null; family_size?: number; timeline?: FamUnit[]; rma_tickets?: FamTicket[] }
 
 function SerialGenealogy({ ctx, role, hasProfit }: { ctx: Ctx; role: Role; hasProfit: boolean }) {
   const viewer = { layers: role.layers || [] };
@@ -138,6 +141,8 @@ function SerialGenealogy({ ctx, role, hasProfit }: { ctx: Ctx; role: Role; hasPr
 
   const path = `/api/v1/inventory/genealogy?${qs({ entity: ctx.entity, market: mid, serial })}`;
   const query = useApi<Genealogy>(['batch-genealogy', ctx.entity, mid, serial], path, { enabled: serial.trim().length > 0 });
+  // The replacement family + RMA tickets (warranty pipeline) for this unit — so the trace page is complete.
+  const fam = useApi<UnitLife>(['unit-life', serial], `/api/v1/serials/${encodeURIComponent(serial)}/lifecycle`, { enabled: serial.trim().length > 0 });
   const err = query.error as ApiError | null;
   const d = (query.data ?? null) as Genealogy | null;
 
@@ -314,6 +319,40 @@ function SerialGenealogy({ ctx, role, hasProfit }: { ctx: Ctx; role: Role; hasPr
                 ))}
               </div>
             </Card>
+
+            {fam.data && ((fam.data.timeline?.length ?? 0) > 1 || (fam.data.rma_tickets?.length ?? 0) > 0) && (
+              <Card title="Replacement family & RMA" icon={I.layers} style={{ marginTop: 14 }}
+                aux={<span className="dim" style={{ fontSize: 11.5 }}>shared warranty · faulty → replacement chain</span>} className="tablewrap">
+                <table className="tbl">
+                  <thead><tr><th>Serial</th><th>Role</th><th>Status</th><th>Warranty end</th></tr></thead>
+                  <tbody>
+                    {(fam.data.timeline ?? []).map((u) => (
+                      <tr key={u.serial} style={{ cursor: 'pointer' }} onClick={() => { setQ(u.serial); setSerial(u.serial); navigate('/batch?serial=' + encodeURIComponent(u.serial)); }}>
+                        <td className="mono" style={{ fontSize: 11.5 }}>{u.serial}{u.serial === (d.serial?.sn || serial) ? '' : ' ↗'}</td>
+                        <td><Chip s={u.is_replacement ? 'plum' : 'accent'}>{u.is_replacement ? 'replacement' : 'original'}</Chip></td>
+                        <td className="dim">{human(u.status || '')}</td>
+                        <td className="dim">{u.warranty_end || '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {(fam.data.rma_tickets?.length ?? 0) > 0 && (
+                  <table className="tbl" style={{ marginTop: 12 }}>
+                    <thead><tr><th>RMA ticket</th><th>Reason</th><th>Opened</th><th>Stage</th></tr></thead>
+                    <tbody>
+                      {fam.data.rma_tickets!.map((t) => (
+                        <tr key={t.ticket_ref}>
+                          <td className="mono" style={{ fontSize: 11.5 }}>{t.ticket_ref}</td>
+                          <td className="dim" style={{ fontSize: 12 }}>{t.reason || '—'}</td>
+                          <td className="dim">{t.opened_at ? t.opened_at.slice(0, 10) : '—'}</td>
+                          <td><Chip s="neutral">{t.status || '—'}</Chip></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </Card>
+            )}
           </div>
         </div>
       )}

@@ -46,9 +46,7 @@ export function Warranty(_props: any) {
   const free = useApi<FreeCat[]>(['free-ship-summary'], '/api/v1/free-shipments/summary');
   const trend = useApi<TrendRow[]>(['free-ship-trend'], '/api/v1/free-shipments/trend');
   const [input, setInput] = useState('');
-  const [serial, setSerial] = useState('');
-  const life = useApi<Lifecycle>(['serial-life', serial], `/api/v1/serials/${encodeURIComponent(serial)}/lifecycle`, { enabled: !!serial });
-  // Browse the RMA pipeline — every faulty → replacement, paginated + searchable; click one to trace its family below.
+  // Browse the RMA pipeline — every faulty → replacement, paginated + searchable; click one to open its unit page.
   const [rmaQ, setRmaQ] = useState('');
   const [rmaPage, setRmaPage] = useState(0);
   const rmas = useApi<{ rows?: RmaRow[]; total?: number }>(
@@ -57,18 +55,14 @@ export function Warranty(_props: any) {
   );
   const rmaRows = rmas.data?.rows ?? [];
   const rmaTotal = rmas.data?.total ?? 0;
-  const lifeRef = useRef<HTMLDivElement>(null);
-  const openSerial = (sn?: string | null) => {
-    if (!sn) return;
-    setInput(sn); setSerial(sn);
-    setTimeout(() => lifeRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60);
-  };
+  // Clicking a unit opens its full page (the genealogy trace — supply chain, cost, lifecycle, family + RMA),
+  // not an in-page scroll.
+  const openSerial = (sn?: string | null) => { if (sn) navigate('/batch?serial=' + encodeURIComponent(sn)); };
 
   const sErr = stats.error as ApiError | null;
   const forbidden = !!sErr?.forbidden;
   const s = stats.data;
   const cats = Array.isArray(free.data) ? free.data : [];
-  const lc = life.data;
 
   return (
     <div className="page">
@@ -172,13 +166,9 @@ export function Warranty(_props: any) {
             );
           })()}
 
-          {/* ---- serial lifecycle lookup ---- */}
-          <div ref={lifeRef}>
-          <Card title="Unit lifecycle" icon={I.clock} aux={<span className="dim" style={{ fontSize: 12 }}>family timeline · shared warranty · RMA tickets</span>}>
-            <form
-              onSubmit={(e) => { e.preventDefault(); setSerial(input.trim()); }}
-              style={{ display: 'flex', gap: 8, marginBottom: 12 }}
-            >
+          {/* ---- trace a unit → opens its full page ---- */}
+          <Card title="Trace a unit" icon={I.clock} aux={<span className="dim" style={{ fontSize: 12 }}>open a serial's full page — supply chain, cost, lifecycle, replacement family + RMA</span>}>
+            <form onSubmit={(e) => { e.preventDefault(); openSerial(input.trim()); }} style={{ display: 'flex', gap: 8 }}>
               <input
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
@@ -186,50 +176,9 @@ export function Warranty(_props: any) {
                 data-testid="warranty-serial"
                 style={{ flex: 1, padding: '9px 12px', borderRadius: 8, border: '1px solid var(--line)', background: 'var(--panel-2)', color: 'inherit', fontFamily: 'var(--font-mono)', fontSize: 13 }}
               />
-              <button type="submit" className="btn" disabled={!input.trim()}>Look up</button>
+              <button type="submit" className="btn primary" disabled={!input.trim()}>Open ↗</button>
             </form>
-
-            {serial && life.isLoading && <SkeletonRow cols={1} />}
-            {serial && !life.isLoading && (!lc || (lc as any).error) && <EmptyRow cols={1}>No unit found for “{serial}”.</EmptyRow>}
-            {lc && lc.timeline && (
-              <>
-                <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 12 }}>
-                  <div><span className="dim" style={{ fontSize: 12 }}>Family </span><b>{lc.family_size}</b> unit{lc.family_size === 1 ? '' : 's'}</div>
-                  <div><span className="dim" style={{ fontSize: 12 }}>Warranty ends </span><b>{day(lc.warranty_end)}</b> <Chip s={inWarranty(lc.warranty_end) ? 'ok' : 'neutral'}>{lc.warranty_end ? (inWarranty(lc.warranty_end) ? 'in warranty' : 'expired') : 'unknown'}</Chip></div>
-                </div>
-                <table className="tbl">
-                  <thead><tr><th>Serial</th><th>Role</th><th>Status</th><th>Activated</th><th>Warranty end</th></tr></thead>
-                  <tbody>
-                    {lc.timeline.map((u) => (
-                      <tr key={u.serial}>
-                        <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12.5 }}>{u.serial}</td>
-                        <td><Chip s={u.is_replacement ? 'plum' : 'accent'}>{u.is_replacement ? 'replacement' : 'original'}</Chip></td>
-                        <td className="dim">{u.status}</td>
-                        <td>{day(u.activated_at)}</td>
-                        <td>{day(u.warranty_end)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                {lc.rma_tickets.length > 0 && (
-                  <table className="tbl" style={{ marginTop: 12 }}>
-                    <thead><tr><th>RMA ticket</th><th>Reason</th><th>Opened</th><th>Stage</th></tr></thead>
-                    <tbody>
-                      {lc.rma_tickets.map((t) => (
-                        <tr key={t.ticket_ref}>
-                          <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>{t.ticket_ref}</td>
-                          <td>{t.reason || '—'}</td>
-                          <td>{day(t.opened_at)}</td>
-                          <td><Chip s="neutral">{t.status || '—'}</Chip></td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                )}
-              </>
-            )}
           </Card>
-          </div>
         </>
       )}
     </div>
