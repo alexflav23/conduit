@@ -19,6 +19,12 @@ function ChapterBody({ ch, onOpen }: { ch: ManualChapter; onOpen: (id: string) =
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <Card title={ch.title} icon={I.list} aux={<Chip s={STATUS_TONE[ch.status]}>{STATUS_LABEL[ch.status]}</Chip>}>
         <p style={{ margin: 0, lineHeight: 1.55, fontSize: 13.5 }}>{ch.summary}</p>
+        {ch.screenshot && (
+          <img
+            src={`/help-shots/${ch.screenshot}.png`} alt={`${ch.title} screenshot`} loading="lazy"
+            style={{ width: '100%', marginTop: 14, borderRadius: 10, border: '1px solid var(--line)', display: 'block' }}
+          />
+        )}
       </Card>
 
       {ch.concepts && ch.concepts.length > 0 && (

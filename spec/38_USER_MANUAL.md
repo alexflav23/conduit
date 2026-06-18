@@ -107,6 +107,34 @@ Export: any path (or the whole book) renders to a printable PDF for onboarding d
 
 ---
 
+## 5b. Documentation toolchain & sync (docs-as-code)
+
+The manual must stay coherent with the code as features churn. The principle: **generate everything that can be
+generated from the source of truth, and gate drift in CI.** Three generated sources feed the manual; three gates
+keep them honest. Decisions (2026-06-18): **commit PNGs + visual-diff · Scalar · openapi-typescript + typed fetch.**
+
+**Source 1 — OpenAPI 3.1 (from Tapir) = the formal API language.** Tapir endpoints already *are* a formal API
+description. Expose each route module's `List[ServerEndpoint]`, run `OpenAPIDocsInterpreter`, and:
+- serve the interactive reference at **`/docs` rendered with Scalar** (`@scalar/api-reference`), spec at `/openapi.yaml`;
+- **emit `api/openapi.yaml` to a committed file** (an sbt task / a test) — **CI gate: regenerate → `git diff --exit-code`** (code and spec can't diverge);
+- **generate the desk's TS types** with **`openapi-typescript`** into `conduit-desk/src/api/schema.d.ts`, consumed by the existing `useApi`/`request` wrapper (typed fetch, no runtime client) — closing the [doc 06](./06_API.md) intent ("tapir auto-generates OpenAPI + the TS client"), today unrealised.
+
+**Source 2 — Playwright screenshots = living UI images.** A capture spec walks each documented screen (keyed to
+the chapter `route`), signs in with a `dev:` token, navigates `/<route>`, and writes `public/help-shots/<key>.png`.
+The manual renders these by URL. **CI gate: re-capture + visual-diff** (`toHaveScreenshot`, tolerant
+`maxDiffPixelRatio` on a fixed runner) so an image can't silently rot; the committed PNG diff is reviewable in the PR.
+
+**Source 3 — the typed `ManualChapter` schema = the formal prose language** (chosen over MDX/AsciiDoc *because* it
+is machine-checkable). Extended with `apiOps?: operationId[]` and `screenshot?: key`.
+
+**The three drift gates (CI):**
+1. **route↔chapter parity** (built) — every screen documented or explicitly pending.
+2. **chapter↔API parity** — every `apiOps` operationId exists in the emitted OpenAPI; an endpoint with no chapter is reported.
+3. **screenshot freshness** — every screen chapter has a current PNG (re-capture visual-diff).
+
+So the chain is **code → (OpenAPI · screenshots · typed schema) → manual**, every link CI-gated. (Optional later:
+**Arazzo** — OpenAPI's workflow spec — to formalise the step-by-step tasks as executable flows over operationIds; nice for training.)
+
 ## 6. Build slices (test-first; tracked)
 
 - [ ] **M-Help.1 — shell + model + reference chapters.** `Help` screen + `ManualChapter` model + the index/search +
@@ -120,5 +148,14 @@ Export: any path (or the whole book) renders to a printable PDF for onboarding d
 - [ ] **M-Help.4 — curriculum + export.** Role learning paths + completion tracker + PDF export. **Accept:** a role path
   renders in order, tracks completion, and exports to PDF.
 - [ ] **M-Help.content — fill all ~30 screen chapters** (the bulk; one per screen, reviewed against the live UI).
+
+**Documentation toolchain (docs-as-code, §5b):**
+- [ ] **M-Help.shots — screenshot sync loop.** `screenshot` field + `e2e/manual-shots.spec.ts` capture into
+  `public/help-shots/` + `yarn shots` + render in the manual + the visual-diff freshness gate. *(M-Help.1+ this session.)*
+- [ ] **M-Help.api — OpenAPI emit + Scalar + drift gate.** Expose the route modules' `ServerEndpoint`s, emit
+  committed `api/openapi.yaml`, serve `/docs` (Scalar), CI `git diff` gate. *(The bigger slice — a mechanical
+  cross-module endpoint-exposure pass; do it as its own focused, compile-verified change.)*
+- [ ] **M-Help.client — generated TS types.** `openapi-typescript` → `src/api/schema.d.ts`, wired into `useApi`. (after M-Help.api)
+- [ ] **M-Help.apiparity — chapter↔API parity test** (`apiOps` ⊂ OpenAPI operationIds). (after M-Help.api)
 
 **Status:** M-Help.1 scaffolding in progress (this session). The rest tracked here + in [`36_SHADOW_MODE_PLAN`](./36_SHADOW_MODE_PLAN.md) is feature work, not shadow-track, so it runs in parallel.

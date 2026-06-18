@@ -24,6 +24,8 @@ export interface ManualChapter {
   tasks?: ManualTask[];
   related?: string[];    // related tab ids
   seeAlso?: string[];    // spec refs for the curious
+  screenshot?: string;   // a /public/help-shots/<key>.png captured by e2e/manual-shots.spec.ts (docs-as-code)
+  apiOps?: string[];     // OpenAPI operationIds this chapter documents (chapter↔API parity, M-Help.apiparity)
 }
 
 // ── Primer: how Conduit thinks (read first) ───────────────────────────────────────────────────────────
@@ -118,7 +120,7 @@ const SELL: ManualChapter[] = [
       { title: 'Place a compliant order', steps: ['Pick the customer (or ⌘K search)', 'Add lines — SKU + qty; the tier price fills in', 'Set the delivery schedule (tranches if split)', 'Place — it emits OrderPlaced and mints the CO-ref'], note: 'A non-tier price is rejected server-side — raise an exception via the Deal Desk instead.' },
       { title: 'Open an order’s full topology', steps: ['Open the order (or click it from a customer)', 'See source refs (MRP/PO), line items, invoices, dispatches + tranches, recognition'] },
     ],
-    related: ['dealdesk', 'pricing', 'crm'], seeAlso: ['doc 07 M4', 'doc 24'],
+    related: ['dealdesk', 'pricing', 'crm'], seeAlso: ['doc 07 M4', 'doc 24'], screenshot: 'order-desk',
   },
   {
     id: 'pricing', route: 'pricing', section: 'Sell', title: 'Pricing (ADLP & agreements)',
@@ -131,7 +133,7 @@ const SELL: ManualChapter[] = [
       { term: 'ADLP', def: 'Approved Distributor List Price — the governed category a quote resolves.' },
     ],
     tasks: [{ title: 'Check a customer’s price', steps: ['Open Pricing', 'Find the agreement (grouped by customer/segment)', 'Read the tier + volume bands — this is what an order will bind to'] }],
-    related: ['order-desk', 'dealdesk'], seeAlso: ['doc 24', 'doc 07 M3'],
+    related: ['order-desk', 'dealdesk'], seeAlso: ['doc 24', 'doc 07 M3'], screenshot: 'pricing',
   },
   {
     id: 'crm', route: 'crm', section: 'Sell', title: 'CRM — accounts & customers',
@@ -147,7 +149,7 @@ const SELL: ManualChapter[] = [
       { title: 'Find a customer', steps: ['Press ⌘K', 'Type a name, email, or phone', 'Open their master account'] },
       { title: 'See an installer’s customers', steps: ['Open the installer account', 'The Customers panel lists the end-customers who got a charger through them', 'Click any to open that individual'] },
     ],
-    related: ['order-desk', 'batch'], seeAlso: ['doc 11'],
+    related: ['order-desk', 'batch'], seeAlso: ['doc 11'], screenshot: 'crm',
   },
 ];
 

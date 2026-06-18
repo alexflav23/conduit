@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { existsSync } from 'fs';
 import { CHAPTERS, PENDING_CHAPTERS } from '../content';
 
 // The anti-rot rule (spec 38 §3): the manual cannot drift from the product. Every desk screen must be either
@@ -34,6 +35,13 @@ describe('user manual ↔ desk parity', () => {
     const covered = new Set([...documented, ...PENDING_CHAPTERS]);
     const missing = ALL_TABS.filter((t) => !covered.has(t));
     expect(missing, `screens with no chapter and no PENDING entry: ${missing.join(', ')}`).toEqual([]);
+  });
+
+  it('every declared screenshot has a committed PNG (docs-as-code, spec 38 §5b)', () => {
+    for (const c of CHAPTERS.filter((x) => x.screenshot)) {
+      const png = `public/help-shots/${c.screenshot}.png`;
+      expect(existsSync(png), `chapter '${c.id}' declares screenshot '${c.screenshot}' but ${png} is missing — run \`yarn shots\``).toBe(true);
+    }
   });
 
   it('chapter ids are unique', () => {

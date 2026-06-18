@@ -8,7 +8,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:browser": "playwright test"
+    "test:browser": "playwright test",
+    "shots": "playwright test manual-shots --reporter=list"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.101.0",
