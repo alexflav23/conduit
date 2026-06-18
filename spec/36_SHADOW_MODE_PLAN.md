@@ -91,6 +91,10 @@ abstraction, runner and sink already exist (33 §2–3); what's missing is **(a)
 **(d) the activation/placement push source**. House rule (from 34): build behind the seam + fixture so it's
 tested now and lights up when creds arrive.
 
+> **Build to the contract.** The exact source-field → Conduit-column map for every connector below is specced in
+> [`37_INTEGRATION_CONTRACTS`](./37_INTEGRATION_CONTRACTS.md) (extracted from the live `SnapshotLoader.handlers`,
+> since live + boot share the mapping). Implement each `*Api` against its §; do not guess fields.
+
 ### S2.0 — The ingest scheduler  ·  effort: S  ·  external: none
 **Goal:** a background driver that runs each `(connector, dataset)` on a cadence, draining pages until caught up,
 landing every record via `IngestSink` (cursor advances only on a clean commit — at-least-once).
@@ -193,7 +197,8 @@ is visible on the dashboard and alertable; sync lag per source is graphed.
 quarantine list + requeue, consuming `/inbox/*`) and the **sync-health board** (consuming `sync_state`), alongside the
 existing Govern shadow-findings view. **Files:** `conduit-desk/` (new Inbox/Sync views). **Acceptance:** an operator
 sees per-source freshness, drills a quarantined row to its raw payload + error, and requeues it after a fix — all in the desk.
-- [ ] Inbox desk view (health/quarantine/requeue)  · [ ] sync-health board  · [ ] feedback-capture on findings
+**Screens specced:** [`20_BACKOFFICE_DESK`](./20_BACKOFFICE_DESK.md) §9b — **D23 Inbox & quarantine**, **D24 Sync-health board**, **D25 Shadow findings review**.
+- [ ] D23 Inbox view (health/quarantine/requeue)  · [ ] D24 sync-health board  · [ ] D25 shadow-findings review + feedback capture
 
 ### S3.4 — Cutover-readiness gates  ·  effort: S  ·  external: none
 **Goal:** make "are the books tied?" a single, honest readout against the 18 §4 cutover gates (trial balance, AR↔Xero,
@@ -240,6 +245,23 @@ account, deal stage, or branch link in the desk; the change is audited; nothing 
 
 ---
 
+## S5 — Depth & flow backlog (P2/P3, fold in per owning milestone) 🟡
+
+Genuinely unspecced flow/depth gaps surfaced by the 2026-06-18 spec audit (vs `10_REMAINING_TO_PLAN` §B/§C).
+Not on the S2 critical path, but tracked here so nothing lives only in conversation. **Spec-first** before build.
+- [ ] **S5.1 — Warranty CLAIM lifecycle** (raise→assess→approve→repair/replace/refund→close). *ABSENT* — only the
+  provision register is specced (04 §Warranty). Needs a `warranty_claim` state machine + ledger posting + RMA (09) link. (M8 depth)
+- [ ] **S5.2 — Notifications engine** — *SHALLOW* (only companion push, 23 §2). Channels (push/email/in-app), templates
+  (per-locale), preferences, digests, the event→notification consumer. (M14-adjacent; the `NotificationDelivery` relay exists.)
+- [ ] **S5.3 — Search model** — *ABSENT*. Searchable entities (orders/accounts/serials/deals), index strategy
+  (PG FTS vs OpenSearch), layer-scoped result projection. (desk usability)
+- [ ] **S5.4 — Kits/bundles** — *ABSENT*. BOM, assemble/disassemble stock, kit serialisation, BOM relief. (M3/M6)
+- [ ] **S5.5 — Blanket / standing agreements** — *ABSENT*. Header-level call-off above the line-level `delivery_tranche` — confirm the pattern is real first. (M4)
+- [ ] **S5.6 — Allocation-priority policy** — *ABSENT* (placeholder "configurable"). The rule when stock is short (date/age/tier/channel). (M6)
+- [ ] **S5.7 — Catalogue lifecycle** — *ABSENT*. NPI/new-product, SKU supersession/EOL, ongoing `mrp_sku` map maintenance. (M3)
+
+Each spec'd in (or as a deep-dive off) its owning module's doc, then built when that module's live stream lands.
+
 ## Explicitly deferred (post-takeover) ⏸️
 
 Not gaps under shadow — out of scope until Conduit is trusted as system of record:
@@ -255,6 +277,7 @@ Not gaps under shadow — out of scope until Conduit is trusted as system of rec
 |---|---|---|---|
 | S1.1–S1.8 | Inbox spine (migration, drift, transport, repo, relay, shared mapping, consumer, desk route) | S1 | ✅ |
 | S1.9 | Acceptance IT (Pulsar+PG round-trip; quarantine; idempotency; drift) | S1 | ⬜ |
+| — | **Integration field contracts** (per-source maps, doc 37) | S2 | ✅ |
 | S2.0 | Ingest scheduler | S2 | 🔜 |
 | S2.1 | HubSpot live API (+ support tickets) | S2 | ⬜ |
 | S2.2 | MRPeasy live API | S2 | ⬜ |
@@ -263,10 +286,14 @@ Not gaps under shadow — out of scope until Conduit is trusted as system of rec
 | S2.5 | Carrier inbound (Rhenus) | S2 | ⬜ |
 | S3.1 | Continuous derived-vs-source reconciliation | S3 | 🟡 |
 | S3.2 | Inbox + sync observability/alerting | S3 | ⬜ |
-| S3.3 | Senior-team review desk (Inbox + sync-health views) | S3 | ⬜ |
+| S3.3 | Senior-team review desk (D23 Inbox · D24 Sync-health · D25 Shadow findings, doc 20 §9b) | S3 | ⬜ (specced) |
 | S3.4 | Cutover-readiness gates panel | S3 | ⬜ |
 | S4.1 | Commission on a real source | S4 | ⬜ (⚠️ decision) |
 | S4.2 | Fuzzy MDM triage to zero | S4 | 🟡 |
 | S4.3 | Hedged-COGS ledger posting | S4 | ⬜ |
 | S4.4 | CRM write-side (shadow-safe) | S4 | ⬜ |
+| S5.1 | Warranty claim lifecycle | S5 | ⬜ (ABSENT) |
+| S5.2 | Notifications engine | S5 | 🟡 (shallow) |
+| S5.3 | Search model | S5 | ⬜ (ABSENT) |
+| S5.4–S5.7 | Kits/bundles · blanket agreements · allocation-priority · catalogue lifecycle | S5 | ⬜ (ABSENT) |
 | — | Outbound / companion / tax-vendor | deferred | ⏸️ |

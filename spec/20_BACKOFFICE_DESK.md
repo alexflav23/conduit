@@ -58,6 +58,9 @@ Login (Keycloak OIDC)
     ├── Admin                     (admin)
     │     ├── Permission builder (roles × permissions × layers × scope)
     │     ├── Users & assignments · Config / reference data
+    ├── Shadow Ops                (admin, ceo, finance, auditor — the dual-run cockpit)
+    │     ├── Inbox & quarantine · Sync-health board
+    │     └── Shadow findings (derived-vs-source) → Lineage
     └── Auditor Portal            (auditor — read-only, financial-truth + lineage + controls only)
 ```
 Sections are **role-gated by the server** (the nav reflects grants returned for the principal; it does not invent reach). An `auditor` sees a stripped shell: Finance (read), Auditability Center, Lineage — and **no** edit affordances anywhere.
@@ -283,6 +286,37 @@ Sections are **role-gated by the server** (the nav reflects grants returned for 
 - **Role:** `auditor` only. **Entry:** auditor sign-in lands here (the nav rail shows only Finance-read, Auditability Center, Lineage, Audit/Evidence).
 - **Layout:** the read subset of D9, D15–D21 — every edit/approve/sign-off control is **absent** (not disabled-with-tooltip; absent), `MoneyOrHidden` per the auditor's `view` layers (volume/commercial/profitability/commission/inter_entity/treasury all **view**), PII stripped unless granted.
 - **Data:** the read endpoints above (all `view`, server-projected). **States:** read-only throughout; layer/PII-stripped per grant.
+
+---
+
+## 9b. Shadow & Ingest Operations (the dual-run cockpit — doc 33 / 36)
+
+The surfaces senior teams use during the shadow parallel window to confirm inbound is faithful and the books
+are converging. Role: `admin`/`ceo`/`finance`/`auditor` (the dual-run owners — `view:ingest_record`/`view:sync_state`).
+Backed by `/inbox/*`, `/shadow/*`, and the `sync_state` projection.
+
+### D23 · Inbox & quarantine (the never-lost surface)
+- **Purpose:** prove inbound durability — see every source's landed→published→processed→failed counts, and triage
+  the quarantine (rows that failed to map) without ever losing data.
+- **Role:** dual-run owners. **Entry:** Shadow Ops nav. **Backed by:** `GET /inbox/health`, `GET /inbox/quarantine`, `POST /inbox/requeue`.
+- **Layout:** top = a per-source health strip (`received / published / processed / failed` counts, oldest-`received` age = relay lag).
+  Below = the **quarantine list**: source · dataset · source_id · attempts · `last_error`, each row expandable to the **raw payload** (retained verbatim).
+- **Actions:** drill a quarantined row → raw JSON + error; **Requeue** (gated `edit:reconciliation`) after a mapping fix → row re-enters `received`; copy payload for a repro.
+- **States:** empty (no quarantine = green); growing-quarantine banner; relay-stalled warning (oldest `received` age over threshold).
+
+### D24 · Sync-health board (per-source freshness)
+- **Purpose:** is every live connector current? the cursor + lag + failure view over `sync_state`.
+- **Role:** dual-run owners. **Backed by:** the `sync_state` projection (one row per `(source, dataset)`).
+- **Layout:** a grid — source · dataset · cursor (resume point) · last-run · last-status · `records_seen`/`written` · **lag** (now − last_run) · `consecutive_failures` · `last_error`. Sort by lag desc.
+- **Actions:** none destructive (read board); link a failing row → its connector + the quarantine slice for that source.
+- **States:** all-green (every source within its cadence SLA); stale-source amber/red on lag; failing-source on `consecutive_failures` > 0.
+
+### D25 · Shadow findings review (the diff is the product)
+- **Purpose:** the continuous derived-vs-source discrepancy queue senior teams resolve over the parallel window (doc 33 §5/§6).
+- **Role:** dual-run owners. **Backed by:** `GET /shadow/summary`, `/shadow/findings`, `POST /shadow/findings/{id}/triage`.
+- **Layout:** severity-bucketed list (high/medium/low) of findings — each: the check, the Conduit value vs the source value, the delta, status (open/triaged/auto-resolved). Summary header = counts + the cutover-readiness gates (trial balance, AR↔Xero, inventory↔count) from D16/§3.4.
+- **Actions:** triage a finding (assign/annotate/accept) — idempotent across re-runs (human triage preserved, auto-resolves when the cause clears); drill → lineage (D18).
+- **States:** zero-high = a green readiness signal; new-finding glow; auto-resolved (struck, audit-trailed).
 
 ---
 

@@ -34,6 +34,8 @@ Legend — **P1** = blocks go-live or a Phase-2/3 milestone · **P2** = needed f
 
 ## C. Flow-level gaps inside existing modules (data exists, behaviour unspecced)
 
+> These are now tracked as **S5 (depth & flow backlog)** in [36_SHADOW_MODE_PLAN](36_SHADOW_MODE_PLAN.md) — spec-first per owning module, built when that module's live stream lands.
+
 | Item | Scope | Priority | Blocks |
 |---|---|---|---|
 | **Warranty claim lifecycle** | raise → assess → approve → repair/replace/refund → close; replacement unit starts its own warranty (provision register exists; the *claim* flow doesn't) | P2 | M8 depth |
@@ -63,7 +65,7 @@ Legend — **P1** = blocks go-live or a Phase-2/3 milestone · **P2** = needed f
 | 12b | Final **sub-channel + segment** seed list | M3 |
 | 13b | Which **named accounts** get their own H6Q line (scenario cuts); Hyperview-vs-manual precedence default | M11 |
 | 14b | **Field → data-layer** membership map + exact layer defaults per seed role | M2 |
-| — | **Per-integration contracts**: Xero invoice mapping, Rhenus webhook schema, HubSpot replication mapping, Hyperview payload, Stripe (if absorbed) | M13/M14 |
+| — | **Per-integration contracts** (inbound): HubSpot/MRPeasy/Xero/placement field maps + Rhenus webhook schema. ✅ **Specced in [37_INTEGRATION_CONTRACTS](37_INTEGRATION_CONTRACTS.md)** (shadow-mode inbound). *Outbound* mappings (HubSpot replication, Hyperview payload) remain deferred (post-takeover). | M13/M14 |
 | — | **Money/VAT rounding** — policy now defined (doc 14 §1.2: explicit `RoundingPolicy` per boundary, configurable per `tax_regime`); residual is the per-jurisdiction line-vs-total values to load | M3/M13 |
 | — | **Glossary** (one page — channel vs market vs entity, sell-in/sell-through, ADLP, coverage, tranche) | anytime |
 
