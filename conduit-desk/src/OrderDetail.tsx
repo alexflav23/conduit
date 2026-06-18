@@ -40,7 +40,7 @@ export function OrderDetail(_props: { token: string; role: any; ctx: any; toast:
       <PageHead
         crumb={<span style={{ cursor: 'pointer' }} onClick={() => navigate(-1 as any)}>← Back</span>}
         title={d?.conduit_ref ?? (id ?? '').slice(0, 8)}
-        sub="Conduit order — the top of the topology: its source identities, line items, invoices, dispatches and recognition."
+        sub="Order — the top of the topology: its source identities, line items, invoices, dispatches and recognition."
         right={d && <div className="row g6">{d.status && <Chip s={statusTone(d.status)}>{d.status}</Chip>}</div>}
       />
 

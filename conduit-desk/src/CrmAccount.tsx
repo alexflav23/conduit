@@ -154,7 +154,7 @@ export function CrmAccount(_props: { token: string; role: any; ctx: any; toast: 
           {(d.orders ?? []).length > 0 && (
             <Card title="Recent orders" icon={I.charger} aux={<span className="dim" style={{ fontSize: 11.5 }}>click an order for its full topology</span>} className="tablewrap" style={{ padding: 0 }}>
               <table className="tbl">
-                <thead><tr><th>Conduit order</th><th>MRP / source ref</th><th>Date</th><th className="num">Total inc VAT</th><th /></tr></thead>
+                <thead><tr><th>Order ID</th><th>MRP / source ref</th><th>Date</th><th className="num">Total inc VAT</th><th /></tr></thead>
                 <tbody>
                   {d.orders!.map((o, i) => (
                     <tr key={(o.id ?? o.order_no ?? '') + i} style={{ cursor: o.id ? 'pointer' : 'default' }}
