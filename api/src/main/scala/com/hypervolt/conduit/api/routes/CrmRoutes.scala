@@ -171,6 +171,31 @@ final class CrmRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
             }
       )
 
+  // The installer/wholesaler's end-customers (phone-bridged charger owners + end-customer contacts). Paginated.
+  private val accountCustomers =
+    base.get
+      .in("api" / "v1" / "crm" / "accounts" / path[String]("id") / "customers")
+      .in(query[Option[Int]]("limit"))
+      .in(query[Option[Int]]("offset"))
+      .out(jsonBody[Json])
+      .serverLogic(p => {
+        case (idS, limitF, offsetF) =>
+          if (!gate(p)) Async[F].pure(Left(denied))
+          else
+            optUuid(Some(idS)) match {
+              case Right(Some(id)) =>
+                val lim = limitF.getOrElse(50).min(200).max(1)
+                val off = offsetF.getOrElse(0).max(0)
+                (CrmReadRepo.accountCustomers(id, lim, off), CrmReadRepo.countAccountCustomers(id)).tupled
+                  .transact(xa)
+                  .map {
+                    case (rows, total) =>
+                      Right(Json.obj("rows" -> Json.fromValues(rows), "total" -> total.asJson, "limit" -> lim.asJson, "offset" -> off.asJson))
+                  }
+              case _ => Async[F].pure(Left(err(StatusCode.BadRequest, "bad_request", "invalid id")))
+            }
+      })
+
   // ---- Master-account review: the fuzzy candidates the model didn't auto-merge, with its verdict + reasoning ----
   private def canEdit(p: Principal): Boolean = PolicyEngine.hasPermission(p, Action.Edit, "credit_profile")
   private val editDenied = err(StatusCode.Forbidden, "forbidden", "requires edit:credit_profile")
@@ -247,5 +272,5 @@ final class CrmRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F]) {
 
   val routes: HttpRoutes[F] =
     Http4sServerInterpreter[F](ApiMetrics.serverOptions[F])
-      .toRoutes(List(accounts, accountDetail, reviewQueue, mergeAccounts, rejectCandidate, setParent, parties, pipeline, dealsSummary, deals))
+      .toRoutes(List(accounts, accountDetail, accountCustomers, reviewQueue, mergeAccounts, rejectCandidate, setParent, parties, pipeline, dealsSummary, deals))
 }

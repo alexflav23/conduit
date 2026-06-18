@@ -285,4 +285,34 @@ object CrmReadRepo {
                          FROM serial_unit s LEFT JOIN product_variant pv ON pv.id = s.product_variant_id
                          WHERE s.owner_party_id = p.id))
           FROM party p WHERE p.id = $id""".query[Json].option
+
+  // The end-customers of an installer/wholesaler account (the bespoke installer→customers view). Two real
+  // populations, unioned: (1) materialised charger owners phone-bridged to this account (external_refs.sold_via),
+  // each with their serial count and own /account page; (2) end-customer CONTACTS held under the account (a
+  // HubSpot contact whose email is a known owner). Ordered owners-first, then by charger count / name. Paginated.
+  private def customersWhere(id: UUID): doobie.Fragment =
+    fr"""FROM (
+           SELECT 'owner' AS kind, p.id::text AS id,
+                  (SELECT c.first_name FROM contact c WHERE c.party_id = p.id ORDER BY c.is_primary DESC LIMIT 1) AS first_name,
+                  (SELECT c.last_name FROM contact c WHERE c.party_id = p.id ORDER BY c.is_primary DESC LIMIT 1) AS last_name,
+                  COALESCE(p.external_refs->>'owner_email', (SELECT c.email::text FROM contact c WHERE c.party_id = p.id AND c.email IS NOT NULL LIMIT 1)) AS email,
+                  (SELECT c.phone FROM contact c WHERE c.party_id = p.id AND c.phone IS NOT NULL LIMIT 1) AS phone,
+                  (SELECT count(*) FROM serial_unit s WHERE s.owner_party_id = p.id) AS chargers
+           FROM party p WHERE p.external_refs->>'sold_via_party_id' = ${id.toString} AND p.status <> 'merged'
+           UNION ALL
+           SELECT 'contact' AS kind, NULL, c.first_name, c.last_name, c.email::text, c.phone, 0
+           FROM contact c
+           WHERE c.party_id = $id
+             AND EXISTS (SELECT 1 FROM party op WHERE op.party_type = 'individual'
+                         AND lower(op.external_refs->>'owner_email') = lower(c.email::text))
+         ) cust"""
+
+  def accountCustomers(id: UUID, limit: Int, offset: Int): doobie.ConnectionIO[List[Json]] =
+    (fr"""SELECT jsonb_build_object('kind', kind, 'id', id, 'first_name', first_name, 'last_name', last_name,
+            'email', email, 'phone', phone, 'chargers', chargers) """ ++ customersWhere(id) ++
+      fr" ORDER BY (kind = 'owner') DESC, chargers DESC, last_name NULLS LAST LIMIT $limit OFFSET $offset")
+      .query[Json].to[List]
+
+  def countAccountCustomers(id: UUID): doobie.ConnectionIO[Long] =
+    (fr"SELECT count(*) " ++ customersWhere(id)).query[Long].unique
 }

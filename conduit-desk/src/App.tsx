@@ -38,6 +38,7 @@ import { Proof } from './Proof';
 import { Access } from './Access';
 import { Notifications } from './Notifications';
 import { AccountPage } from './AccountPage';
+import { CrmAccount } from './CrmAccount';
 import { useAuth } from 'react-oidc-context';
 import { SignIn, sessionEmail } from './SignIn';
 import { setOidcToken, devToken, setDevToken } from './lib/auth';
@@ -390,6 +391,7 @@ export function App() {
           <Routes>
             <Route path="/" element={<Navigate to="/order" replace />} />
             <Route path="/account/:id" element={<AccountPage key={'account|' + token} token={token} role={role} ctx={ctx} toast={toast} />} />
+            <Route path="/crm/account/:id" element={<CrmAccount key={'crm-account|' + token} token={token} role={role} ctx={ctx} toast={toast} />} />
             <Route path="/:tab" element={<TabView token={token} role={role} ctx={ctx} toast={toast} />} />
             <Route path="/:tab/:sub" element={<TabView token={token} role={role} ctx={ctx} toast={toast} />} />
           </Routes>
@@ -433,7 +435,7 @@ function Palette({ open, onClose, go }: { open: boolean; onClose: () => void; go
   if (!open) return null;
   const pick = (h: Hit) => {
     if (h.kind === 'screen') go(h.id);
-    else navigate('/crm?account=' + encodeURIComponent(h.id));
+    else navigate('/crm/account/' + encodeURIComponent(h.id));
     onClose();
   };
   const key = (e: React.KeyboardEvent) => {

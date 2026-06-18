@@ -130,12 +130,13 @@ export function CRM({ role, ctx, toast }: { role: any; ctx: any; toast: (m: stri
   const [sector, setSector] = useState('all');
   const [sel, setSel] = useState<Party | null>(null);
 
-  // Deep-link from cmd+K: /crm?account=<id> lands on the Accounts tab with that master account open.
-  const [params, setParams] = useSearchParams();
+  // Legacy deep-link: /crm?account=<id> now redirects to the dedicated account route (the side panel is gone).
+  const [params] = useSearchParams();
+  const navigate = useNavigate();
   useEffect(() => {
     const id = params.get('account');
-    if (id) { setTab('accounts'); setAcctSel(id); setParams({}, { replace: true }); }
-  }, [params, setParams]);
+    if (id) navigate('/crm/account/' + id, { replace: true });
+  }, [params, navigate]);
 
   // ---- credit-limit maker-checker request ----
   const [limitReq, setLimitReq] = useState<Party | null>(null);
@@ -833,8 +834,8 @@ function AccountsView({ list, detail, seg, setSeg, q, setQ, page, setPage, pageS
                 // person name when we have it; else the company/account name lands in the first column.
                 const first = a.first_name || (a.last_name ? '' : a.name);
                 return (
-                <tr key={a.id} data-testid="acct-row" onClick={() => setSel(a.id)}
-                  style={{ cursor: 'pointer', background: sel === a.id ? 'var(--surface-2)' : undefined }}>
+                <tr key={a.id} data-testid="acct-row" onClick={() => nav('/crm/account/' + a.id)}
+                  style={{ cursor: 'pointer' }}>
                   <td><b>{first || <span className="dim">—</span>}</b>
                     {(a.mrpeasy ?? 0) > 0 && <Chip s="approved">MRP</Chip>}
                     {(a.hubspot_companies ?? 0) > 0 && <Chip s="accent">HS</Chip>}</td>
