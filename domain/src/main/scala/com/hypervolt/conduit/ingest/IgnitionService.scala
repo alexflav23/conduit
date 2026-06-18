@@ -561,19 +561,17 @@ final class IgnitionService[F[_]: Async](xa: Transactor[F]) {
           final AS (SELECT line_id, (fl + CASE WHEN rnk <= remainder THEN 1 ELSE 0 END)::numeric / 100 vat_amt FROM rema)
           UPDATE order_line ol SET vat_amount = final.vat_amt FROM final WHERE ol.id = final.line_id""".update.run
 
-  // Partial-fulfilment invoices (C5 tail / M4 tranches): some orders shipped in parts — each invoice carries a
-  // dispatch_id and bills only that dispatch's lines, so Σ(all order lines) != the invoice. Allocate the invoice's
-  // vat_total across its DISPATCHED lines (largest-remainder by dispatched net), grossed up to the full line
-  // (× ol.qty/dl.qty) so the document's per-dispatch proration recovers it; whole-line dispatches (the vast
-  // majority) are exact. Only the partial set (single dispatch invoice, Σ all lines != ex). Idempotent.
+  // Dispatch-scoped invoice VAT (C5 / M4 tranches): every dispatch-linked invoice bills only its dispatch's lines
+  // (a tranche/call-off), so its VAT belongs on those lines. Allocate each such invoice's vat_total across its
+  // DISPATCHED lines (largest-remainder by dispatched net), grossed up to the full line (× ol.qty/dl.qty) so the
+  // document's per-dispatch proration recovers it; whole-line dispatches (the vast majority) are exact. Covers
+  // single- AND multi-invoice (multi-shipment) orders. The zero-VAT guard means lines already set by the
+  // whole-order passes above are skipped, so this only fills the dispatch-billed remainder. Idempotent.
   private def backfillDispatchVat: ConnectionIO[Int] =
     sql"""WITH inv AS (
             SELECT i.id inv_id, i.order_id, i.dispatch_id, i.vat_total vat
             FROM order_invoice i
-            WHERE i.status <> 'void' AND i.dispatch_id IS NOT NULL
-              AND (SELECT count(*) FROM order_invoice i2 WHERE i2.order_id = i.order_id AND i2.status <> 'void') = 1
-              AND (SELECT round(sum(round((ol.unit_price_ex_vat * ol.qty * (1 - ol.discount_pct / 100))::numeric, 2)), 2)
-                   FROM order_line ol WHERE ol.order_id = i.order_id) <> i.total_ex_vat),
+            WHERE i.status <> 'void' AND i.dispatch_id IS NOT NULL AND i.vat_total > 0),
           dl AS (
             SELECT inv.inv_id, inv.vat, dl.order_line_id, dl.id dlid, dl.qty dqty, ol.qty oqty,
                    round((ol.unit_price_ex_vat * dl.qty * (1 - ol.discount_pct / 100))::numeric, 2) dnet
