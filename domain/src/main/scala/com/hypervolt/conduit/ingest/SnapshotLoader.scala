@@ -43,6 +43,21 @@ final class SnapshotLoader[F[_]: Async](xa: Transactor[F]) {
           .flatMap(_.traverse(f => loadFile(root, f).attempt.map(_.fold(_ => 0, identity))).map(_.sum))
     }
 
+  // Map ONE live inbound record through the very same handler the boot ndjson load uses (S1), committing the
+  // handler write AND the caller's inbox status-flip (`after`) in one tx — so a row is never marked processed
+  // without its mapping landing, and live data shares a single mapping codebase with the git snapshot. Returns
+  // Left for an unknown source family or a DB error → the consumer quarantines it (never dropped).
+  def mapInbound(source: String, dataset: String, payload: Json)(after: ConnectionIO[Int]): F[Either[String, Int]] =
+    SnapshotLoader.handlers.get(source) match {
+      case None => Async[F].pure(Left(s"no handler for source family '$source'"))
+      case Some(handler) =>
+        handler(dataset, payload)
+          .flatMap(written => after.as(written))
+          .transact(xa)
+          .attempt
+          .map(_.leftMap(_.getMessage))
+    }
+
   private def loadFile(root: Path, file: Path): F[Int] = {
     val rel     = root.relativize(file).toString               // e.g. exogenous/uk_car_sales.ndjson
     val source  = rel.split('/').headOption.getOrElse("other") // the dataset family
@@ -58,7 +73,9 @@ final class SnapshotLoader[F[_]: Async](xa: Transactor[F]) {
             rows
               .traverse(handler(dataset, _))
               .map(_.sum)
-              .flatMap(written => SnapshotLoader.recordSync(source, dataset, rows.size.toLong, written.toLong).as(written))
+              .flatMap(written =>
+                SnapshotLoader.recordSync(source, dataset, rows.size.toLong, written.toLong).as(written)
+              )
               .transact(xa)
         }
     }
@@ -114,17 +131,23 @@ object SnapshotLoader {
           case None => 0.pure[ConnectionIO]
           case Some(vid) =>
             for {
-              _ <- sql"""INSERT INTO price_agreement (name, surface, currency, applies_to, base_volume_basis, valid_from, valid_to, terms, status, version, scope_value)
+              _ <-
+                sql"""INSERT INTO price_agreement (name, surface, currency, applies_to, base_volume_basis, valid_from, valid_to, terms, status, version, scope_value)
                          SELECT $agr, 'customer', $ccy, $applies, 'per_order', DATE '2026-01-01', DATE '2026-12-31', '{}'::jsonb, 'active', 1, $scope
                          WHERE NOT EXISTS (SELECT 1 FROM price_agreement WHERE name = $agr AND currency = $ccy)""".update.run
-              agrId <- sql"SELECT id FROM price_agreement WHERE name = $agr AND currency = $ccy ORDER BY created_at LIMIT 1".query[UUID].unique
-              _ <- if (applies == "customer_set" && kw.isDefined)
-                sql"""INSERT INTO price_agreement_customer (agreement_id, party_id)
+              agrId <-
+                sql"SELECT id FROM price_agreement WHERE name = $agr AND currency = $ccy ORDER BY created_at LIMIT 1"
+                  .query[UUID]
+                  .unique
+              _ <-
+                if (applies == "customer_set" && kw.isDefined)
+                  sql"""INSERT INTO price_agreement_customer (agreement_id, party_id)
                       SELECT $agrId, p.id FROM party p
                       WHERE p.display_name ILIKE ${"%" + kw.get + "%"}
                         AND NOT EXISTS (SELECT 1 FROM price_agreement_customer pac WHERE pac.agreement_id = $agrId AND pac.party_id = p.id)""".update.run
-              else 0.pure[ConnectionIO]
-              n <- sql"""INSERT INTO price_rule (surface, product_variant_id, currency, tax_regime, authorised_price, max_discount_pct, min_qty, version, effective_from, status, price_agreement_id)
+                else 0.pure[ConnectionIO]
+              n <-
+                sql"""INSERT INTO price_rule (surface, product_variant_id, currency, tax_regime, authorised_price, max_discount_pct, min_qty, version, effective_from, status, price_agreement_id)
                          SELECT 'customer', $vid, $ccy, $taxRegime, $price, 0, 1, 1, DATE '2026-01-01', 'active', $agrId
                          WHERE NOT EXISTS (SELECT 1 FROM price_rule WHERE price_agreement_id = $agrId AND product_variant_id = $vid AND min_qty = 1)""".update.run
             } yield n
@@ -255,7 +278,8 @@ object SnapshotLoader {
       case None => 0.pure[ConnectionIO]
       case Some(id) =>
         val target = c.get[String]("merge_into_name").toOption.filter(_.nonEmpty)
-        val conf   = c.get[BigDecimal]("confidence").toOption.orElse(c.get[Double]("confidence").toOption.map(BigDecimal(_)))
+        val conf =
+          c.get[BigDecimal]("confidence").toOption.orElse(c.get[Double]("confidence").toOption.map(BigDecimal(_)))
         val reason = c.get[String]("reason").toOption
         val model  = c.get[String]("model").toOption.getOrElse("model")
         sql"""INSERT INTO hubspot_match_verdict (hs_company_id, merge_into_name, confidence, reason, model)
@@ -305,7 +329,7 @@ object SnapshotLoader {
     c.get[String]("contact_id").toOption match {
       case None => 0.pure[ConnectionIO]
       case Some(id) =>
-        val s   = (k: String) => c.get[String](k).toOption.filter(_.nonEmpty)
+        val s       = (k: String) => c.get[String](k).toOption.filter(_.nonEmpty)
         val created = s("created").flatMap(v => scala.util.Try(LocalDate.parse(v)).toOption)
         sql"""INSERT INTO hubspot_contact_raw
                 (contact_id, email, first_name, last_name, phone, company, company_id, job_title, lifecycle, created)
@@ -330,10 +354,10 @@ object SnapshotLoader {
     ).tupled match {
       case None => 0.pure[ConnectionIO]
       case Some((dealId, created, pipeline)) =>
-        val closed = c.get[String]("closed").toOption.flatMap(s => scala.util.Try(LocalDate.parse(s)).toOption)
-        val won    = c.get[Boolean]("won").toOption.getOrElse(false)
-        val isClosed = c.get[Boolean]("is_closed").toOption.getOrElse(false) || won
-        val amount = c.get[String]("amount").toOption.flatMap(s => scala.util.Try(BigDecimal(s)).toOption)
+        val closed      = c.get[String]("closed").toOption.flatMap(s => scala.util.Try(LocalDate.parse(s)).toOption)
+        val won         = c.get[Boolean]("won").toOption.getOrElse(false)
+        val isClosed    = c.get[Boolean]("is_closed").toOption.getOrElse(false) || won
+        val amount      = c.get[String]("amount").toOption.flatMap(s => scala.util.Try(BigDecimal(s)).toOption)
         val companyId   = c.get[String]("company_id").toOption
         val companyName = c.get[String]("company_name").toOption
         val segment     = c.get[String]("segment").toOption

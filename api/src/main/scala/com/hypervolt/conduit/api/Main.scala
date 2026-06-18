@@ -78,7 +78,7 @@ object Main extends IOApp.Simple {
       // a clean `docker compose down -v` re-derives everything; a plain code-deploy restart skips it (instant boot,
       // no multi-minute DB saturation). RELOAD=true forces it; IGNITE=false disables ignition.
       seeded <- Resource.eval(sql"SELECT EXISTS(SELECT 1 FROM serial_unit)".query[Boolean].unique.transact(xa))
-      reload  = sys.env.get("RELOAD").exists(_.toBoolean)
+      reload = sys.env.get("RELOAD").exists(_.toBoolean)
       _ <- Resource.eval(
         if (seeded && !reload)
           logger.info("Snapshot ingest + ignition: skipped (DB already populated; RELOAD=true to force)")
@@ -87,7 +87,9 @@ object Main extends IOApp.Simple {
             .loadAll(java.nio.file.Paths.get(sys.env.getOrElse("INGEST_DIR", "ingest")))
             .flatMap(n => logger.info(s"Snapshot ingest: $n rows loaded")) *>
             (if (sys.env.getOrElse("IGNITE", "true").toBoolean)
-               new com.hypervolt.conduit.ingest.IgnitionService[IO](xa).ignite.flatMap(s => logger.info(s"Ignition: $s"))
+               new com.hypervolt.conduit.ingest.IgnitionService[IO](xa).ignite.flatMap(s =>
+                 logger.info(s"Ignition: $s")
+               )
              else logger.info("Ignition: disabled (IGNITE=false)"))
       )
     } yield (cfg, xa)
@@ -160,6 +162,7 @@ object Main extends IOApp.Simple {
         val lifecycleRoutes2  = new com.hypervolt.conduit.api.routes.UnitLifecycleRoutes[IO](xa, auth).routes
         val inventoryRoutes   = new com.hypervolt.conduit.api.routes.InventoryRoutes[IO](xa, auth).routes
         val warrantyRoutes    = new com.hypervolt.conduit.api.routes.WarrantyRoutes[IO](xa, auth).routes
+        val inboxRoutes       = new com.hypervolt.conduit.api.routes.InboxRoutes[IO](xa, auth).routes
         // the Tamper Sandbox shares the dev-token gate: it exists only outside prod (doc 31 §2.5)
         val proofRoutes =
           new com.hypervolt.conduit.api.routes.ProofRoutes[IO](xa, auth, tamperEnabled = cfg.env != "prod").routes
@@ -180,7 +183,7 @@ object Main extends IOApp.Simple {
             "/" -> (HealthRoutes
               .routes[
                 IO
-              ] <+> accessRoutes <+> pricingRoutes <+> commerceRoutes <+> crmRoutes <+> activationRoutes <+> shelfDetailRoutes <+> dealDeskRoutes <+> h6qRoutes <+> forecastRunRoutes <+> icRoutes <+> creditRoutes <+> auditRoutes <+> stripeRoutes <+> documentRoutes <+> attachmentRoutes <+> voidRoutes <+> lifecycleRoutes <+> taxRoutes <+> procurementRoutes <+> structureRoutes <+> returnRoutes <+> treasuryRoutes <+> activationStream <+> dispatchRoutes <+> purchasingRoutes <+> commissionRoutes <+> commitmentRoutes <+> shadowRoutes <+> freeShipRoutes <+> lifecycleRoutes2 <+> inventoryRoutes <+> warrantyRoutes <+> privacyRoutes <+> proofRoutes)
+              ] <+> accessRoutes <+> pricingRoutes <+> commerceRoutes <+> crmRoutes <+> activationRoutes <+> shelfDetailRoutes <+> dealDeskRoutes <+> h6qRoutes <+> forecastRunRoutes <+> icRoutes <+> creditRoutes <+> auditRoutes <+> stripeRoutes <+> documentRoutes <+> attachmentRoutes <+> voidRoutes <+> lifecycleRoutes <+> taxRoutes <+> procurementRoutes <+> structureRoutes <+> returnRoutes <+> treasuryRoutes <+> activationStream <+> dispatchRoutes <+> purchasingRoutes <+> commissionRoutes <+> commitmentRoutes <+> shadowRoutes <+> freeShipRoutes <+> lifecycleRoutes2 <+> inventoryRoutes <+> warrantyRoutes <+> inboxRoutes <+> privacyRoutes <+> proofRoutes)
           ).orNotFound
         val host      = Ipv4Address.fromString(cfg.http.host).getOrElse(ipv4"0.0.0.0")
         val apiPort   = Port.fromInt(cfg.http.port).getOrElse(port"8080")

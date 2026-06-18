@@ -23,7 +23,12 @@ final class IngestSink[F[_]: Async](xa: Transactor[F]) {
             drifted     = (ingest_record.source_hash <> EXCLUDED.source_hash),
             payload     = EXCLUDED.payload,
             source_hash = EXCLUDED.source_hash,
-            last_seen   = now()""".update.run
+            last_seen   = now(),
+            -- a drifted re-pull re-enters the inbox so the relay re-publishes and the consumer re-maps the new
+            -- shape; an unchanged re-pull is left exactly as-is (no needless reprocessing). Never silently drop.
+            status       = CASE WHEN ingest_record.source_hash <> EXCLUDED.source_hash THEN 'received' ELSE ingest_record.status END,
+            published_at = CASE WHEN ingest_record.source_hash <> EXCLUDED.source_hash THEN NULL ELSE ingest_record.published_at END,
+            processed_at = CASE WHEN ingest_record.source_hash <> EXCLUDED.source_hash THEN NULL ELSE ingest_record.processed_at END""".update.run
       .transact(xa)
       .attempt
       .map(_.leftMap(_.getMessage).map(_ => ()))

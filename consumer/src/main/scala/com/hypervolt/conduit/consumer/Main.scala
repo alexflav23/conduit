@@ -16,6 +16,9 @@ import com.hypervolt.conduit.document.FopDocumentRenderer
 import com.hypervolt.conduit.document.S3DocumentStorage
 import com.hypervolt.conduit.event.OutboxRelay
 import com.hypervolt.conduit.event.PulsarEventPublisher
+import com.hypervolt.conduit.event.PulsarInboundPublisher
+import com.hypervolt.conduit.ingest.InboundRelay
+import com.hypervolt.conduit.ingest.SnapshotLoader
 import com.hypervolt.conduit.ledger.TigerBeetleClient
 import com.hypervolt.conduit.ledger.TigerBeetleLedger
 import com.hypervolt.conduit.logging.OtelAppender
@@ -169,33 +172,41 @@ object Main extends IOApp.Simple {
           // invoiced in MRPeasy/Xero, billed to MRPeasy stub parties with placeholder line items, produced
           // meaningless documents. The DocumentService + FOP/WORM/gapless engine remain for invoices Conduit
           // actually issues going forward (resolved to the master account, with real line items).
-          PulsarEventPublisher.create[IO](pulsar).flatMap { publisher =>
-            val relay                                           = new OutboxRelay[IO](xa, publisher)
-            val relayLoop: IO[Unit]                             = (relay.runOnce() *> IO.sleep(1.second)).foreverM
-            implicit val log: org.typelevel.log4cats.Logger[IO] = logger
-            logger.info(
-              "Consumer running: outbox relay + Xero invoice + revenue recognition + Stripe settlement + document generation + VAT remittance + PII tombstone"
-            ) *>
-              List(
-                Supervised("outbox-relay", relayLoop),
-                Supervised("xero-invoice", xeroConsumer.runForever),
-                Supervised("revenue-recognition", revConsumer.runForever),
-                Supervised("stripe-settlement", stripeLoop),
-                Supervised("document-generation", docConsumer.runForever),
-                Supervised("invoice-void", voidConsumer.runForever),
-                Supervised("vat-remittance", vatRemitConsumer.runForever),
-                Supervised("pii-tombstone", piiTombstoneConsumer.runForever),
-                Supervised("rebate-accrual", rebateAccrualConsumer.runForever),
-                Supervised("placement", placementConsumer.runForever),
-                Supervised("return-effector", returnConsumer.runForever),
-                Supervised("opening-inventory", openingInvConsumer.runForever),
-                Supervised("commission-accrual", commissionConsumer.runForever),
-                Supervised("order-commitment", commitmentConsumer.runForever),
-                Supervised("shadow-validation", shadowLoop),
-                Supervised("notification-delivery", notifyLoop),
-                Supervised("forecast-cycle", forecastLoop),
-                Supervised("h6q-cycle", h6qCycleLoop)
-              ).parSequence_
+          (PulsarEventPublisher.create[IO](pulsar), PulsarInboundPublisher.create[IO](pulsar)).tupled.flatMap {
+            case (publisher, inboundPub) =>
+              val relay               = new OutboxRelay[IO](xa, publisher)
+              val relayLoop: IO[Unit] = (relay.runOnce() *> IO.sleep(1.second)).foreverM
+              // S1 shadow-mode inbox: relay the durably-landed inbound rows (ingest_record) → conduit.inbound, and a
+              // mapping consumer maps each through the SAME SnapshotLoader handlers as boot → engines + outbox.
+              val inboundRelay                                    = new InboundRelay[IO](xa, inboundPub)
+              val inboundRelayLoop: IO[Unit]                      = (inboundRelay.runOnce() *> IO.sleep(1.second)).foreverM
+              val inboundConsumer                                 = new InboundMappingConsumer[IO](pulsar, xa, new SnapshotLoader[IO](xa))
+              implicit val log: org.typelevel.log4cats.Logger[IO] = logger
+              logger.info(
+                "Consumer running: outbox relay + inbound inbox (relay+mapping) + Xero invoice + revenue recognition + Stripe settlement + document generation + VAT remittance + PII tombstone"
+              ) *>
+                List(
+                  Supervised("outbox-relay", relayLoop),
+                  Supervised("inbound-relay", inboundRelayLoop),
+                  Supervised("inbound-mapping", inboundConsumer.runForever),
+                  Supervised("xero-invoice", xeroConsumer.runForever),
+                  Supervised("revenue-recognition", revConsumer.runForever),
+                  Supervised("stripe-settlement", stripeLoop),
+                  Supervised("document-generation", docConsumer.runForever),
+                  Supervised("invoice-void", voidConsumer.runForever),
+                  Supervised("vat-remittance", vatRemitConsumer.runForever),
+                  Supervised("pii-tombstone", piiTombstoneConsumer.runForever),
+                  Supervised("rebate-accrual", rebateAccrualConsumer.runForever),
+                  Supervised("placement", placementConsumer.runForever),
+                  Supervised("return-effector", returnConsumer.runForever),
+                  Supervised("opening-inventory", openingInvConsumer.runForever),
+                  Supervised("commission-accrual", commissionConsumer.runForever),
+                  Supervised("order-commitment", commitmentConsumer.runForever),
+                  Supervised("shadow-validation", shadowLoop),
+                  Supervised("notification-delivery", notifyLoop),
+                  Supervised("forecast-cycle", forecastLoop),
+                  Supervised("h6q-cycle", h6qCycleLoop)
+                ).parSequence_
           }
         }
     }
