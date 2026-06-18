@@ -38,7 +38,7 @@ import { Proof } from './Proof';
 import { Access } from './Access';
 import { Notifications } from './Notifications';
 import { Help } from './Help';
-import { CHAPTERS } from './help/content';
+import { CHAPTERS, TOURS } from './help/content';
 import { AccountPage } from './AccountPage';
 import { CrmAccount } from './CrmAccount';
 import { OrderDetail } from './OrderDetail';
@@ -226,6 +226,18 @@ export function App() {
   });
   const [menu, setMenu] = useState<string | null>(null);
   const [palOpen, setPalOpen] = useState(false);
+  // guided tour (M-Help.3): the Help screen dispatches 'conduit:tour'; the overlay drives the real screens.
+  const [tour, setTour] = useState<{ id: string; step: number } | null>(null);
+  useEffect(() => {
+    const onTour = (e: Event) => {
+      const t = TOURS.find((x) => x.id === (e as CustomEvent).detail);
+      if (!t) return;
+      setTour({ id: t.id, step: 0 });
+      navigate('/' + t.steps[0].route);
+    };
+    window.addEventListener('conduit:tour', onTour);
+    return () => window.removeEventListener('conduit:tour', onTour);
+  }, [navigate]);
   const [toastNode, toast] = useToast();
 
   // The non-prod quick-doors set a dev:<id> override; real users go through Keycloak.
@@ -412,6 +424,27 @@ export function App() {
       </div>
 
       <Palette open={palOpen} onClose={() => setPalOpen(false)} go={(r) => setRoute(r)} />
+      {tour && (() => {
+        const t = TOURS.find((x) => x.id === tour.id)!;
+        const s = t.steps[tour.step];
+        const goStep = (i: number) => { setTour({ id: tour.id, step: i }); navigate('/' + t.steps[i].route); };
+        return (
+          <div data-testid="tour-card" style={{ position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)', zIndex: 200, background: 'var(--bg-1)', border: '1px solid var(--accent)', borderRadius: 12, padding: '14px 16px', width: 460, maxWidth: '92vw', boxShadow: '0 14px 44px rgba(0,0,0,.45)' }}>
+            <div className="dim" style={{ fontSize: 11 }}>{t.title} · step {tour.step + 1}/{t.steps.length}</div>
+            <div style={{ fontFamily: 'var(--font-disp)', fontWeight: 600, fontSize: 15, margin: '4px 0' }}>{s.title}</div>
+            <div style={{ fontSize: 12.5, lineHeight: 1.5 }}>{s.body}</div>
+            <div className="row between" style={{ marginTop: 12 }}>
+              <button className="btn ghost sm" onClick={() => setTour(null)}>Exit tour</button>
+              <div className="row g6">
+                {tour.step > 0 && <button className="btn ghost sm" onClick={() => goStep(tour.step - 1)}>← Back</button>}
+                {tour.step < t.steps.length - 1
+                  ? <button className="btn sm" onClick={() => goStep(tour.step + 1)}>Next →</button>
+                  : <button className="btn sm" onClick={() => setTour(null)}>Done ✓</button>}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
       {toastNode}
     </div>
   );

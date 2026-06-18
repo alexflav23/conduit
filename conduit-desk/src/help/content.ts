@@ -638,3 +638,53 @@ export const CHAPTERS: ManualChapter[] = [...PRIMER, ...SELL, ...PLAN, ...SUPPLY
 export const PENDING_CHAPTERS: string[] = [];
 
 export const SECTION_ORDER = ['Primer', 'Sell', 'Plan', 'Supply', 'Finance', 'Treasury', 'Govern'];
+
+// Role-based training curriculum (spec 38 §5): ordered chapter sequences per role. Paths reuse chapters, never
+// duplicate. The Help screen tracks completion locally and exports any path (or the whole book) to PDF.
+export interface LearningPath {
+  id: string;
+  role: string;
+  blurb: string;
+  chapters: string[]; // chapter ids, in teaching order
+}
+
+// Guided tours (spec 38 §M-Help.3): a scripted walkthrough that NAVIGATES the real desk screen-by-screen with
+// an explanatory step card. Non-mutating — tours explain the flow on the live screens; they never place an order
+// or post anything. Driven by the TourOverlay mounted in the shell.
+export interface TourStep { route: string; title: string; body: string }
+export interface GuidedTour { id: string; title: string; steps: TourStep[] }
+
+export const TOURS: GuidedTour[] = [
+  { id: 'place-order', title: 'Place a compliant order', steps: [
+    { route: 'crm', title: 'Find the customer', body: 'Start in CRM — ⌘K or browse to the account you’re selling to. Everything ties back to this master record.' },
+    { route: 'order', title: 'Build the order', body: 'On the Order Desk, add a SKU + qty. The governed tier price fills in automatically — nobody types a price.' },
+    { route: 'order', title: 'Schedule & place', body: 'Set the delivery schedule (tranches if it’s split), then Place. It mints the CO- order id and fans out events.' },
+    { route: 'dealdesk', title: 'Exceptions live here', body: 'A non-tier price is never typed on the order — it becomes a Deal Desk exception (maker-checker → CEO).' },
+  ]},
+  { id: 'close-period', title: 'Close & lock a period', steps: [
+    { route: 'finance', title: 'Read the P&L', body: 'Finance shows the period’s P&L and the forward cash waterfall.' },
+    { route: 'audit', title: 'Reconcile first', body: 'In the Auditability Center, every reconciliation must be matched before a lock is allowed.' },
+    { route: 'period', title: 'Group roll-up', body: 'The group period can’t lock until every operating entity is locked — laggards are named upfront.' },
+    { route: 'audit', title: 'Lock (segregation of duties)', body: 'Lock the period — blocked if any reconciliation is open, or if you’re the one who closed it.' },
+  ]},
+  { id: 'trace-unit', title: 'Trace a unit end-to-end', steps: [
+    { route: 'batch', title: 'Serial → genealogy', body: 'On Batch & Genealogy, enter a serial to walk it to its lot, CM PO, sales order, customer and activation.' },
+    { route: 'batch', title: 'Its exact cost', body: 'The cost breakdown is specific-identification: factory USD ÷ FX → GBP + freight + duty — no averaging.' },
+    { route: 'warranty', title: 'Its RMA family', body: 'Warranty & RMA shows the faulty→replacement family that shares one warranty window (the clock never resets).' },
+  ]},
+];
+
+export const LEARNING_PATHS: LearningPath[] = [
+  { id: 'exec', role: 'CEO / exec', blurb: 'The shape of the business and the levers you approve.',
+    chapters: ['getting-started', 'data-layers', 'golden-record', 'demand-h6q', 'finance', 'deal-desk', 'auditability'] },
+  { id: 'finance', role: 'Finance', blurb: 'The ledger, the close, and the books that must tie.',
+    chapters: ['getting-started', 'money-fx-integrity', 'event-ledger-model', 'finance', 'documents', 'tax', 'period', 'auditability', 'shadow-validation'] },
+  { id: 'sales', role: 'Sales / commercial', blurb: 'From a customer to a placed, governed order.',
+    chapters: ['getting-started', 'data-layers', 'crm', 'order-desk', 'pricing', 'deal-desk', 'commission', 'demand-h6q'] },
+  { id: 'ops', role: 'Ops / supply', blurb: 'Stock, traceability, and after-sales.',
+    chapters: ['getting-started', 'inventory', 'purchasing', 'batch-genealogy', 'activations', 'warranty-rma', 'supply-window'] },
+  { id: 'auditor', role: 'Auditor', blurb: 'How every figure re-derives, by replay.',
+    chapters: ['getting-started', 'event-ledger-model', 'auditability', 'proof-center', 'period', 'lifecycle'] },
+  { id: 'shadow', role: 'Shadow dual-run owner', blurb: 'Run Conduit in parallel and watch it converge.',
+    chapters: ['shadow-mode', 'sync', 'shadow-validation'] },
+];
