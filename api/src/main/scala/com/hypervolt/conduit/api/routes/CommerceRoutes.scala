@@ -268,6 +268,27 @@ final class CommerceRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F])
           }
       )
 
+  // The Conduit order golden record (topology): conduit ref + source identities + lines + invoices + dispatches
+  // + recognition. Same scope/projection gate as getOrder.
+  private val getOrderLineage =
+    base.get
+      .in("api" / "v1" / "orders" / path[String]("id") / "lineage")
+      .out(jsonBody[Json])
+      .serverLogic(principal =>
+        idStr =>
+          uuid(idStr) match {
+            case Left(e) => Async[F].pure(Left(e))
+            case Right(orderId) =>
+              (OrderRepo.scopeRow(orderId), OrderRepo.lineageJson(orderId)).tupled.transact(xa).map {
+                case (None, _) | (_, None) => Left(err(StatusCode.NotFound, "not_found", "no such order"))
+                case (Some((entity, market, channel, owner)), Some(json)) =>
+                  if (PolicyEngine.authorize(principal, Action.View, "order", Target(entity, market, channel, owner)))
+                    Right(Projection.projectFor(principal, "order", json))
+                  else Left(err(StatusCode.Forbidden, "forbidden", "requires view:order"))
+              }
+          }
+      )
+
   private val listOrders =
     base.get
       .in("api" / "v1" / "orders")
@@ -316,6 +337,6 @@ final class CommerceRoutes[F[_]: Async](xa: Transactor[F], auth: AuthService[F])
 
   val routes: HttpRoutes[F] =
     Http4sServerInterpreter[F](ApiMetrics.serverOptions[F]).toRoutes(
-      List(createParty, billingProfile, creditProfile, placeOrder, amendOrder, listOrders, getOrder)
+      List(createParty, billingProfile, creditProfile, placeOrder, amendOrder, listOrders, getOrder, getOrderLineage)
     )
 }

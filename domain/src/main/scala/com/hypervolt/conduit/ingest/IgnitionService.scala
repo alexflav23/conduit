@@ -55,7 +55,8 @@ final class IgnitionService[F[_]: Async](xa: Transactor[F]) {
             dispVat <- backfillDispatchVat
             tranches <- modelDeliveryTranches
             prodNames <- backfillProductNames
-          } yield s"stamped=$stamped lots=$lots legacy_lots=$legacyLots serials_linked=$linked periods=$periods stock_items=$stock exposure_rows=$exp price_lost_lines_fixed=$repriced order_placed_events=$placed recognition_events=$emitted opening_inv_event=$invOpen warranty_windows=$warr replacements_linked=$repl $mdm $merged branches_linked=$branches $owners customer_installer_phone_links=$soldVia forecastable_accounts=$fcOwn document_series=$docSer line_vat_backfilled=$lineVat multiline_vat=$mlVat dispatch_vat=$dispVat delivery_tranches=$tranches product_names=$prodNames"
+            ordLin   <- backfillOrderLineage
+          } yield s"stamped=$stamped lots=$lots legacy_lots=$legacyLots serials_linked=$linked periods=$periods stock_items=$stock exposure_rows=$exp price_lost_lines_fixed=$repriced order_placed_events=$placed recognition_events=$emitted opening_inv_event=$invOpen warranty_windows=$warr replacements_linked=$repl $mdm $merged branches_linked=$branches $owners customer_installer_phone_links=$soldVia forecastable_accounts=$fcOwn document_series=$docSer line_vat_backfilled=$lineVat multiline_vat=$mlVat dispatch_vat=$dispVat delivery_tranches=$tranches product_names=$prodNames order_lineage=$ordLin"
       }
       .transact(xa)
 
@@ -610,6 +611,23 @@ final class IgnitionService[F[_]: Async](xa: Transactor[F]) {
             RETURNING id, order_line_id, dispatch_id)
           UPDATE dispatch_line dl SET tranche_id = ins.id
           FROM ins WHERE dl.order_line_id = ins.order_line_id AND dl.dispatch_id = ins.dispatch_id AND dl.tranche_id IS NULL""".update.run
+
+  // Order golden record (topology): the Conduit order (order.id) is the master; assign a Conduit-native ref and
+  // record the source identities (the MRPeasy order code, the customer PO if present) in order_source_link, the
+  // same master/sources pattern as the account MDM. Invoices/dispatches/recognition already FK to order.id, so
+  // they're already lineage. Idempotent (only fills a null conduit_ref; source links ON CONFLICT DO NOTHING).
+  private def backfillOrderLineage: ConnectionIO[Int] =
+    sql"""UPDATE "order" o SET conduit_ref = r.ref
+          FROM (SELECT id, 'CO-' || lpad(row_number() OVER (ORDER BY created_at, id)::text, 6, '0') AS ref
+                FROM "order") r
+          WHERE o.id = r.id AND o.conduit_ref IS NULL""".update.run *>
+      sql"""INSERT INTO order_source_link (order_id, source_system, source_ref, source_detail)
+            SELECT id, 'mrpeasy', order_no, 'MRPeasy customer order' FROM "order" WHERE order_no IS NOT NULL
+            ON CONFLICT (order_id, source_system, source_ref) DO NOTHING""".update.run *>
+      sql"""INSERT INTO order_source_link (order_id, source_system, source_ref, source_detail)
+            SELECT id, 'customer_po', customer_po_number, 'Customer purchase order'
+            FROM "order" WHERE customer_po_number IS NOT NULL AND customer_po_number <> ''
+            ON CONFLICT (order_id, source_system, source_ref) DO NOTHING""".update.run
 
   // Real product names (C5 / preview): variants were created from order/serial SKUs with no human name, so line
   // items rendered the synthetic family "MRPeasy import". Map each variant's SKU to the MRPeasy catalogue title

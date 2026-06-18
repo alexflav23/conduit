@@ -4,6 +4,7 @@ import com.hypervolt.conduit.pricing.QuoteLineResult
 import doobie._
 import doobie.implicits._
 import doobie.postgres.implicits._
+import doobie.postgres.circe.jsonb.implicits._
 import io.circe.Json
 import io.circe.syntax._
 import java.time.Instant
@@ -155,6 +156,32 @@ object OrderRepo {
     sql"""SELECT entity_id, market_id, channel_id, created_by FROM "order" WHERE id = $orderId"""
       .query[(Option[UUID], Option[UUID], Option[UUID], Option[UUID])]
       .option
+
+  // The Conduit order as a golden record (topology): the Conduit ref at the top, its source identities
+  // (MRPeasy order, customer PO, …), the priced line items, and every downstream artifact already linked to
+  // order.id — invoices, dispatches+tranches, recognition. One read for the order detail page.
+  def lineageJson(orderId: UUID): ConnectionIO[Option[Json]] =
+    sql"""SELECT jsonb_build_object(
+            'id', o.id::text, 'conduit_ref', o.conduit_ref, 'order_no', o.order_no, 'status', o.status,
+            'order_date', o.order_date, 'created_at', o.created_at, 'currency', o.txn_currency,
+            'subtotal_ex_vat', o.subtotal_ex_vat, 'vat_total', o.vat_total, 'total_inc_vat', o.total_inc_vat,
+            'customer', (SELECT jsonb_build_object('id', p.id::text, 'name', regexp_replace(p.display_name,'^MRP:\s*',''))
+                         FROM party p WHERE p.id = o.sold_to_party_id),
+            'sources', (SELECT COALESCE(jsonb_agg(jsonb_build_object('system', sl.source_system, 'ref', sl.source_ref, 'detail', sl.source_detail) ORDER BY sl.source_system), '[]'::jsonb)
+                        FROM order_source_link sl WHERE sl.order_id = o.id),
+            'lines', (SELECT COALESCE(jsonb_agg(jsonb_build_object('name', COALESCE(NULLIF(v.name,''), v.sku), 'sku', v.sku,
+                          'qty', ol.qty, 'unit_price_ex_vat', ol.unit_price_ex_vat, 'vat', ol.vat_amount, 'status', ol.status) ORDER BY ol.id), '[]'::jsonb)
+                      FROM order_line ol JOIN product_variant v ON v.id = ol.product_variant_id WHERE ol.order_id = o.id),
+            'invoices', (SELECT COALESCE(jsonb_agg(jsonb_build_object('invoice_no', i.invoice_no, 'total_inc_vat', i.total_inc_vat,
+                          'status', i.status, 'issued_at', i.issued_at) ORDER BY i.issued_at), '[]'::jsonb)
+                         FROM order_invoice i WHERE i.order_id = o.id AND i.status <> 'void'),
+            'dispatches', (SELECT COALESCE(jsonb_agg(jsonb_build_object('dispatch_no', d.dispatch_no, 'date', d.date::date::text, 'status', d.status,
+                          'lines', (SELECT count(*) FROM dispatch_line dl WHERE dl.dispatch_id = d.id),
+                          'tranches', (SELECT count(*) FROM delivery_tranche t WHERE t.dispatch_id = d.id)) ORDER BY d.date), '[]'::jsonb)
+                          FROM dispatch d WHERE d.order_id = o.id),
+            'recognition', (SELECT jsonb_build_object('dispatches', count(*), 'revenue_ex_vat', round(COALESCE(sum(revenue_ex_vat),0),2), 'cogs', round(COALESCE(sum(cogs),0),2))
+                            FROM revenue_recognition rr WHERE rr.order_id = o.id))
+          FROM "order" o WHERE o.id = $orderId""".query[Json].option
 
   def viewJson(orderId: UUID): ConnectionIO[Option[Json]] =
     for {
