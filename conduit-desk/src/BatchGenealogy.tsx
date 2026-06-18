@@ -118,7 +118,7 @@ function ChainNode({ label, title, sub, money, tone, last }: {
 
 // ============================================================ SERIAL → GENEALOGY
 interface SerialNode { sn?: string; serial?: string; sku_label?: string; skuLabel?: string; location?: string; status?: string; order?: string; customer?: string; dispatched_at?: string; dispatchedAt?: string; owner?: string; owner_email?: string }
-interface BatchNode { id?: string; received?: string; cm?: string; po?: string; location_name?: string; locationName?: string; landed_unit_cost?: number | string; unit_cost?: number | string; freight_per_unit?: number | string; duty_per_unit?: number | string; currency?: string }
+interface BatchNode { id?: string; received?: string; cm?: string; po?: string; location_name?: string; locationName?: string; landed_unit_cost?: number | string; unit_cost?: number | string; fx_rate?: number | string; fx_basis?: string; freight_per_unit?: number | string; duty_per_unit?: number | string; currency?: string }
 interface Activation { activated_at?: string; installer?: string }
 interface TimelineEvent { at?: string; event?: string; origin?: string }
 interface Genealogy { serial?: SerialNode; batch?: BatchNode; activation?: Activation | null; timeline?: TimelineEvent[] }
@@ -250,13 +250,26 @@ function SerialGenealogy({ ctx, role, hasProfit }: { ctx: Ctx; role: Role; hasPr
                       </div>
                       <div className="dim" style={{ fontSize: 11.5, textAlign: 'right' }}>from lot {d.batch.id}<br />not a weighted average</div>
                     </div>
-                    <div className="kv" style={{ fontSize: 12 }}>
-                      <span className="k">Factory unit</span><span className="v num">{gbp(d.batch.unit_cost, d.batch.currency)}</span>
-                      <span className="k">+ Freight / unit</span><span className="v num">{gbp(d.batch.freight_per_unit, d.batch.currency)}</span>
-                      <span className="k">+ Duty / unit</span><span className="v num">{gbp(d.batch.duty_per_unit, d.batch.currency)}</span>
-                      <span className="k" style={{ fontWeight: 600, color: 'var(--text)' }}>= Landed</span>
-                      <span className="v num" style={{ fontWeight: 600 }}>{gbp(d.batch.landed_unit_cost, d.batch.currency)}</span>
-                    </div>
+                    {(() => {
+                      // The factory unit is the contract-manufacturer cost in ITS currency (USD for Volex); the
+                      // landed cost is GBP. Show the FX conversion explicitly so the column actually adds up:
+                      // factory(USD) ÷ fx → factory(GBP) + freight + duty = landed(GBP). Legacy in-house lots are
+                      // gbp_native (fx 1, no freight) so the FX line is suppressed.
+                      const fx = Number(d.batch!.fx_rate ?? 1);
+                      const native = (d.batch!.fx_basis ?? '').toString().includes('native') || fx === 1;
+                      const factoryCcy = native ? (d.batch!.currency || 'GBP') : 'USD';
+                      const factoryGbp = native ? Number(d.batch!.unit_cost ?? 0) : Number(d.batch!.unit_cost ?? 0) / (fx || 1);
+                      return (
+                        <div className="kv" style={{ fontSize: 12 }}>
+                          <span className="k">Factory unit{native ? '' : ' (USD)'}</span><span className="v num">{gbp(d.batch!.unit_cost, factoryCcy)}</span>
+                          {!native && <><span className="k">÷ FX {fx.toFixed(4)} → GBP</span><span className="v num">{gbp(factoryGbp, 'GBP')}</span></>}
+                          <span className="k">+ Freight / unit</span><span className="v num">{gbp(d.batch!.freight_per_unit, 'GBP')}</span>
+                          <span className="k">+ Duty / unit</span><span className="v num">{gbp(d.batch!.duty_per_unit, 'GBP')}</span>
+                          <span className="k" style={{ fontWeight: 600, color: 'var(--text)' }}>= Landed</span>
+                          <span className="v num" style={{ fontWeight: 600 }}>{gbp(d.batch!.landed_unit_cost, 'GBP')}</span>
+                        </div>
+                      );
+                    })()}
                   </>
                 ) : (
                   <div className="dim" style={{ padding: '8px 2px', fontSize: 12.5 }}>No landed cost recorded for this lot yet.</div>
