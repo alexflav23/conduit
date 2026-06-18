@@ -51,10 +51,13 @@ export function Card({ title, icon, aux, children, style, className }: {
   title?: React.ReactNode; icon?: (p?: any) => React.ReactElement; aux?: React.ReactNode;
   children?: React.ReactNode; style?: React.CSSProperties; className?: string;
 }) {
+  // A flush card (padding:0 — e.g. a full-bleed table) must still pad its HEADER, else the title jams into the
+  // corner and the aux clips on the right. Detect it and tag the header so the CSS re-pads it.
+  const flush = !!style && (style.padding === 0 || style.padding === '0');
   return (
     <div className={'card ' + (className || '')} style={style}>
       {title && (
-        <div className="ct">
+        <div className={'ct' + (flush ? ' ct-flush' : '')}>
           <div className="t">{icon && icon()}{title}</div>
           {aux && <div className="aux">{aux}</div>}
         </div>
