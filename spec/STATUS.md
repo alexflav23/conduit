@@ -29,12 +29,17 @@ Companion to [`spec/07`](./07_BUILD_PLAN.md) (the acceptance source of truth) an
 
 > **Update 2026-06-18 — Phase C (C4–C7) closed + Conduit brand adopted.**
 > - **C4 Pricing**: already seeded/verified (22 agreements, 198 rules, governed quoting).
-> - **C5 Documents (M13-Docs)**: stood up the WORM pipeline — MinIO local S3 (compose) + gapless
->   number series (`HV-UK-INV`/`HV-UK-CN`, seeded in ignition) + a line-VAT backfill (the import
->   dropped `order_line.vat_amount`, breaking the Σ-lines==invoice conservation guard; single-line
->   case fixed exactly) + a self-draining consumer loop (50/20s). Invoices generate with gapless
->   numbers + MinIO PDFs + content hashes; the ~19.5k single-line book drains in ~2h. **Tail**:
->   multi-line VAT needs largest-remainder allocation (~4.4k orders).
+> - **C5 Documents (M13-Docs)**: WORM pipeline stood up — MinIO local S3 (compose) + gapless series
+>   + line-VAT backfill + dispatch-scoped invoices. **Historical invoice-PDF backfill was tried, then
+>   reverted**: re-minting fresh 2026-numbered customer invoices for sales already invoiced in
+>   MRPeasy/Xero — billed to MRPeasy stub parties, line items rendering as "MRPeasy import" — was
+>   meaningless. Purged (2,632 docs + objects, series reset to 0). **Decision: historical invoicing =
+>   the AR ledger rows (`order_invoice`, which tie AR), NOT minted PDFs.** The document engine
+>   (FOP/WORM/gapless + dispatch line-scoping) is retained for invoices Conduit *issues going forward*
+>   — which must resolve bill-to to the master account and use real line items. The **line-VAT
+>   backfill and the tranche model are kept** (correct data regardless): 3,735 `delivery_tranche`
+>   rows decompose multi-shipment orders, and orders reconcile to Σ dispatch invoices (22,356/24,022
+>   exact; 1,663 partially shipped; 3 over-invoiced → Shadow Validation).
 > - **C6 H6Q (M11)**: forecast-ownership seed (37 real ≥£100k accounts, owned by the operator) +
 >   a scheduled consumer opener → cycle **2026-W25** open with 37 outstanding capture slots; the
 >   bottom-up spine is exercised (`/h6q/cycles`, `/h6q/my-forecasts`).
