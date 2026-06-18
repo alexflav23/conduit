@@ -215,7 +215,18 @@ object CrmReadRepo {
     fr"WHERE " ++ List(
       Some(fr"p.parent_party_id IS NULL"),
       Some(fr"p.status <> 'merged'"),
-      segment.map(s => fr"p.segment = $s"),
+      // Customer-type subroutes group the inconsistent imported segment values (installer/installers,
+      // wholesale/wholesaler, retail/online_retail, …) so each type-route returns its whole population.
+      segment.map { s =>
+        val group = s.toLowerCase match {
+          case "installer"  => List("installer", "installers")
+          case "wholesaler" => List("wholesale", "wholesaler")
+          case "retail"     => List("retail", "online_retail")
+          case "other"      => List("other", "international")
+          case x            => List(x)
+        }
+        fr"(" ++ group.map(g => fr"p.segment = $g").reduce(_ ++ fr" OR " ++ _) ++ fr")"
+      },
       q.map { t =>
         val digits = t.filter(_.isDigit)
         val phoneClause =

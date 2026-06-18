@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useSearchParams } from 'react-router-dom';
-import { useNavigate } from 'react-router-dom';
+import { useSearchParams, useNavigate, useParams } from 'react-router-dom';
 import { useApi, request } from './lib/query';
 import { ApiError } from './lib/client';
 import { marketId } from './api';
@@ -107,6 +106,16 @@ const DEFAULT_STAGES = ['lead', 'qualified', 'proposal', 'won', 'lost'];
 
 const asArray = <T,>(x: unknown): T[] => (Array.isArray(x) ? (x as T[]) : []);
 
+// Customer types — first-class subroutes (/crm/<segment>), the primary browsing nav. 'all' is the bare /crm.
+const SEGMENTS = ['all', 'consumer', 'installer', 'wholesaler', 'retail', 'energy', 'automotive', 'commercial', 'other'];
+const SEG_LABEL: Record<string, string> = {
+  all: 'All', consumer: 'Consumers', installer: 'Installers', wholesaler: 'Wholesalers', retail: 'Retail',
+  energy: 'Energy', automotive: 'Automotive', commercial: 'Commercial', other: 'Other',
+};
+// Secondary tools — matching / raw / pipeline, kept out of the primary type-browsing flow (/crm/<tool>).
+const TOOLS = ['match', 'parties', 'pipeline', 'deals'];
+const TOOL_LABEL: Record<string, string> = { match: 'Match review', parties: 'Parties (raw)', pipeline: 'Pipeline', deals: 'Deal book' };
+
 export function CRM({ role, ctx, toast }: { role: any; ctx: any; toast: (m: string, k?: string) => void }) {
   const r = (role || {}) as Role;
   const c = (ctx || {}) as Ctx;
@@ -115,9 +124,13 @@ export function CRM({ role, ctx, toast }: { role: any; ctx: any; toast: (m: stri
   const hasPii = layers.indexOf('pii') >= 0;
   const market = c.market ? marketId(c.market) : '';
 
-  const [tab, setTab] = useState<'accounts' | 'review' | 'parties' | 'pipeline' | 'deals'>('accounts');
+  // Route-driven nav: the customer types are first-class subroutes (/crm/<segment>), each with its own
+  // pagination; the matching/raw tools are secondary subroutes (/crm/<tool>). The bare /crm lands on "all".
+  const { sub } = useParams();
+  const tab = TOOLS.includes(sub ?? '') ? (sub === 'match' ? 'review' : (sub as string)) : 'accounts';
+  const acctSeg = SEGMENTS.includes(sub ?? '') ? (sub as string) : 'all';
+
   const [reviewPage, setReviewPage] = useState(0);
-  const [acctSeg, setAcctSeg] = useState('all');
   const [acctQ, setAcctQ] = useState('');
   const [acctPage, setAcctPage] = useState(0);
   const [acctSel, setAcctSel] = useState<string | null>(null);
@@ -137,6 +150,8 @@ export function CRM({ role, ctx, toast }: { role: any; ctx: any; toast: (m: stri
     const id = params.get('account');
     if (id) navigate('/crm/account/' + id, { replace: true });
   }, [params, navigate]);
+  // Each customer-type subroute keeps its own pagination — reset to the first page on a type switch.
+  useEffect(() => { setAcctPage(0); }, [sub]);
 
   // ---- credit-limit maker-checker request ----
   const [limitReq, setLimitReq] = useState<Party | null>(null);
@@ -240,17 +255,34 @@ export function CRM({ role, ctx, toast }: { role: any; ctx: any; toast: (m: stri
         right={c.market ? <span className="stale"><span className="pulse" />market {String(c.market).slice(0, 8)}</span> : undefined}
       />
 
-      <div className="seg" style={{ marginBottom: 18 }}>
-        <button className={tab === 'accounts' ? 'on' : ''} data-testid="crm-tab-accounts" onClick={() => setTab('accounts')}>Accounts</button>
-        <button className={tab === 'review' ? 'on' : ''} data-testid="crm-tab-review" onClick={() => setTab('review')}>Match review</button>
-        <button className={tab === 'parties' ? 'on' : ''} data-testid="crm-tab-parties" onClick={() => setTab('parties')}>Parties (raw)</button>
-        <button className={tab === 'pipeline' ? 'on' : ''} data-testid="crm-tab-pipeline" onClick={() => setTab('pipeline')}>Pipeline</button>
-        <button className={tab === 'deals' ? 'on' : ''} data-testid="crm-tab-deals" onClick={() => setTab('deals')}>Deal book</button>
+      {/* Primary nav — customer types as big buttons, each its own subroute + pagination */}
+      <div className="row g8" style={{ flexWrap: 'wrap', marginBottom: 12 }}>
+        {SEGMENTS.map((s) => {
+          const on = tab === 'accounts' && acctSeg === s;
+          return (
+            <button key={s} data-testid={'crm-seg-' + s}
+              onClick={() => navigate(s === 'all' ? '/crm' : '/crm/' + s)}
+              style={{
+                padding: '10px 18px', fontSize: 14, fontWeight: 600, borderRadius: 12, cursor: 'pointer',
+                background: on ? 'var(--brand-grad)' : 'var(--panel-2)', color: on ? '#fff' : 'var(--text)',
+                border: '1px solid var(--line)', boxShadow: on ? '0 4px 14px -4px rgba(150,45,255,0.5)' : 'none',
+              }}>
+              {SEG_LABEL[s]}
+            </button>
+          );
+        })}
+      </div>
+      {/* Secondary — matching / raw / pipeline, kept out of the main type-browsing flow */}
+      <div className="seg" style={{ marginBottom: 18, fontSize: 12.5, opacity: 0.9 }}>
+        {TOOLS.map((t) => (
+          <button key={t} className={tab === (t === 'match' ? 'review' : t) ? 'on' : ''} data-testid={'crm-tool-' + t}
+            onClick={() => navigate('/crm/' + t)}>{TOOL_LABEL[t]}</button>
+        ))}
       </div>
 
       {tab === 'accounts' ? (
         <AccountsView
-          list={accounts} detail={acctDetail} seg={acctSeg} setSeg={(s) => { setAcctSeg(s); setAcctPage(0); }}
+          list={accounts} detail={acctDetail} seg={acctSeg}
           q={acctQ} setQ={(v) => { setAcctQ(v); setAcctPage(0); }} page={acctPage} setPage={setAcctPage} pageSize={ACCT_PAGE}
           sel={acctSel} setSel={setAcctSel} hasCommercial={hasCommercial} toast={toast}
         />
@@ -798,10 +830,10 @@ interface AccountDetail {
 
 const SRC_LABEL: Record<string, string> = { mrpeasy: 'MRPeasy', hubspot_company: 'HubSpot', hubspot_contact: 'Contact' };
 
-function AccountsView({ list, detail, seg, setSeg, q, setQ, page, setPage, pageSize, sel, setSel, hasCommercial, toast }: {
+function AccountsView({ list, detail, seg, q, setQ, page, setPage, pageSize, sel, setSel, hasCommercial, toast }: {
   list: ReturnType<typeof useApi<{ rows?: MasterAccount[]; total?: number }>>;
   detail: ReturnType<typeof useApi<AccountDetail>>;
-  seg: string; setSeg: (s: string) => void; q: string; setQ: (v: string) => void;
+  seg: string; q: string; setQ: (v: string) => void;
   page: number; setPage: (n: number) => void; pageSize: number;
   sel: string | null; setSel: (id: string | null) => void; hasCommercial: boolean;
   toast: (m: string, k?: string) => void;
@@ -811,20 +843,16 @@ function AccountsView({ list, detail, seg, setSeg, q, setQ, page, setPage, pageS
   const total = list.data?.total ?? 0;
   const pages = Math.max(1, Math.ceil(total / pageSize));
   const d = detail.data ?? null;
-  const segs = ['all', 'consumer', 'installer', 'wholesaler', 'retail', 'energy', 'automotive', 'commercial', 'other'];
 
   return (
     <div className="grid" style={{ gridTemplateColumns: sel ? '1.3fr 1fr' : '1fr', gap: 16, alignItems: 'start' }}>
       <div>
         <div className="loadbar" style={{ marginBottom: 12, gap: 8 }}>
-          <select className="cellinput" value={seg} onChange={(e) => setSeg(e.target.value)} data-testid="acct-seg">
-            {segs.map((s) => <option key={s} value={s}>{s === 'all' ? 'All segments' : s}</option>)}
-          </select>
-          <input className="cellinput" style={{ width: 280, textAlign: 'left' }} value={q} data-testid="acct-search"
-            onChange={(e) => setQ(e.target.value)} placeholder="Search by name, email, or contact…" />
-          <span className="dim" style={{ fontSize: 12, marginLeft: 'auto' }}>{num(total)} Conduit accounts</span>
+          <input className="cellinput" style={{ width: 320, textAlign: 'left' }} value={q} data-testid="acct-search"
+            onChange={(e) => setQ(e.target.value)} placeholder={`Search ${seg === 'all' ? 'all accounts' : SEG_LABEL[seg] ?? seg} by name, email, or contact…`} />
+          <span className="dim" style={{ fontSize: 12, marginLeft: 'auto' }}>{num(total)} {seg === 'all' ? 'Conduit accounts' : (SEG_LABEL[seg] ?? seg)}</span>
         </div>
-        <Card title="Conduit accounts" icon={I.user} aux={<span className="dim" style={{ fontSize: 11.5 }}>one entity · MRPeasy + HubSpot + contacts as parts</span>} className="tablewrap" style={{ padding: 0 }}>
+        <Card title={seg === 'all' ? 'Conduit accounts' : SEG_LABEL[seg] ?? seg} icon={I.user} aux={<span className="dim" style={{ fontSize: 11.5 }}>one entity · MRPeasy + HubSpot + contacts as parts</span>} className="tablewrap" style={{ padding: 0 }}>
           <table className="tbl">
             <thead><tr><th>First name</th><th>Last name</th><th>Email</th><th>Phone</th><th>Segment</th><th style={{ textAlign: 'right' }}>Contacts</th><th style={{ textAlign: 'right' }}>Orders</th></tr></thead>
             <tbody>
