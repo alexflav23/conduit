@@ -1,9 +1,31 @@
-# Conduit — Build Status & Ignition Plan
+# Conduit — Build Status, Ignition & Shadow-Mode Plan
 
 _As of 2026-06-18. Assessed by reading the live code (310 Scala files, 89 migrations), the
 testcontainers integration suites, and the running Postgres (`conduit-postgres`) row-by-row.
 Companion to [`spec/07`](./07_BUILD_PLAN.md) (the acceptance source of truth) and the root
 `CLAUDE.md` (the implementation contract)._
+
+> **Update 2026-06-18 — STRATEGY REFRAMED: shadow-mode first** (governs everything below).
+> Conduit's destination is the **top of Hypervolt's software topology** (Rippling-Unity-style —
+> everything else, ERP included, eventually subservient to it). The near-term path is the deliberate
+> inverse: **run Conduit in shadow.** Build inbound integrations so every artifact it cares about
+> (POs, support tickets, RMAs, deals, activations, stock moves) **flows INTO Conduit automatically**;
+> run the **entire event pipeline + immutable ledgers + every engine** on that live data; let senior
+> teams review and give feedback; refine for months before takeover. Consequences now baked in:
+> **(1) no outbound/write-back yet** — M14 HubSpot-out, Horizons-out and any source write-back are
+> DEFERRED; the Flutter companion is PARKED. **(2) inbound data must NEVER be lost** — the hard
+> architectural constraint. **(3) finish the dormant engines** (commission, fuzzy-match triage,
+> hedged-COGS) so shadow is whole, not hollow. The work is now organised as four tracks **S1–S4**
+> (see "Shadow-mode operating model" below), replacing the old Phase-C/D framing.
+>
+> **S1 SHIPPED (2026-06-18)** — the **durable inbound spine** (the mirror of the outbox). `ingest_record`
+> evolved into a relay-driven inbox (`received → published → processed → failed`); `InboundRelay`
+> publishes the backlog to Pulsar `conduit.inbound`; `InboundMappingConsumer` maps each row through the
+> **same `SnapshotLoader` handlers as boot** (one mapping codebase for live + snapshot) into the engines
+> + outbox; unmappable rows are **quarantined** (raw payload + error retained, never dropped) and surfaced
+> at `/inbox/{health,quarantine,requeue}`. A drifted re-pull re-enters the inbox automatically. Migration
+> `V1_1_7` applied live. **S2 next**: a live scheduler driving the (already-built) `IngestRunner`/connectors
+> + real HubSpot/MRPeasy/activation API impls + credentials, so real records start landing.
 
 > **Update 2026-06-18 — the CRM/MDM layer went live** (Phase C, M4). A full Master Data
 > Management golden-record was built on top of the dormant trade substrate: every customer the
@@ -52,20 +74,49 @@ Companion to [`spec/07`](./07_BUILD_PLAN.md) (the acceptance source of truth) an
 ## TL;DR
 
 **The code is built and CI-proven across essentially every milestone (M0–M13b + M-Pricing +
-M13-Docs + M13-Tax). The live environment is _dormant_, not incomplete.** The historical data we
-ingested is **trade substrate** (parties, orders, dispatches, serials, deals, exogenous series,
-forecast runs) loaded by the forecasting `SnapshotLoader` — it has **never been driven through the
-milestone engines**, so almost every milestone's own tables are empty in the running DB.
+M13-Docs + M13-Tax), and the historical book has been ignited** — real P&L (£48.51m rev / 47.5% GM),
+balanced ledger, 150k-account MDM golden record, order/serial/RMA topology, all replayable from a
+clean boot. The original "import the history" goal is essentially met.
 
-The remaining work is therefore mostly **ignition**: replay the real history through the engines
-that already exist, in dependency order, so the live DB reflects reality across the board. Only a
-short list of items are genuine net-new code. This _is_ the original goal — "the whole data import
-engine, so Conduit can start with all the historical data."
+**The mission is now shadow mode** (see the reframe update above). The question is no longer "is the
+engine built" — it almost always is — but **"is it fed by a live inbound feed, running on current
+reality, and producing outputs senior teams can review?"** That reframes the milestone table below:
+read each row through the **shadow lens** — most engines are ✅/🟢 built, and the remaining work is
+**connecting them to live inbound (S2), validating against source (S3), and finishing the few that
+are hollow without a real feed (S4)**. Outbound is out of scope (deferred). The S1–S4 tracks below
+are the governing plan; the Phase-A/B ignition history is retained as the record of how we got here.
 
 > **No-fake-data rule still governs.** Most ignition steps complete state from real data (mark
 > historical dispatches delivered, open warranty from real activations, recognise revenue on real
 > order lines). A few steps (batch granularity, landed-cost components) have **no real source** and
 > need a decision — flagged as ⚠️ DECISION below.
+
+## Shadow-mode operating model (S1–S4) — the governing plan
+
+The four tracks that take Conduit from "ignited on history" to "running live in shadow, trusted enough
+to take over." S1→S3 are a dependency chain; S4 runs in parallel.
+
+| Track | Status | Goal | What it is |
+|---|---|---|---|
+| **S1 Inbound durability spine** | ✅ DONE (2026-06-18) | Inbound data is never lost | The inbox: `ingest_record`→relay→`conduit.inbound`→mapping consumer (reuses boot handlers)→engines+outbox; drift re-queues; failures quarantine (raw retained) at `/inbox/*`. The mirror of the outbox. |
+| **S2 Live connectors** | 🔜 NEXT | Snapshots → continuous streams | A scheduler driving the already-built `IngestRunner`/`IngestConnector` set on a cadence + **real API impls + credentials** for HubSpot (deals, contacts, companies, RMA + support tickets), MRPeasy (POs, MOs, items, stock moves), activation/placement registry. Each lands in the S1 inbox. Today the `*Api` traits are test stubs only. |
+| **S3 Run-live + refinement loop** | 🟡 PARTIAL | Senior-team feedback over months | Drive live inbound through every engine; extend the existing `shadow_finding` harness to continuously diff Conduit's derived state vs source; the desk views senior teams review + comment on. The loop that earns the takeover. |
+| **S4 Finish dormant engines** | 🟡 IN PROGRESS | Shadow is whole, not hollow | Commission (find a real `sales_agent`/`commission_scheme` source so it stops accruing £0); the **36,281 fuzzy MDM candidates** (model + human triage); hedged-COGS ledger posting; CRM write-side gaps. |
+
+**Explicitly out of scope until takeover** (was Phase D2): all **outbound** — M14 HubSpot-out, Horizons
+outbound feed, any write-back to ERP/source systems — and the **Flutter companion app (PARKED)**. The
+M13-Tax external vendor adapter (D1) stays a dormant seam (no routed vendor required in shadow).
+
+### The milestone table through the shadow lens
+
+The table below is the build-completeness record (mostly ✅/🟢). Re-read for shadow, each milestone maps
+to a track: **fed live? → S2** · **validated vs source? → S3** · **hollow without a real feed? → S4**.
+- **S2 (needs a live feed)**: M4 CRM/orders, M6 inventory/dispatch, M7 batch/genealogy, M8 activation/RMA,
+  M9 purchasing, M9b returns — all built and ignited on history; they go live when their connector streams.
+- **S4 (hollow until real source data lands)**: M5 commission (0 agents/schemes), M-Pricing tiers (empty
+  live), M12 intercompany/TP (0 entities), M12-Treasury hedged-COGS posting.
+- **S3 (validate + close the loop)**: M13 GL/P&L, M13b period-close/recon/audit, M10 shadow-validation —
+  the dual-run comparison surfaces that senior teams sign off against.
 
 ## Milestone status
 
@@ -168,29 +219,33 @@ The whole ignition is now **reproducible from a clean boot** — verified by a f
 - **B2. M10 migration ignition:** opening `lot_batch` + serial→batch linkage + landed cost via the existing `MigrationService`/`SyntheticOpeningLots`; give it a CLI/route entry point. Unlocks specific-id COGS, genealogy, stock positions, warranty at true batch cost (re-cost A2/A3 if B1 yields real costs).
 - **B3. Suppliers/POs/stock:** ingest real purchasing history if it exists; otherwise leave honest-empty (the screens already degrade cleanly).
 
-### Phase C — flows, wiring & remaining backfills
-- **C1.** Wire the **ledger-commitment consumer** for `order.placed` (M4 gap).
-- **C2.** Wire **M6/M9 HTTP routes + consumers** (inventory/dispatch/purchasing/stock-ops) — currently test-only.
-- **C3.** **Commission** (M5): wire accrual to order/revenue events + backfill the historical book.
-- **C4.** **Pricing** (M3/M-Pricing): seed `price_rule`/`price_agreement` from real contract/price data (or wrap `order_line` actuals) so live quoting works.
-- **C5.** **Documents** (M13-Docs): generate invoices/credit-notes for the historical invoiced book.
-- **C6.** **H6Q** (M11): open a forecast cycle to exercise the bottom-up submission spine.
-- **C7.** Ingest provenance: write `ingest_record` per load (or drop the orphan `ingest_record`/`sync_state` tables that have no DDL/writer).
+### Phase C — flows, wiring & remaining backfills ✅ DONE (2026-06-18)
+All of C1–C7 landed (see the milestone table + the Phase-C/brand update above): C1 ledger-commitment
+consumer, C2 M6/M9 routes+consumers, C3 commission accrual wired, C4 pricing book seeded (22 agreements /
+198 rules), C5 documents engine (historical PDFs reverted → AR-only by decision), C6 H6Q cycle opened,
+C7 `sync_state`/`ingest_record` writers (and `ingest_record` has since become the S1 inbox).
 
-### Phase D — net-new build (Phase-3 tail)
-- **D1.** M13-Tax external vendor adapter (Avalara/TaxJar) — only if a routed vendor is required; the seam exists.
-- **D2.** M14 — Flutter companion app (estate `~/projects/hypervolt/ux`, `hypervolt_ui_kit`, Conduit purple), Horizons feed, HubSpot **outbound** replication.
+### Phase D → folded into the S-tracks
+- **D1.** M13-Tax external vendor adapter (Avalara/TaxJar): a dormant **seam only**, not built — and not
+  needed in shadow (no outbound tax filing). Revisit at/after takeover.
+- **D2.** M14 — Flutter companion, Horizons feed, HubSpot **outbound**: **DEFERRED (outbound) / PARKED
+  (companion)** under shadow-mode. Not on the near-term path.
 
 ### Hygiene
 - Remove the stale duplicate `conduit/` subdirectory (a 240-file/61-migration snapshot shadowing the live root tree).
 
-## Genuine code gaps (vs. pure data backfill)
-1. M8 `WarrantyService.backfill` reads empty `activation`; never invoked. (A2)
-2. M4 ledger-commitment consumer for `order.placed` absent. (C1)
-3. M6/M9 services have no route/consumer wiring (test-only). (C2)
-4. M6 carrier integration is a stored-field stub, not a live Rhenus adapter.
-5. M5 commission has no route/consumer. (C3)
-6. M10 migration has no CLI/HTTP entry point. (B2)
-7. M13-Tax external vendor adapter unwritten (seam only). (D1)
-8. M14 companion app / Horizons / HubSpot-outbound unstarted. (D2)
-9. `ingest_record`/`sync_state` orphan tables — no DDL, no writer. (C7)
+## Open work, sorted by shadow track (S1 done)
+**S2 — live connectors (the gating track now):**
+1. No scheduler drives the connectors live — `IngestRunner`/`IngestConnector`/`IngestSink` exist; nothing polls them on a cadence or feeds the S1 inbox.
+2. The `HubSpotApi`/`MrpeasyApi`/`XeroApi` traits have **no live HTTP implementations** (test stubs only) + no credential wiring (HubSpot SSM token; MRPeasy access/api keys).
+3. M6 carrier integration is a stored-field stub, not a live Rhenus adapter (inbound shipment/track events).
+
+**S3 — run-live + validate:** drive the live streams through the engines; extend `shadow_finding` to diff derived-vs-source continuously; senior-team review desk.
+
+**S4 — finish dormant engines:**
+4. M5 commission accrues £0 — no real `sales_agent`/`commission_scheme` source ingested.
+5. 36,281 fuzzy MDM candidates await model+human triage; no contact/deal/pipeline **write** API.
+6. M12-Treasury hedged-COGS **ledger posting** not plugged into the COGS path (`HedgeMath.effectiveRate` ready).
+7. M-Pricing / M12 intercompany tables empty live (gated on real tier/entity data).
+
+**Deferred (not gaps under shadow):** M13-Tax vendor adapter (D1), M14 companion/Horizons/HubSpot-out (D2).
