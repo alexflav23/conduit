@@ -23,7 +23,7 @@ Tick each slice's box as it lands; a slice is done only when its **Acceptance** 
 | Track | Status | Goal | Depends on |
 |---|---|---|---|
 | **S1 — Inbound durability spine** | ✅ DONE | Inbound data is never lost | — |
-| **S2 — Live connectors** | 🔜 NEXT | Snapshots → continuous live streams into the inbox | S1 |
+| **S2 — Live connectors** | 🟡 IN PROGRESS | Snapshots → continuous live streams into the inbox | S1 |
 | **S3 — Run-live + refinement loop** | 🟡 PARTIAL | Senior teams validate Conduit vs source over months | S2 |
 | **S4 — Finish dormant engines** | 🟡 IN PROGRESS | Shadow is whole, not hollow | parallel |
 
@@ -278,8 +278,8 @@ Not gaps under shadow — out of scope until Conduit is trusted as system of rec
 | S1.1–S1.8 | Inbox spine (migration, drift, transport, repo, relay, shared mapping, consumer, desk route) | S1 | ✅ |
 | S1.9 | Acceptance IT (Pulsar+PG round-trip; quarantine; idempotency; drift) | S1 | ⬜ |
 | — | **Integration field contracts** (per-source maps, doc 37) | S2 | ✅ |
-| S2.0 | Ingest scheduler | S2 | 🔜 |
-| S2.1 | HubSpot live API (+ support tickets) | S2 | ⬜ |
+| S2.0 | Ingest scheduler (drives connectors → inbox on a cadence) | S2 | ✅ |
+| S2.1 | HubSpot live API — companies + contacts (deals/line_items/tickets = follow-on) | S2 | 🟡 |
 | S2.2 | MRPeasy live API | S2 | ⬜ |
 | S2.3 | Activation/placement push source | S2 | ⬜ |
 | S2.4 | Xero live API (read-only) | S2 | ⬜ |
