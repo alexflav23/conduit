@@ -29,6 +29,7 @@ final class HttpMrpeasyApi[F[_]: Async](client: Client[F], accessKey: String, ap
       case "customer-orders" => normOrder
       case "shipments"       => normShipment
       case "purchase-orders" => normPo
+      case "lots"            => normLot
       case other =>
         return Async[F].raiseError(
           new IllegalArgumentException(
@@ -139,6 +140,27 @@ final class HttpMrpeasyApi[F[_]: Async](client: Client[F], accessKey: String, ap
         "expected_date" -> str(c, "expected_date"),
         "modified"      -> maxTs(c, "created", "order_date", "arrival_date", "expected_date").asJson,
         "lines"         -> Json.fromValues(lines)
+      )
+    }
+  }
+
+  // lots (/lots): the production/purchase lot with its per-unit landed cost (item_cost) — the COGS basis. Lands
+  // in mrpeasy_lot_raw staging (the careful promotion into lot_batch is a tracked follow-on — it must reconcile
+  // with the already-costed fleet without double-counting).
+  private val normLot: Json => Option[Json] = row => {
+    val c = row.hcursor
+    longStr(c, "lot_id").map { id =>
+      Json.obj(
+        "id"            -> id.asJson,
+        "code"          -> str(c, "code"),
+        "item_code"     -> str(c, "item_code"),
+        "item_cost"     -> numJson(c, "item_cost"),
+        "total_cost"    -> numJson(c, "total_cost"),
+        "quantity"      -> numJson(c, "quantity"),
+        "status"        -> str(c, "status"),
+        "po_code"       -> str(c, "purchase_order_code"),
+        "received_date" -> str(c, "created"),
+        "modified"      -> maxTs(c, "created", "available_from").asJson
       )
     }
   }

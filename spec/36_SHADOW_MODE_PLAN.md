@@ -280,7 +280,7 @@ Not gaps under shadow — out of scope until Conduit is trusted as system of rec
 | — | **Integration field contracts** (per-source maps, doc 37) | S2 | ✅ |
 | S2.0 | Ingest scheduler (drives connectors → inbox on a cadence) | S2 | ✅ |
 | S2.1 | HubSpot live API — companies, contacts, deals (company assoc + pipeline), line_items (deal_line), company→company branch hierarchy (BranchLinkService); support tickets ✅ | S2 | ✅ |
-| S2.2 | MRPeasy live API — orders + shipments + serials (POs ✅; stock-lots = follow-on) | S2 | 🟡 |
+| S2.2 | MRPeasy live API — orders + shipments + serials (POs ✅, lots→staging ✅) | S2 | 🟡 |
 | S2.3 | Activation/placement push source | S2 | ⬜ |
 | S2.4 | Xero live API (read-only) | S2 | ⬜ |
 | S2.5 | Carrier inbound (Rhenus) | S2 | ⬜ |

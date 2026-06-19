@@ -17,7 +17,7 @@ object MrpeasyConnector {
   private[ingest] val datasetSpec: Map[String, (String, String)] = Map(
     "customer_orders" -> ("customer-orders", "id"),
     "shipments"       -> ("shipments", "id"),
-    "stock_lots"      -> ("stock-lots", "id"),
+    "stock_lots"      -> ("lots", "id"),
     "purchase_orders" -> ("purchase-orders", "id"),
     "articles"        -> ("articles", "id")
   )

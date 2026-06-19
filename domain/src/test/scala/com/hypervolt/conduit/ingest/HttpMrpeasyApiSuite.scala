@@ -81,6 +81,20 @@ object HttpMrpeasyApiSuite extends SimpleIOSuite {
     }
   }
 
+  private val lotsV1 = parseJson("""
+    [{"lot_id":48614,"code":"LO-048756","item_code":"HV-PR-1172","item_cost":"244.2244","total_cost":"15386.14",
+      "quantity":"63.0","status":"20","purchase_order_code":"PO-001152","created":"1780403836"}]""").toOption.get
+
+  test("lots: lot_id→id, item_cost (the COGS basis) + PO link → mrpeasy_lot_raw shape") {
+    api(lotsV1).get("lots", None).map { out =>
+      val r = out.hcursor.downN(0)
+      expect(r.get[String]("id").toOption.contains("48614")) and
+        expect(r.get[String]("item_code").toOption.contains("HV-PR-1172")) and
+        expect(r.get[Double]("item_cost").toOption.exists(_ > 244.0)) and
+        expect(r.get[String]("po_code").toOption.contains("PO-001152"))
+    }
+  }
+
   test("a warm cursor returns only newer rows; an unwired endpoint is rejected") {
     val warm = api(ordersV1).get("customer-orders", Some("1621599035")).map(out => expect(out.asArray.exists(_.isEmpty)))
     val bad  = api(Json.arr()).get("stock-lots", None).attempt.map(e => expect(e.isLeft))

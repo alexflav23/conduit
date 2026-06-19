@@ -514,9 +514,29 @@ object SnapshotLoader {
       case "customer_orders" => mrpOrder(row)
       case "shipments"       => mrpShipment(row)
       case "purchase_orders" => mrpPurchaseOrder(row)
+      case "stock_lots"      => mrpLotRaw(row)
       case "items"           => mrpItem(row)
       case _                 => 0.pure[ConnectionIO]
     }
+
+  // MRPeasy /lots → mrpeasy_lot_raw staging (the cost basis, queryable + auditable). Idempotent on lot_id. The
+  // promotion into lot_batch (specific-id COGS) is a deliberate follow-on — it must reconcile with the existing
+  // costed fleet without double-counting.
+  private def mrpLotRaw(row: Json): ConnectionIO[Int] = {
+    val c = row.hcursor
+    str(c, "lot_id").orElse(str(c, "id")) match {
+      case None => 0.pure[ConnectionIO]
+      case Some(lotId) =>
+        val received = str(c, "received_date").flatMap(_.toLongOption).map(t => LocalDate.ofEpochDay(t / 86400))
+        sql"""INSERT INTO mrpeasy_lot_raw (lot_id, code, item_code, item_cost, total_cost, quantity, status, po_code, received_date)
+              VALUES ($lotId, ${str(c, "code")}, ${str(c, "item_code")}, ${num(c, "item_cost")},
+                      ${num(c, "total_cost")}, ${num(c, "quantity")}, ${str(c, "status")}, ${str(c, "po_code")}, $received)
+              ON CONFLICT (lot_id) DO UPDATE SET
+                code = EXCLUDED.code, item_code = EXCLUDED.item_code, item_cost = EXCLUDED.item_cost,
+                total_cost = EXCLUDED.total_cost, quantity = EXCLUDED.quantity, status = EXCLUDED.status,
+                po_code = EXCLUDED.po_code, received_date = EXCLUDED.received_date, last_seen = now()""".update.run
+    }
+  }
 
   // MRPeasy purchase-orders → purchase_order + po_line (S2, the supply-in "PO"). Supplier resolves by name match
   // only (never fabricates a supplier — an unmatched vendor leaves supplier_id NULL, reviewable). Stores the
