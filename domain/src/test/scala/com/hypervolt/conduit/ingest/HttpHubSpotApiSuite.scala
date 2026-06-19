@@ -115,4 +115,21 @@ object HttpHubSpotApiSuite extends SimpleIOSuite {
   test("an unwired object (tickets) is rejected — wired set is companies, contacts, deals, line_items") {
     new HttpHubSpotApi[IO](fakeClient(Json.obj()), "tok", "https://api.hubapi.com").get("tickets", None).attempt.map(e => expect(e.isLeft))
   }
+
+  private val companyList = parseJson("""{"results":[{"id":"100"},{"id":"200"}]}""").toOption.get
+  private val companyAssoc = parseJson("""
+    {"results":[
+      {"from":{"id":"100"},"to":[
+        {"toObjectId":201,"associationTypes":[{"label":"Child Company"}]},
+        {"toObjectId":202,"associationTypes":[{"label":"Child Company"}]}]},
+      {"from":{"id":"200"},"to":[{"toObjectId":100,"associationTypes":[{"label":"Parent Company"}]}]}
+    ]}""").toOption.get
+
+  test("companyParentPairs: both directions → (child, parent) — CEF-style branch links") {
+    val client = routingClient(p => if (p.contains("/associations/")) companyAssoc else companyList)
+    new HttpHubSpotApi[IO](client, "tok", "https://api.hubapi.com").companyParentPairs().map { pairs =>
+      // 100 has children 201,202 (Child Company); 200's parent is 100 (Parent Company)
+      expect(pairs.toSet == Set(("201", "100"), ("202", "100"), ("200", "100")))
+    }
+  }
 }

@@ -235,6 +235,52 @@ final class HttpHubSpotApi[F[_]: Async](client: Client[F], token: String, baseUr
     else Json.Null
   }
 
+  // ── company hierarchy (wholesale branches): authoritative HubSpot parent/child company links ─────────────
+  // (childCompanyId, parentCompanyId) pairs across ALL companies. HubSpot paginates companies properly via
+  // `after`, so this is complete (maxPages caps it). Derived from both directions: "Child Company" (from = the
+  // parent) and "Parent Company" (from = the child). Consumed by BranchLinkService to set party.parent_party_id.
+  def companyParentPairs(maxPages: Int = 300): F[List[(String, String)]] = {
+    def pageIds(after: Option[String], acc: List[String], n: Int): F[List[String]] =
+      if (n >= maxPages) Async[F].pure(acc)
+      else
+        getJson("/crm/v3/objects/companies?limit=100" + after.fold("")("&after=" + _)).flatMap { d =>
+          val ids = d.hcursor.downField("results").values.toList.flatten.flatMap(_.hcursor.get[String]("id").toOption)
+          d.hcursor.downField("paging").downField("next").get[String]("after").toOption match {
+            case Some(nx) => pageIds(Some(nx), acc ::: ids, n + 1)
+            case None     => Async[F].pure(acc ::: ids)
+          }
+        }
+    pageIds(None, Nil, 0).flatMap(ids => ids.grouped(100).toList.traverse(assocPairs).map(_.flatten.distinct))
+  }
+
+  private def assocPairs(ids: List[String]): F[List[(String, String)]] =
+    if (ids.isEmpty) Async[F].pure(Nil)
+    else
+      post(
+        "/crm/v4/associations/companies/companies/batch/read",
+        Json.obj("inputs" -> Json.fromValues(ids.map(id => Json.obj("id" -> id.asJson))))
+      ).map { raw =>
+        raw.hcursor.downField("results").values.toList.flatten.flatMap { r =>
+          val from = r.hcursor.downField("from").get[String]("id").toOption
+          val tos  = r.hcursor.downField("to").values.toList.flatten
+          from.toList.flatMap { f =>
+            tos.flatMap { t =>
+              val labels = t.hcursor
+                .downField("associationTypes")
+                .values
+                .toList
+                .flatten
+                .flatMap(_.hcursor.get[String]("label").toOption)
+              t.hcursor.get[Long]("toObjectId").toOption.map(_.toString).flatMap { to =>
+                if (labels.contains("Child Company")) Some((to, f))       // f is the parent, to is the child
+                else if (labels.contains("Parent Company")) Some((f, to)) // f is the child, to is the parent
+                else None
+              }
+            }
+          }
+        }
+      }.handleError(_ => Nil)
+
   // ── http + json helpers ────────────────────────────────────────────────────────────────────────────────
   private def post(path: String, body: Json): F[Json] =
     client.expect[Json](Request[F](Method.POST, uri(path)).withHeaders(auth).withEntity(body))(jsonOf[F, Json])

@@ -194,17 +194,30 @@ object Main extends IOApp.Simple {
               // HubSpot lights up only when a token is configured (else dormant — the house seam pattern).
               val ingestScheduler =
                 new IngestScheduler[IO](new IngestRunner[IO](new SyncStateRepo[IO](xa)), new IngestSink[IO](xa))
+              val hubspotApi = new HttpHubSpotApi[IO](http, cfg.hubspot.token, cfg.hubspot.baseUrl)
+              val branchLink = new com.hypervolt.conduit.crm.BranchLinkService[IO](xa)
+              // wholesale branch hierarchy from HubSpot's authoritative parent/child company links (e.g. CEF's
+              // ~392 branches) — fills the gaps the name heuristic misses, never overrides an existing parent.
+              val branchLoop: IO[Unit] =
+                (hubspotApi
+                  .companyParentPairs()
+                  .flatMap(branchLink.store)
+                  .flatMap(_ => branchLink.apply())
+                  .flatMap(n => logger.info(s"hubspot-branches: $n wholesale branches linked from HubSpot"))
+                  .handleErrorWith(e => logger.error(e)(s"hubspot-branches failed: ${e.getMessage}")) *>
+                  IO.sleep(6.hours)).foreverM
               val hubspotIngest: List[IO[Unit]] =
                 if (cfg.hubspot.enabled)
                   List(
                     Supervised(
                       "ingest-hubspot",
                       ingestScheduler.loop(
-                        new HubSpotConnector[IO](new HttpHubSpotApi[IO](http, cfg.hubspot.token, cfg.hubspot.baseUrl)),
+                        new HubSpotConnector[IO](hubspotApi),
                         List("companies", "contacts", "deals", "line_items"),
                         15.minutes
                       )
-                    )
+                    ),
+                    Supervised("hubspot-branches", branchLoop)
                   )
                 else Nil
               // MRPeasy: the inventory/serial authority. Recent-window sync of orders + shipments (serials → genealogy).
