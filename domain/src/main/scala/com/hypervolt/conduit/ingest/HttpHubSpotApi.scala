@@ -31,9 +31,12 @@ final class HttpHubSpotApi[F[_]: Async](client: Client[F], token: String, baseUr
     objectType match {
       case "companies" | "contacts" => searchObjects(objectType, modifiedSince)
       case "deals"                  => getDeals(modifiedSince)
+      case "line_items"             => getLineItems(modifiedSince)
       case other =>
         Async[F].raiseError(
-          new IllegalArgumentException(s"hubspot live pull not wired for '$other' (S2: companies, contacts, deals)")
+          new IllegalArgumentException(
+            s"hubspot live pull not wired for '$other' (S2: companies, contacts, deals, line_items)"
+          )
         )
     }
 
@@ -142,6 +145,36 @@ final class HttpHubSpotApi[F[_]: Async](client: Client[F], token: String, baseUr
     }
   }
 
+  // ── line_items: search + line_item→deal association → deal_line shape (a deal's product breakdown) ────────
+  private val lineItemProps =
+    List("name", "quantity", "price", "amount", "hs_sku", "hs_product_id", "hs_lastmodifieddate")
+
+  private def getLineItems(since: Option[String]): F[Json] =
+    post("/crm/v3/objects/line_items/search", searchBody(lineItemProps, since)).flatMap { raw =>
+      val rows = raw.hcursor.downField("results").values.toList.flatten
+      val ids  = rows.flatMap(_.hcursor.get[String]("id").toOption)
+      batchAssoc("line_items", "deals", ids).map { deals =>
+        val out = rows.flatMap { row =>
+          val c = row.hcursor
+          c.get[String]("id").toOption.map { id =>
+            val p = c.downField("properties")
+            Json.obj(
+              "id"           -> Json.fromString(id),
+              "line_item_id" -> Json.fromString(id),
+              "deal_id"      -> deals.get(id).fold(Json.Null)(Json.fromString),
+              "sku"          -> str(p, "hs_sku"),
+              "name"         -> str(p, "name"),
+              "qty"          -> str(p, "quantity"),
+              "unit_price"   -> str(p, "price"),
+              "amount"       -> str(p, "amount"),
+              "properties"   -> Json.obj("hs_lastmodifieddate" -> str(p, "hs_lastmodifieddate"))
+            )
+          }
+        }
+        Json.obj("results" -> Json.fromValues(out), "paging" -> paging(raw))
+      }
+    }
+
   // GET the deal pipelines once per pull → id -> human label (the boot ndjson stored labels, not ids).
   private def pipelineLabels: F[Map[String, String]] =
     getJson("/crm/v3/pipelines/deals")
@@ -158,12 +191,14 @@ final class HttpHubSpotApi[F[_]: Async](client: Client[F], token: String, baseUr
       }
       .handleError(_ => Map.empty)
 
-  // v4 batch-associations: deal id -> its company id (prefer the Primary association). Search carries none.
-  private def dealCompanyMap(ids: List[String]): F[Map[String, String]] =
+  private def dealCompanyMap(ids: List[String]): F[Map[String, String]] = batchAssoc("deals", "companies", ids)
+
+  // v4 batch-associations: fromId -> its associated toId (prefer the Primary association). Search carries none.
+  private def batchAssoc(fromType: String, toType: String, ids: List[String]): F[Map[String, String]] =
     if (ids.isEmpty) Async[F].pure(Map.empty)
     else
       post(
-        "/crm/v4/associations/deals/companies/batch/read",
+        s"/crm/v4/associations/$fromType/$toType/batch/read",
         Json.obj("inputs" -> Json.fromValues(ids.map(id => Json.obj("id" -> id.asJson))))
       ).map { raw =>
         raw.hcursor

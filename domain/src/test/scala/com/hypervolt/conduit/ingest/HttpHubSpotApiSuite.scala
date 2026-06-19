@@ -94,7 +94,25 @@ object HttpHubSpotApiSuite extends SimpleIOSuite {
     }
   }
 
-  test("an unwired object (line_items) is rejected — wired set is companies, contacts, deals") {
-    new HttpHubSpotApi[IO](fakeClient(Json.obj()), "tok", "https://api.hubapi.com").get("line_items", None).attempt.map(e => expect(e.isLeft))
+  private val lineItemSearch = parseJson("""
+    {"results":[{"id":"1215308550","properties":{"name":"Hypervolt Home 3 Pro","quantity":"2","price":"435.18",
+      "amount":"870.36","hs_sku":"HV-PR-1172","hs_lastmodifieddate":"1717238400000"}}]}""").toOption.get
+  private val liAssoc = parseJson("""
+    {"results":[{"from":{"id":"1215308550"},"to":[{"toObjectId":4111256677,"associationTypes":[{"label":"Primary"}]}]}]}""").toOption.get
+
+  test("line_items: search + line_item→deal association → deal_line shape (sku, qty, price, amount, deal_id)") {
+    val client = routingClient(p => if (p.contains("/associations/")) liAssoc else lineItemSearch)
+    new HttpHubSpotApi[IO](client, "tok", "https://api.hubapi.com").get("line_items", None).map { out =>
+      val r = out.hcursor.downField("results").downN(0)
+      expect(r.get[String]("line_item_id").toOption.contains("1215308550")) and
+        expect(r.get[String]("deal_id").toOption.contains("4111256677")) and
+        expect(r.get[String]("sku").toOption.contains("HV-PR-1172")) and
+        expect(r.get[String]("qty").toOption.contains("2")) and
+        expect(r.get[String]("amount").toOption.contains("870.36"))
+    }
+  }
+
+  test("an unwired object (tickets) is rejected — wired set is companies, contacts, deals, line_items") {
+    new HttpHubSpotApi[IO](fakeClient(Json.obj()), "tok", "https://api.hubapi.com").get("tickets", None).attempt.map(e => expect(e.isLeft))
   }
 }

@@ -264,11 +264,31 @@ object SnapshotLoader {
   // labels) → deal_snapshot. The older deals_lifecycle/deals_won scrapes are superseded and no longer loaded.
   private def hubspot(dataset: String, row: Json): ConnectionIO[Int] =
     if (dataset == "rma_tickets") hubspotRmaTicket(row)
-    else if (dataset == "deals_attributed") hubspotAttributedDeal(row)
+    // boot ndjson uses `deals_attributed`; the live connector's dataset is `deals` — both → deal_snapshot.
+    else if (dataset == "deals_attributed" || dataset == "deals") hubspotAttributedDeal(row)
+    else if (dataset == "line_items") hubspotDealLine(row)
     else if (dataset == "contacts") hubspotContact(row)
     else if (dataset == "companies") hubspotCompany(row)
     else if (dataset == "account_match_verdicts") hubspotMatchVerdict(row)
     else 0.pure[ConnectionIO]
+
+  // ingest line_items → deal_line: a deal's product breakdown as a related lifecycle entity (S2.1). Idempotent
+  // on the HubSpot line_item id; deal_id links it to deal_snapshot.
+  private def hubspotDealLine(row: Json): ConnectionIO[Int] = {
+    val c = row.hcursor
+    c.get[String]("line_item_id").toOption.orElse(c.get[String]("id").toOption) match {
+      case None => 0.pure[ConnectionIO]
+      case Some(id) =>
+        val dealId = c.get[String]("deal_id").toOption
+        val sku    = c.get[String]("sku").toOption
+        val name   = c.get[String]("name").toOption
+        sql"""INSERT INTO deal_line (line_item_id, deal_id, sku, name, qty, unit_price, amount)
+              VALUES ($id, $dealId, $sku, $name, ${num(c, "qty")}, ${num(c, "unit_price")}, ${num(c, "amount")})
+              ON CONFLICT (line_item_id) DO UPDATE SET
+                deal_id = EXCLUDED.deal_id, sku = EXCLUDED.sku, name = EXCLUDED.name, qty = EXCLUDED.qty,
+                unit_price = EXCLUDED.unit_price, amount = EXCLUDED.amount, last_seen = now()""".update.run
+    }
+  }
 
   // ingest/hubspot/account_match_verdicts.ndjson → hubspot_match_verdict staging (the model matcher's output).
   // The apply step merges confidence>=0.9 with a target. Empty until the Bedrock matcher runs; idempotent.
