@@ -83,7 +83,13 @@ a drifted source row re-flows automatically.
 
 ---
 
-## S2 — Live connectors (the gating track) 🔜
+## S2 — Live connectors (the gating track) 🟡 IN PROGRESS
+
+> **Status 2026-06-19:** the scheduler (S2.0) + HubSpot (companies, contacts, deals, line_items, tickets,
+> company→company branches) + MRPeasy (customer_orders, shipments+serials, purchase_orders, lots→staging) are
+> all built, probed against the **real APIs**, unit-tested, and wired token-gated. Remaining: Xero read (S2.4),
+> carrier (S2.5); activation push (S2.3) is largely pre-existing (`PlacementConsumer`). Dormant until creds + a
+> consumer restart.
 
 Turn the one-time ndjson snapshots into **continuous live streams** landing in the S1 inbox. The connector
 abstraction, runner and sink already exist (33 §2–3); what's missing is **(a) a scheduler that drives them**,
