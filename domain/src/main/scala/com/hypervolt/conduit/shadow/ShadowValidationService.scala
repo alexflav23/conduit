@@ -87,6 +87,18 @@ final class ShadowValidationService[F[_]: Async](xa: Transactor[F]) {
                       jsonb_build_object('variant', s.product_variant_id::text, 'uncosted_dispatched_serials', count(*)), $runId, 'open'
                     FROM serial_unit s WHERE s.dispatch_id IS NOT NULL AND s.lot_batch_id IS NULL
                     GROUP BY s.product_variant_id"""
+    ),
+    // Inbound integrity (S3.1): any record that LANDED but failed to map is quarantined (raw payload retained,
+    // never dropped) — surface it here so the never-lost guarantee's exceptions sit in the same triage queue the
+    // dual-run owners work. Per (source, dataset); auto-resolves when the quarantine clears (a fix + requeue).
+    (
+      "inbox_quarantine",
+      (runId: UUID) => fr"""SELECT 'inbox_quarantine', 'high', 'ingest', r.source || '/' || r.dataset, NULL::uuid,
+                      0::numeric, count(*)::numeric, count(*)::numeric, NULL,
+                      jsonb_build_object('source', r.source, 'dataset', r.dataset,
+                        'quarantined', count(*), 'last_error', max(r.last_error)), $runId, 'open'
+                    FROM ingest_record r WHERE r.status = 'failed'
+                    GROUP BY r.source, r.dataset"""
     )
   )
 

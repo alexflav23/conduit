@@ -290,7 +290,7 @@ Not gaps under shadow — out of scope until Conduit is trusted as system of rec
 | S2.3 | Activation/placement push source | S2 | ⬜ |
 | S2.4 | Xero live API (read-only) | S2 | ⬜ |
 | S2.5 | Carrier inbound (Rhenus) | S2 | ⬜ |
-| S3.1 | Continuous derived-vs-source reconciliation | S3 | 🟡 |
+| S3.1 | Dual-run reconciliation battery (+ inbox_quarantine check, auto-resolve) | S3 | 🟡 |
 | S3.2 | Inbox + sync observability/alerting | S3 | ⬜ |
 | S3.3 | Senior-team review desk — D23 Inbox view DONE; D24 sync-health (Sync tab) live; D25 shadow-findings (Shadow tab) live | S3 | 🟡 |
 | S3.4 | Cutover-readiness gates panel | S3 | ⬜ |
