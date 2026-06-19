@@ -28,9 +28,12 @@ final class HttpMrpeasyApi[F[_]: Async](client: Client[F], accessKey: String, ap
     val normalize: Json => Option[Json] = endpoint match {
       case "customer-orders" => normOrder
       case "shipments"       => normShipment
+      case "purchase-orders" => normPo
       case other =>
         return Async[F].raiseError(
-          new IllegalArgumentException(s"mrpeasy live pull not wired for '$other' (S2.2: customer-orders, shipments)")
+          new IllegalArgumentException(
+            s"mrpeasy live pull not wired for '$other' (S2.2: customer-orders, shipments, purchase-orders)"
+          )
         )
     }
     val req = Request[F](Method.GET, Uri.unsafeFromString(s"$baseUrl/$endpoint?limit=100"))
@@ -106,6 +109,35 @@ final class HttpMrpeasyApi[F[_]: Async](client: Client[F], accessKey: String, ap
         "delivery_date" -> str(c, "delivery_date"),
         "status"        -> str(c, "status_txt"),
         "modified"      -> maxTs(c, "created", "delivery_date").asJson,
+        "lines"         -> Json.fromValues(lines)
+      )
+    }
+  }
+
+  // purchase-orders: pur_ord_id→id, vendor_title (supplier), products→lines{item_code,qty,unit_cost}. The PO the
+  // shadow-mode reframe named — keeps the supply-in side (supplier + ordered cost) current.
+  private val normPo: Json => Option[Json] = row => {
+    val c = row.hcursor
+    longStr(c, "pur_ord_id").map { id =>
+      val products = c.downField("products").focus.flatMap(_.asArray).getOrElse(Vector.empty)
+      val lines = products.toList.map { p =>
+        val pc = p.hcursor
+        Json.obj(
+          "item_code" -> str(pc, "item_code"),
+          "qty"       -> numJson(pc, "quantity"),
+          "unit_cost" -> numJson(pc, "item_price")
+        )
+      }
+      Json.obj(
+        "id"            -> id.asJson,
+        "code"          -> str(c, "code"),
+        "vendor_title"  -> str(c, "vendor_title"),
+        "status"        -> str(c, "status"),
+        "total_price"   -> numJson(c, "total_price"),
+        "currency_rate" -> numJson(c, "currency_rate"),
+        "order_date"    -> str(c, "order_date"),
+        "expected_date" -> str(c, "expected_date"),
+        "modified"      -> maxTs(c, "created", "order_date", "arrival_date", "expected_date").asJson,
         "lines"         -> Json.fromValues(lines)
       )
     }

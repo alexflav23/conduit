@@ -230,7 +230,7 @@ object Main extends IOApp.Simple {
                         new MrpeasyConnector[IO](
                           new HttpMrpeasyApi[IO](http, cfg.mrpeasy.accessKey, cfg.mrpeasy.apiKey, cfg.mrpeasy.baseUrl)
                         ),
-                        List("customer_orders", "shipments"),
+                        List("customer_orders", "shipments", "purchase_orders"),
                         15.minutes
                       )
                     )

@@ -513,9 +513,51 @@ object SnapshotLoader {
     dataset match {
       case "customer_orders" => mrpOrder(row)
       case "shipments"       => mrpShipment(row)
+      case "purchase_orders" => mrpPurchaseOrder(row)
       case "items"           => mrpItem(row)
       case _                 => 0.pure[ConnectionIO]
     }
+
+  // MRPeasy purchase-orders → purchase_order + po_line (S2, the supply-in "PO"). Supplier resolves by name match
+  // only (never fabricates a supplier — an unmatched vendor leaves supplier_id NULL, reviewable). Stores the
+  // GBP-base figures MRPeasy gives (total_price, item_price) with fx_rate for reference. Idempotent on po_no.
+  private def mrpPurchaseOrder(row: Json): ConnectionIO[Int] = {
+    val c = row.hcursor
+    (str(c, "code"), epoch(c, "order_date")).tupled match {
+      case None => 0.pure[ConnectionIO]
+      case Some((code, ordered)) =>
+        val vendor = str(c, "vendor_title")
+        val total  = num(c, "total_price").getOrElse(BigDecimal(0))
+        val fx     = num(c, "currency_rate")
+        val expected =
+          str(c, "expected_date").flatMap(_.toLongOption).map(t => java.time.LocalDate.ofEpochDay(t / 86400))
+        sql"SELECT id FROM supplier WHERE name = $vendor OR $vendor ILIKE ('%' || name || '%') LIMIT 1"
+          .query[UUID]
+          .option
+          .flatMap { supplierId =>
+            sql"""INSERT INTO purchase_order (po_no, supplier_id, type, status, order_date, expected_date,
+                                              txn_currency, fx_rate, total)
+                  VALUES (${"MRP-" + code}, $supplierId, 'external', 'open', $ordered, $expected, 'GBP', $fx, $total)
+                  ON CONFLICT (po_no) DO NOTHING RETURNING id""".query[UUID].option.flatMap {
+              case None => 0.pure[ConnectionIO] // already loaded — idempotent
+              case Some(poId) =>
+                val lines = c.downField("lines").focus.flatMap(_.asArray).getOrElse(Vector.empty)
+                lines.toList.traverse_ { l =>
+                  val lc = l.hcursor
+                  (str(lc, "item_code").filterNot(skippableSku), num(lc, "qty").filter(_ > 0)).tupled match {
+                    case None => 0.pure[ConnectionIO].void
+                    case Some((sku, qty)) =>
+                      mrpVariant(sku).flatMap(variant =>
+                        sql"""INSERT INTO po_line (po_id, product_variant_id, qty, unit_cost)
+                              VALUES ($poId, $variant, ${qty.toInt}, ${num(lc, "unit_cost")
+                          .getOrElse(BigDecimal(0))})""".update.run.void
+                      )
+                  }
+                } *> 1.pure[ConnectionIO]
+            }
+          }
+    }
+  }
 
   // ingest/mrpeasy/items.ndjson — the MRPeasy article catalogue (code → real title). Staged here; ignition's
   // backfillProductNames maps product_variant.sku → this code to set a human product name (so line items read
