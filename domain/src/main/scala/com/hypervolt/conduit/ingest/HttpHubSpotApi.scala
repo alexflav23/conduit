@@ -13,109 +13,235 @@ import org.http4s.circe._
 import org.http4s.client.Client
 import org.http4s.headers.Authorization
 
-// The live HubSpot CRM v3 implementation of the HubSpotApi seam (S2.1, spec 37 §1). Uses the search endpoint so a
-// warm pull fetches only rows with hs_lastmodifieddate >= the cursor, ascending — the watermark cursor the
-// IngestRunner advances. CRUCIALLY it NORMALIZES each v3 object {id, properties:{…}} into the canonical record the
-// shared SnapshotLoader handler consumes (the same shape as the boot ndjson), while keeping `id` (the connector's
-// sourceId) and `properties.hs_lastmodifieddate` (the connector's watermark) — so the connector + its test, and
-// the live+boot mapping path, are all unchanged. Per spec 37 the field map is owned here, at the source seam.
+// The live HubSpot CRM v3 implementation of the HubSpotApi seam (S2.1/S2.2, spec 37 §1). Uses the search endpoint
+// so a warm pull fetches only rows with hs_lastmodifieddate >= the cursor — the watermark the IngestRunner
+// advances. CRUCIALLY it NORMALIZES each v3 object into the canonical record the shared SnapshotLoader handler
+// consumes (the boot-ndjson shape), keeping `id` (sourceId) + properties.hs_lastmodifieddate (watermark) so the
+// connector + its test, and the live+boot mapping path, are unchanged. Per spec 37 the field map is owned here.
+//
+// counterparties: companies → party (org), contacts → contact.
+// counterparty RELATIONSHIPS: deals are attributed to their company via the v4 batch-associations read
+// (search carries no associations), and the pipeline ID is resolved to its label → the deal hangs off the
+// master account as a related lifecycle entity (deal_snapshot), exactly as the boot import does.
 final class HttpHubSpotApi[F[_]: Async](client: Client[F], token: String, baseUrl: String) extends HubSpotApi[F] {
 
-  // dataset -> (HubSpot properties to request, normalize one v3 result row -> the canonical record)
-  private val specs: Map[String, (List[String], (String, Json) => Json)] = Map(
-    "companies" -> (
-      List("name", "domain", "industry", "country", "hs_lastmodifieddate"),
-      (id, p) =>
-        canonical(id, p, "hs_lastmodifieddate")(
-          "company_id" -> id.asJson,
-          "name"       -> str(p, "name"),
-          "domain"     -> str(p, "domain"),
-          "industry"   -> str(p, "industry"),
-          "country"    -> str(p, "country")
-        )
-    ),
-    "contacts" -> (
-      List(
-        "email",
-        "firstname",
-        "lastname",
-        "phone",
-        "jobtitle",
-        "lifecyclestage",
-        "createdate",
-        "associatedcompanyid",
-        "company",
-        "hs_lastmodifieddate"
-      ),
-      (id, p) =>
-        canonical(id, p, "hs_lastmodifieddate")(
-          "contact_id" -> id.asJson,
-          "email"      -> str(p, "email"),
-          "first_name" -> str(p, "firstname"),
-          "last_name"  -> str(p, "lastname"),
-          "phone"      -> str(p, "phone"),
-          "company"    -> str(p, "company"),
-          "company_id" -> str(p, "associatedcompanyid"),
-          "job_title"  -> str(p, "jobtitle"),
-          "lifecycle"  -> str(p, "lifecyclestage"),
-          "created"    -> str(p, "createdate").asString.map(_.take(10)).map(Json.fromString).getOrElse(Json.Null)
-        )
-    )
-  )
+  private val auth = Authorization(Credentials.Token(AuthScheme.Bearer, token))
 
   def get(objectType: String, modifiedSince: Option[String]): F[Json] =
-    specs.get(objectType) match {
-      case None =>
+    objectType match {
+      case "companies" | "contacts" => searchObjects(objectType, modifiedSince)
+      case "deals"                  => getDeals(modifiedSince)
+      case other =>
         Async[F].raiseError(
-          new IllegalArgumentException(s"hubspot live pull not wired for '$objectType' (S2.1: companies, contacts)")
+          new IllegalArgumentException(s"hubspot live pull not wired for '$other' (S2: companies, contacts, deals)")
         )
-      case Some((props, normalize)) =>
-        val filterGroups =
-          modifiedSince.toList.map(ms =>
-            Json.obj(
-              "filters" -> Json.arr(
-                Json.obj(
-                  "propertyName" -> "hs_lastmodifieddate".asJson,
-                  "operator"     -> "GTE".asJson,
-                  "value"        -> ms.asJson
-                )
-              )
-            )
-          )
-        val body = Json.obj(
-          "filterGroups" -> filterGroups.asJson,
-          "sorts" -> Json.arr(
-            Json.obj("propertyName" -> "hs_lastmodifieddate".asJson, "direction" -> "ASCENDING".asJson)
-          ),
-          "properties" -> props.asJson,
-          "limit"      -> 100.asJson
-        )
-        val req = Request[F](
-          method = Method.POST,
-          uri = Uri.unsafeFromString(s"$baseUrl/crm/v3/objects/$objectType/search")
-        ).withHeaders(Authorization(Credentials.Token(AuthScheme.Bearer, token))).withEntity(body)
-        client.expect[Json](req)(jsonOf[F, Json]).map(raw => repackage(raw, normalize))
     }
 
-  // Re-emit the page in the shape the connector + handler expect: {results:[<normalized>], paging:{…}} — the
-  // normalized rows keep `id` and `properties.hs_lastmodifieddate` so keying + watermark advance are unchanged.
-  private def repackage(raw: Json, normalize: (String, Json) => Json): Json = {
-    val rows = raw.hcursor.downField("results").values.toList.flatten
-    val out = rows.flatMap { row =>
-      val c = row.hcursor
-      (c.get[String]("id").toOption, c.downField("properties").focus).mapN((id, props) => normalize(id, props))
+  // ── companies + contacts: one search call, normalize each row to the canonical shape ───────────────────
+  private val companiesSpec: (List[String], (String, Json) => Json) = (
+    List("name", "domain", "industry", "country", "hs_lastmodifieddate"),
+    (id, p) =>
+      canonical(id, p)(
+        "company_id" -> id.asJson,
+        "name"       -> str(p, "name"),
+        "domain"     -> str(p, "domain"),
+        "industry"   -> str(p, "industry"),
+        "country"    -> str(p, "country")
+      )
+  )
+
+  private val contactsSpec: (List[String], (String, Json) => Json) = (
+    List(
+      "email",
+      "firstname",
+      "lastname",
+      "phone",
+      "jobtitle",
+      "lifecyclestage",
+      "createdate",
+      "associatedcompanyid",
+      "company",
+      "hs_lastmodifieddate"
+    ),
+    (id, p) =>
+      canonical(id, p)(
+        "contact_id" -> id.asJson,
+        "email"      -> str(p, "email"),
+        "first_name" -> str(p, "firstname"),
+        "last_name"  -> str(p, "lastname"),
+        "phone"      -> str(p, "phone"),
+        "company"    -> str(p, "company"),
+        "company_id" -> str(p, "associatedcompanyid"),
+        "job_title"  -> str(p, "jobtitle"),
+        "lifecycle"  -> str(p, "lifecyclestage"),
+        "created"    -> dateStr(p.hcursor, "createdate")
+      )
+  )
+
+  private val objectSpecs: Map[String, (List[String], (String, Json) => Json)] =
+    Map("companies" -> companiesSpec, "contacts" -> contactsSpec)
+
+  private def searchObjects(objectType: String, since: Option[String]): F[Json] = {
+    val (props, normalize) = objectSpecs(objectType)
+    post(s"/crm/v3/objects/$objectType/search", searchBody(props, since)).map { raw =>
+      val rows = raw.hcursor.downField("results").values.toList.flatten
+      val out = rows.flatMap { row =>
+        val c = row.hcursor
+        (c.get[String]("id").toOption, c.downField("properties").focus).mapN((id, p) => normalize(id, p))
+      }
+      Json.obj("results" -> Json.fromValues(out), "paging" -> paging(raw))
     }
-    Json.obj("results" -> Json.fromValues(out), "paging" -> raw.hcursor.downField("paging").focus.getOrElse(Json.Null))
   }
 
-  private def str(props: Json, key: String): Json =
-    props.hcursor.get[String](key).toOption.filter(_.nonEmpty).fold(Json.Null)(Json.fromString)
+  // ── deals: search (watermark) + v4 company association + pipeline-label resolution → deal_snapshot shape ──
+  private val dealProps =
+    List(
+      "dealname",
+      "amount",
+      "dealstage",
+      "pipeline",
+      "createdate",
+      "closedate",
+      "hs_is_closed_won",
+      "hs_is_closed",
+      "hs_lastmodifieddate"
+    )
 
-  // Build the canonical record: the flattened fields + `id` (sourceId) + a minimal `properties` carrying the
-  // watermark the connector reads.
-  private def canonical(id: String, props: Json, watermark: String)(fields: (String, Json)*): Json =
+  private def getDeals(since: Option[String]): F[Json] =
+    post("/crm/v3/objects/deals/search", searchBody(dealProps, since)).flatMap { raw =>
+      val rows = raw.hcursor.downField("results").values.toList.flatten
+      val ids  = rows.flatMap(_.hcursor.get[String]("id").toOption)
+      (pipelineLabels, dealCompanyMap(ids)).tupled.map {
+        case (labels, companies) =>
+          val out = rows.flatMap(r => normDeal(r, labels, companies))
+          Json.obj("results" -> Json.fromValues(out), "paging" -> paging(raw))
+      }
+    }
+
+  private def normDeal(row: Json, labels: Map[String, String], companies: Map[String, String]): Option[Json] = {
+    val c = row.hcursor
+    c.get[String]("id").toOption.map { id =>
+      val p     = c.downField("properties")
+      val pid   = p.get[String]("pipeline").toOption.filter(_.nonEmpty)
+      val label = pid.flatMap(labels.get).orElse(pid).getOrElse("")
+      Json.fromFields(
+        List(
+          "id"         -> Json.fromString(id),
+          "deal_id"    -> Json.fromString(id),
+          "created"    -> dateStr(p, "createdate"),
+          "closed"     -> dateStr(p, "closedate"),
+          "pipeline"   -> Json.fromString(label),
+          "won"        -> boolOf(p, "hs_is_closed_won"),
+          "is_closed"  -> boolOf(p, "hs_is_closed"),
+          "amount"     -> str(p, "amount"),
+          "company_id" -> companies.get(id).fold(Json.Null)(Json.fromString),
+          "segment"    -> segmentOf(label),
+          "properties" -> Json.obj("hs_lastmodifieddate" -> str(p, "hs_lastmodifieddate"))
+        )
+      )
+    }
+  }
+
+  // GET the deal pipelines once per pull → id -> human label (the boot ndjson stored labels, not ids).
+  private def pipelineLabels: F[Map[String, String]] =
+    getJson("/crm/v3/pipelines/deals")
+      .map { raw =>
+        raw.hcursor
+          .downField("results")
+          .values
+          .toList
+          .flatten
+          .flatMap { pl =>
+            (pl.hcursor.get[String]("id").toOption, pl.hcursor.get[String]("label").toOption).mapN(_ -> _)
+          }
+          .toMap
+      }
+      .handleError(_ => Map.empty)
+
+  // v4 batch-associations: deal id -> its company id (prefer the Primary association). Search carries none.
+  private def dealCompanyMap(ids: List[String]): F[Map[String, String]] =
+    if (ids.isEmpty) Async[F].pure(Map.empty)
+    else
+      post(
+        "/crm/v4/associations/deals/companies/batch/read",
+        Json.obj("inputs" -> Json.fromValues(ids.map(id => Json.obj("id" -> id.asJson))))
+      ).map { raw =>
+        raw.hcursor
+          .downField("results")
+          .values
+          .toList
+          .flatten
+          .flatMap { r =>
+            val from = r.hcursor.downField("from").get[String]("id").toOption
+            val tos  = r.hcursor.downField("to").values.toList.flatten
+            val primary = tos
+              .find(
+                _.hcursor
+                  .downField("associationTypes")
+                  .values
+                  .toList
+                  .flatten
+                  .exists(_.hcursor.get[String]("label").toOption.contains("Primary"))
+              )
+              .orElse(tos.headOption)
+            (from, primary.flatMap(t => t.hcursor.get[Long]("toObjectId").toOption.map(_.toString))).mapN(_ -> _)
+          }
+          .toMap
+      }.handleError(_ => Map.empty)
+
+  // installer / retail / wholesale / automotive / international, derived from the pipeline label.
+  private def segmentOf(label: String): Json = {
+    val l = label.toLowerCase
+    if (l.contains("installer")) Json.fromString("installer")
+    else if (l.contains("retail")) Json.fromString("online_retail")
+    else if (l.contains("distributor") || l.contains("wholesaler")) Json.fromString("wholesale")
+    else if (l.contains("automotive")) Json.fromString("automotive")
+    else if (l.contains("international")) Json.fromString("international")
+    else Json.Null
+  }
+
+  // ── http + json helpers ────────────────────────────────────────────────────────────────────────────────
+  private def post(path: String, body: Json): F[Json] =
+    client.expect[Json](Request[F](Method.POST, uri(path)).withHeaders(auth).withEntity(body))(jsonOf[F, Json])
+
+  private def getJson(path: String): F[Json] =
+    client.expect[Json](Request[F](Method.GET, uri(path)).withHeaders(auth))(jsonOf[F, Json])
+
+  private def uri(path: String): Uri = Uri.unsafeFromString(s"$baseUrl$path")
+
+  private def searchBody(props: List[String], since: Option[String]): Json = {
+    val filterGroups = since.toList.map(ms =>
+      Json.obj(
+        "filters" -> Json.arr(
+          Json.obj("propertyName" -> "hs_lastmodifieddate".asJson, "operator" -> "GTE".asJson, "value" -> ms.asJson)
+        )
+      )
+    )
+    Json.obj(
+      "filterGroups" -> filterGroups.asJson,
+      "sorts"        -> Json.arr(Json.obj("propertyName" -> "hs_lastmodifieddate".asJson, "direction" -> "ASCENDING".asJson)),
+      "properties"   -> props.asJson,
+      "limit"        -> 100.asJson
+    )
+  }
+
+  private def paging(raw: Json): Json = raw.hcursor.downField("paging").focus.getOrElse(Json.Null)
+
+  private def str(props: io.circe.ACursor, key: String): Json =
+    props.get[String](key).toOption.filter(_.nonEmpty).fold(Json.Null)(Json.fromString)
+
+  private def str(props: Json, key: String): Json = str(props.hcursor, key)
+
+  private def dateStr(props: io.circe.ACursor, key: String): Json =
+    props.get[String](key).toOption.filter(_.nonEmpty).map(_.take(10)).fold(Json.Null)(Json.fromString)
+
+  private def boolOf(props: io.circe.ACursor, key: String): Json =
+    Json.fromBoolean(props.get[String](key).toOption.contains("true"))
+
+  // the canonical record: flattened fields + id (sourceId) + a minimal properties carrying the watermark.
+  private def canonical(id: String, props: Json)(fields: (String, Json)*): Json =
     Json.fromFields(
       (("id"          -> Json.fromString(id)) +: fields) :+
-        ("properties" -> Json.obj(watermark -> str(props, watermark)))
+        ("properties" -> Json.obj("hs_lastmodifieddate" -> str(props.hcursor, "hs_lastmodifieddate")))
     )
 }

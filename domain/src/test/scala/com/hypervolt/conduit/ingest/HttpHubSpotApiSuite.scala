@@ -64,7 +64,37 @@ object HttpHubSpotApiSuite extends SimpleIOSuite {
     }
   }
 
-  test("an unwired object (deals) is rejected — S2.1 ships companies + contacts") {
-    new HttpHubSpotApi[IO](fakeClient(Json.obj()), "tok", "https://api.hubapi.com").get("deals", None).attempt.map(e => expect(e.isLeft))
+  // A path-routing fake: deals normalization makes 3 calls (search, pipelines, batch-associations).
+  private def routingClient(byPath: (String => Json)): Client[IO] =
+    Client[IO](req => Resource.pure[IO, Response[IO]](Response[IO](Status.Ok).withEntity(byPath(req.uri.path.renderString))))
+
+  private val dealSearch = parseJson("""
+    {"results":[{"id":"4111256677","properties":{"dealname":"Greenleaf EV","amount":"798","pipeline":"default",
+      "createdate":"2021-02-07T10:00:00.000Z","hs_is_closed_won":"false","hs_is_closed":"false",
+      "hs_lastmodifieddate":"1717238400000"}}]}""").toOption.get
+  private val pipelinesBody = parseJson("""{"results":[{"id":"default","label":"UK Installers"}]}""").toOption.get
+  private val assocBody = parseJson("""
+    {"results":[{"from":{"id":"4111256677"},"to":[{"toObjectId":5315090904,
+      "associationTypes":[{"label":"Primary"}]}]}]}""").toOption.get
+
+  test("deals: pipeline id→label, v4 company attribution, segment — the deal_snapshot canonical shape") {
+    val client = routingClient(p =>
+      if (p.contains("/pipelines/")) pipelinesBody
+      else if (p.contains("/associations/")) assocBody
+      else dealSearch
+    )
+    new HttpHubSpotApi[IO](client, "tok", "https://api.hubapi.com").get("deals", None).map { out =>
+      val r = out.hcursor.downField("results").downN(0)
+      expect(r.get[String]("deal_id").toOption.contains("4111256677")) and
+        expect(r.get[String]("pipeline").toOption.contains("UK Installers")) and
+        expect(r.get[String]("segment").toOption.contains("installer")) and
+        expect(r.get[String]("company_id").toOption.contains("5315090904")) and
+        expect(r.get[String]("created").toOption.contains("2021-02-07")) and
+        expect(r.get[Boolean]("is_closed").toOption.contains(false))
+    }
+  }
+
+  test("an unwired object (line_items) is rejected — wired set is companies, contacts, deals") {
+    new HttpHubSpotApi[IO](fakeClient(Json.obj()), "tok", "https://api.hubapi.com").get("line_items", None).attempt.map(e => expect(e.isLeft))
   }
 }
