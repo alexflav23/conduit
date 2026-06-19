@@ -72,10 +72,10 @@ conduit.inbound → InboundMappingConsumer → SnapshotLoader.mapInbound(handler
 - [x] **S1.8 — dead-letter desk surface.** `api/routes/InboxRoutes`: `GET /inbox/health` (per-source status counts),
   `GET /inbox/quarantine?limit&offset` (raw payload + error retained), `POST /inbox/requeue` (operator re-queue,
   `edit:reconciliation`). Registered in api `Main`.
-- [ ] **S1.9 — acceptance IT (the formal close).** A testcontainers Pulsar+PG round-trip: land a row → relay
-  publishes → consumer maps → `processed` + engine row written; a poison row → `failed` with payload retained;
-  redeliver twice → identical state; a drifted re-pull → re-`received` → re-mapped. *(Pending — the spine is in
-  prod-shaped code and compiles; this test formally discharges invariant #1.)*
+- [x] **S1.9 — acceptance IT (DONE).** `api-it/InboxIntegrationSuite` against a testcontainers Postgres: land a
+  row (durable `received`) → relay publishes in seq order + marks `published` → `mapInbound` maps via the boot
+  handler into the engine (`exchange_rate`) + marks `processed`; an unmappable row → `failed` with raw payload
+  retained; the relay re-run never re-publishes; a drifted re-pull re-enters the inbox. **3/3 green** — invariant #1 discharged.
 
 **Acceptance (S1):** a connector write lands durably before mapping; the relay publishes in `seq` order; the
 mapping consumer dedupes redelivery; an unmappable row is quarantined (never lost) and visible at `/inbox/quarantine`;
@@ -276,7 +276,7 @@ Not gaps under shadow — out of scope until Conduit is trusted as system of rec
 | ID | Slice | Track | Status |
 |---|---|---|---|
 | S1.1–S1.8 | Inbox spine (migration, drift, transport, repo, relay, shared mapping, consumer, desk route) | S1 | ✅ |
-| S1.9 | Acceptance IT (Pulsar+PG round-trip; quarantine; idempotency; drift) | S1 | ⬜ |
+| S1.9 | Acceptance IT (PG round-trip; map-to-engine; quarantine; idempotency; drift) | S1 | ✅ |
 | — | **Integration field contracts** (per-source maps, doc 37) | S2 | ✅ |
 | S2.0 | Ingest scheduler (drives connectors → inbox on a cadence) | S2 | ✅ |
 | S2.1 | HubSpot live API — companies, contacts, deals (company assoc + pipeline), line_items (deal_line), company→company branch hierarchy (BranchLinkService); support tickets ✅ | S2 | ✅ |

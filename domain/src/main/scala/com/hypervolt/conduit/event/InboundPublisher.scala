@@ -24,6 +24,19 @@ final class PulsarInboundPublisher[F[_]: Async](producer: Producer[InboundEnvelo
       .void
 }
 
+// Test/double publisher: captures every published envelope (mirrors InMemoryEventPublisher) — used by the S1
+// inbox acceptance suite to assert the relay published the right rows in order.
+final class InMemoryInboundPublisher[F[_]](ref: cats.effect.Ref[F, Vector[InboundEnvelope]])
+    extends InboundPublisher[F] {
+  def publish(env: InboundEnvelope): F[Unit] = ref.update(_ :+ env)
+  def published: F[Vector[InboundEnvelope]]  = ref.get
+}
+
+object InMemoryInboundPublisher {
+  def create[F[_]: cats.effect.Sync]: F[InMemoryInboundPublisher[F]] =
+    cats.effect.Ref.of[F, Vector[InboundEnvelope]](Vector.empty).map(new InMemoryInboundPublisher[F](_))
+}
+
 object PulsarInboundPublisher {
   val schema: Schema[InboundEnvelope] = AvroPulsarSchema.avroSchema[InboundEnvelope]
 
