@@ -47,7 +47,7 @@ object HubSpotConnectorSuite extends SimpleIOSuite {
     val conn = new HubSpotConnector[IO](fakeApi(Map.empty))
     conn.pullSince("widgets", None).attempt.map { e =>
       expect(conn.source == "hubspot") and
-        expect(conn.datasets == List("companies", "contacts", "deals", "line_items")) and
+        expect(conn.datasets == List("companies", "contacts", "deals", "line_items", "tickets")) and
         expect(e.isLeft)
     }
   }

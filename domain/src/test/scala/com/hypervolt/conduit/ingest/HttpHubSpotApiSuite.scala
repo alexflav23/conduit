@@ -112,8 +112,8 @@ object HttpHubSpotApiSuite extends SimpleIOSuite {
     }
   }
 
-  test("an unwired object (tickets) is rejected — wired set is companies, contacts, deals, line_items") {
-    new HttpHubSpotApi[IO](fakeClient(Json.obj()), "tok", "https://api.hubapi.com").get("tickets", None).attempt.map(e => expect(e.isLeft))
+  test("an unwired object (products) is rejected — wired set is companies, contacts, deals, line_items, tickets") {
+    new HttpHubSpotApi[IO](fakeClient(Json.obj()), "tok", "https://api.hubapi.com").get("products", None).attempt.map(e => expect(e.isLeft))
   }
 
   private val companyList = parseJson("""{"results":[{"id":"100"},{"id":"200"}]}""").toOption.get
@@ -124,6 +124,27 @@ object HttpHubSpotApiSuite extends SimpleIOSuite {
         {"toObjectId":202,"associationTypes":[{"label":"Child Company"}]}]},
       {"from":{"id":"200"},"to":[{"toObjectId":100,"associationTypes":[{"label":"Parent Company"}]}]}
     ]}""").toOption.get
+
+  private val ticketSearch = parseJson("""
+    {"results":[{"id":"T-9","properties":{"subject":"Charger fault","hs_pipeline_stage":"open",
+      "hs_ticket_priority":"HIGH","createdate":"2024-03-01T09:00:00.000Z","hs_lastmodifieddate":"1717238400000"}}]}""").toOption.get
+  private val ticketCompanyAssoc = parseJson("""{"results":[{"from":{"id":"T-9"},"to":[{"toObjectId":5315083302,"associationTypes":[{"label":"Primary"}]}]}]}""").toOption.get
+
+  test("tickets: search + company/contact association → support_ticket shape") {
+    val client = routingClient { p =>
+      if (p.contains("/associations/") && p.contains("/companies/")) ticketCompanyAssoc
+      else if (p.contains("/associations/")) parseJson("""{"results":[]}""").toOption.get
+      else ticketSearch
+    }
+    new HttpHubSpotApi[IO](client, "tok", "https://api.hubapi.com").get("tickets", None).map { out =>
+      val r = out.hcursor.downField("results").downN(0)
+      expect(r.get[String]("ticket_ref").toOption.contains("T-9")) and
+        expect(r.get[String]("subject").toOption.contains("Charger fault")) and
+        expect(r.get[String]("status").toOption.contains("open")) and
+        expect(r.get[String]("company_id").toOption.contains("5315083302")) and
+        expect(r.get[String]("opened_at").toOption.contains("2024-03-01"))
+    }
+  }
 
   test("companyParentPairs: both directions → (child, parent) — CEF-style branch links") {
     val client = routingClient(p => if (p.contains("/associations/")) companyAssoc else companyList)

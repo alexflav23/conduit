@@ -32,6 +32,7 @@ final class HttpHubSpotApi[F[_]: Async](client: Client[F], token: String, baseUr
       case "companies" | "contacts" => searchObjects(objectType, modifiedSince)
       case "deals"                  => getDeals(modifiedSince)
       case "line_items"             => getLineItems(modifiedSince)
+      case "tickets"                => getTickets(modifiedSince)
       case other =>
         Async[F].raiseError(
           new IllegalArgumentException(
@@ -172,6 +173,37 @@ final class HttpHubSpotApi[F[_]: Async](client: Client[F], token: String, baseUr
           }
         }
         Json.obj("results" -> Json.fromValues(out), "paging" -> paging(raw))
+      }
+    }
+
+  // ── tickets: search + company/contact association → support_ticket shape (the service queue) ─────────────
+  private val ticketProps =
+    List("subject", "content", "hs_pipeline_stage", "hs_ticket_priority", "createdate", "hs_lastmodifieddate")
+
+  private def getTickets(since: Option[String]): F[Json] =
+    post("/crm/v3/objects/tickets/search", searchBody(ticketProps, since)).flatMap { raw =>
+      val rows = raw.hcursor.downField("results").values.toList.flatten
+      val ids  = rows.flatMap(_.hcursor.get[String]("id").toOption)
+      (batchAssoc("tickets", "companies", ids), batchAssoc("tickets", "contacts", ids)).tupled.map {
+        case (companies, contacts) =>
+          val out = rows.flatMap { row =>
+            val c = row.hcursor
+            c.get[String]("id").toOption.map { id =>
+              val p = c.downField("properties")
+              Json.obj(
+                "id"         -> Json.fromString(id),
+                "ticket_ref" -> Json.fromString(id),
+                "subject"    -> str(p, "subject"),
+                "status"     -> str(p, "hs_pipeline_stage"),
+                "priority"   -> str(p, "hs_ticket_priority"),
+                "opened_at"  -> dateStr(p, "createdate"),
+                "company_id" -> companies.get(id).fold(Json.Null)(Json.fromString),
+                "contact_id" -> contacts.get(id).fold(Json.Null)(Json.fromString),
+                "properties" -> Json.obj("hs_lastmodifieddate" -> str(p, "hs_lastmodifieddate"))
+              )
+            }
+          }
+          Json.obj("results" -> Json.fromValues(out), "paging" -> paging(raw))
       }
     }
 

@@ -15,7 +15,7 @@ trait HubSpotApi[F[_]] {
 
 object HubSpotConnector {
   // dataset == the CRM object type; HubSpot v3 returns {results:[{id, properties:{...}}], paging:{next:{after}}}.
-  private[ingest] val objectTypes = List("companies", "contacts", "deals", "line_items")
+  private[ingest] val objectTypes = List("companies", "contacts", "deals", "line_items", "tickets")
   private[ingest] val watermark   = "hs_lastmodifieddate"
   private[ingest] val pageSize    = 100
 

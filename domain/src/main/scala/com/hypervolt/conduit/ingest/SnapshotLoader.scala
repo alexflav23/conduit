@@ -267,10 +267,29 @@ object SnapshotLoader {
     // boot ndjson uses `deals_attributed`; the live connector's dataset is `deals` — both → deal_snapshot.
     else if (dataset == "deals_attributed" || dataset == "deals") hubspotAttributedDeal(row)
     else if (dataset == "line_items") hubspotDealLine(row)
+    else if (dataset == "tickets") hubspotSupportTicket(row)
     else if (dataset == "contacts") hubspotContact(row)
     else if (dataset == "companies") hubspotCompany(row)
     else if (dataset == "account_match_verdicts") hubspotMatchVerdict(row)
     else 0.pure[ConnectionIO]
+
+  // ingest tickets → support_ticket: the service queue as related lifecycle entities of the master account.
+  private def hubspotSupportTicket(row: Json): ConnectionIO[Int] = {
+    val c = row.hcursor
+    c.get[String]("ticket_ref").toOption.orElse(c.get[String]("id").toOption) match {
+      case None => 0.pure[ConnectionIO]
+      case Some(ref) =>
+        val opened = c.get[String]("opened_at").toOption.flatMap(s => scala.util.Try(LocalDate.parse(s)).toOption)
+        sql"""INSERT INTO support_ticket (ticket_ref, subject, status, priority, opened_at, company_id, contact_id)
+              VALUES ($ref, ${c.get[String]("subject").toOption}, ${c.get[String]("status").toOption},
+                      ${c.get[String]("priority").toOption}, $opened,
+                      ${c.get[String]("company_id").toOption}, ${c.get[String]("contact_id").toOption})
+              ON CONFLICT (ticket_ref) DO UPDATE SET
+                subject = EXCLUDED.subject, status = EXCLUDED.status, priority = EXCLUDED.priority,
+                opened_at = EXCLUDED.opened_at, company_id = EXCLUDED.company_id, contact_id = EXCLUDED.contact_id,
+                last_seen = now()""".update.run
+    }
+  }
 
   // ingest line_items → deal_line: a deal's product breakdown as a related lifecycle entity (S2.1). Idempotent
   // on the HubSpot line_item id; deal_id links it to deal_snapshot.

@@ -213,7 +213,7 @@ object Main extends IOApp.Simple {
                       "ingest-hubspot",
                       ingestScheduler.loop(
                         new HubSpotConnector[IO](hubspotApi),
-                        List("companies", "contacts", "deals", "line_items"),
+                        List("companies", "contacts", "deals", "line_items", "tickets"),
                         15.minutes
                       )
                     ),
