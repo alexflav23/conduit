@@ -14,7 +14,7 @@ const ALL_TABS = [
   'inventory', 'purchasing', 'batch', 'activation', 'warranty',
   'finance', 'commission', 'docs', 'lifecycle', 'tax', 'backlog',
   'intercompany', 'procurement', 'treasury',
-  'audit', 'period', 'sync', 'shadow', 'proof', 'access', 'notifications',
+  'audit', 'period', 'sync', 'shadow', 'proof', 'access', 'notifications', 'inbox',
 ];
 
 const documented = CHAPTERS.filter((c) => c.route).map((c) => c.route as string);

@@ -204,7 +204,7 @@ quarantine list + requeue, consuming `/inbox/*`) and the **sync-health board** (
 existing Govern shadow-findings view. **Files:** `conduit-desk/` (new Inbox/Sync views). **Acceptance:** an operator
 sees per-source freshness, drills a quarantined row to its raw payload + error, and requeues it after a fix — all in the desk.
 **Screens specced:** [`20_BACKOFFICE_DESK`](./20_BACKOFFICE_DESK.md) §9b — **D23 Inbox & quarantine**, **D24 Sync-health board**, **D25 Shadow findings review**.
-- [ ] D23 Inbox view (health/quarantine/requeue)  · [ ] D24 sync-health board  · [ ] D25 shadow-findings review + feedback capture
+- [x] D23 Inbox view (health/quarantine/requeue) — Inbox.tsx, live in the desk  · [ ] D24 sync-health board  · [ ] D25 shadow-findings review + feedback capture
 
 ### S3.4 — Cutover-readiness gates  ·  effort: S  ·  external: none
 **Goal:** make "are the books tied?" a single, honest readout against the 18 §4 cutover gates (trial balance, AR↔Xero,
@@ -292,7 +292,7 @@ Not gaps under shadow — out of scope until Conduit is trusted as system of rec
 | S2.5 | Carrier inbound (Rhenus) | S2 | ⬜ |
 | S3.1 | Continuous derived-vs-source reconciliation | S3 | 🟡 |
 | S3.2 | Inbox + sync observability/alerting | S3 | ⬜ |
-| S3.3 | Senior-team review desk (D23 Inbox · D24 Sync-health · D25 Shadow findings, doc 20 §9b) | S3 | ⬜ (specced) |
+| S3.3 | Senior-team review desk — D23 Inbox view DONE; D24 sync-health (Sync tab) live; D25 shadow-findings (Shadow tab) live | S3 | 🟡 |
 | S3.4 | Cutover-readiness gates panel | S3 | ⬜ |
 | S4.1 | Commission on a real source | S4 | ⬜ (⚠️ decision) |
 | S4.2 | Fuzzy MDM triage to zero | S4 | 🟡 |

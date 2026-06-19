@@ -557,6 +557,20 @@ const GOVERN: ManualChapter[] = [
     apiOps: ['GET /api/v1/finance/periods/{key}/investigation', 'POST /api/v1/finance/group-periods/{key}/lock', 'GET /api/v1/finance/lineage'],
   },
   {
+    id: 'inbox', route: 'inbox', section: 'Govern', title: 'Inbox — inbound durability',
+    audience: ['finance', 'auditor', 'admin'], status: 'live',
+    summary:
+      'The dual-run cockpit for inbound durability (S1). Per-source landed → published → processed → failed counts, and the quarantine — records that failed to map, with their raw payload + error RETAINED (never dropped). Inbound is never lost: a record lands durably before any mapping, and an unmappable one waits in quarantine for an operator to fix the mapping and requeue it.',
+    concepts: [
+      { term: 'Quarantine', def: 'A row that couldn’t be mapped — kept with its raw payload + error, never discarded.' },
+      { term: 'Requeue', def: 'Re-enter a fixed row into the inbox so it re-flows through mapping (edit:reconciliation).' },
+      { term: 'Never lost', def: 'Captured durably first; at-least-once relay + idempotent mapping; drift re-queues.' },
+    ],
+    tasks: [{ title: 'Triage a quarantined record', steps: ['Open the Quarantine table', 'Expand the row to read its raw payload + error', 'Fix the mapping, then Requeue'] }],
+    related: ['sync', 'shadow'], seeAlso: ['doc 33', 'doc 36', 'doc 20 §9b'],
+    apiOps: ['GET /api/v1/inbox/health', 'GET /api/v1/inbox/quarantine', 'POST /api/v1/inbox/requeue'],
+  },
+  {
     id: 'sync', route: 'sync', section: 'Govern', title: 'Sync — parallel-run health',
     audience: ['finance', 'auditor', 'admin'], status: 'live',
     summary:
