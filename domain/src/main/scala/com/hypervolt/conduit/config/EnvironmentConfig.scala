@@ -41,6 +41,13 @@ final case class HubSpotConfig(token: String, baseUrl: String) {
   def enabled: Boolean = token.nonEmpty && !token.startsWith("your-") && token != "changeme"
 }
 
+// MRPeasy live ingest (S2.2, spec 36/37). Empty keys ⇒ DORMANT. The REST list endpoints ignore `start` and cap
+// at 100, so the live connector syncs the RECENT WINDOW (new orders/shipments) — the historical bulk is the
+// committed snapshot; IngestSink dedups the overlap. Keys: AWS SSM /prod/athena/mrpeasy/{access-key,api-key}.
+final case class MrpeasyConfig(accessKey: String, apiKey: String, baseUrl: String) {
+  def enabled: Boolean = accessKey.nonEmpty && apiKey.nonEmpty && !accessKey.startsWith("your-")
+}
+
 // WORM document store (doc 17 §6). `endpoint` empty → the default AWS S3 client (instance role); set → a custom
 // endpoint (LocalStack) with static creds. The consumer renders + stores invoice PDFs here.
 final case class DocumentsConfig(bucket: String, endpoint: String, accessKey: String, secretKey: String) {
@@ -71,6 +78,7 @@ final case class AppConfig(
     xero: XeroConfig,
     stripe: StripeConfig,
     hubspot: HubSpotConfig,
+    mrpeasy: MrpeasyConfig,
     documents: DocumentsConfig,
     googleAuth: GoogleAuthConfig,
     keycloak: KeycloakConfig
@@ -118,6 +126,12 @@ object EnvironmentConfig {
       hubspot = HubSpotConfig(
         token = if (hv.hasPath("hubspot.token")) hv.getString("hubspot.token") else "",
         baseUrl = if (hv.hasPath("hubspot.base_url")) hv.getString("hubspot.base_url") else "https://api.hubapi.com"
+      ),
+      mrpeasy = MrpeasyConfig(
+        accessKey = if (hv.hasPath("mrpeasy.access_key")) hv.getString("mrpeasy.access_key") else "",
+        apiKey = if (hv.hasPath("mrpeasy.api_key")) hv.getString("mrpeasy.api_key") else "",
+        baseUrl =
+          if (hv.hasPath("mrpeasy.base_url")) hv.getString("mrpeasy.base_url") else "https://app.mrpeasy.com/rest/v1"
       ),
       documents = DocumentsConfig(
         bucket = docs.getString("bucket"),

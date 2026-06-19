@@ -18,7 +18,9 @@ import com.hypervolt.conduit.event.OutboxRelay
 import com.hypervolt.conduit.event.PulsarEventPublisher
 import com.hypervolt.conduit.event.PulsarInboundPublisher
 import com.hypervolt.conduit.ingest.HttpHubSpotApi
+import com.hypervolt.conduit.ingest.HttpMrpeasyApi
 import com.hypervolt.conduit.ingest.HubSpotConnector
+import com.hypervolt.conduit.ingest.MrpeasyConnector
 import com.hypervolt.conduit.ingest.InboundRelay
 import com.hypervolt.conduit.ingest.IngestRunner
 import com.hypervolt.conduit.ingest.IngestScheduler
@@ -205,10 +207,31 @@ object Main extends IOApp.Simple {
                     )
                   )
                 else Nil
+              // MRPeasy: the inventory/serial authority. Recent-window sync of orders + shipments (serials → genealogy).
+              val mrpeasyIngest: List[IO[Unit]] =
+                if (cfg.mrpeasy.enabled)
+                  List(
+                    Supervised(
+                      "ingest-mrpeasy",
+                      ingestScheduler.loop(
+                        new MrpeasyConnector[IO](
+                          new HttpMrpeasyApi[IO](http, cfg.mrpeasy.accessKey, cfg.mrpeasy.apiKey, cfg.mrpeasy.baseUrl)
+                        ),
+                        List("customer_orders", "shipments"),
+                        15.minutes
+                      )
+                    )
+                  )
+                else Nil
               logger.info(
                 if (cfg.hubspot.enabled) "S2: HubSpot live ingest ON (companies, contacts → inbox every 15m)"
                 else "S2: HubSpot live ingest DORMANT (no HUBSPOT_TOKEN — set it to light up)"
               ) *>
+                logger.info(
+                  if (cfg.mrpeasy.enabled)
+                    "S2: MRPeasy live ingest ON (customer_orders, shipments + serials → inbox every 15m)"
+                  else "S2: MRPeasy live ingest DORMANT (no MRPEASY keys — set them to light up)"
+                ) *>
                 logger.info(
                   "Consumer running: outbox relay + inbound inbox (relay+mapping) + Xero invoice + revenue recognition + Stripe settlement + document generation + VAT remittance + PII tombstone"
                 ) *>
@@ -233,7 +256,7 @@ object Main extends IOApp.Simple {
                   Supervised("notification-delivery", notifyLoop),
                   Supervised("forecast-cycle", forecastLoop),
                   Supervised("h6q-cycle", h6qCycleLoop)
-                ).++(hubspotIngest).parSequence_
+                ).++(hubspotIngest).++(mrpeasyIngest).parSequence_
           }
         }
     }
